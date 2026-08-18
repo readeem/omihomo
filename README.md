@@ -7,3 +7,5 @@ the core's install, its systemd unit, and everything that touches disk.
 Status: **charting.** The design is being worked out as a
 [wayfinder map](../../issues?q=label%3Awayfinder%3Amap). Start with
 [CONTEXT.md](./CONTEXT.md) for vocabulary and [docs/adr/](./docs/adr/) for decisions already made.
+
+The production CLI contract is documented in [docs/cli.md](./docs/cli.md).

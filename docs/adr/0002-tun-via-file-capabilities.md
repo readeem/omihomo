@@ -17,6 +17,8 @@ stays user-level and control is plain `systemctl --user`.
 
 ## Consequences
 
-Exactly one privileged moment, at install, behind a pkexec prompt. None at runtime. If setcap
-turns out not to reach parity with root for `auto-route` or DNS hijack, the fallback is
+Installation is the privileged setup moment behind a pkexec prompt. Runtime operation is
+unprivileged; `core repair` is an explicit maintenance path that reapplies the same capabilities
+after a package upgrade, and uninstall removes them. If setcap turns out not to reach parity with
+root for `auto-route` or DNS hijack, the fallback is
 koala's setuid approach and nothing else in the design moves.

@@ -8,6 +8,11 @@ The split is: **API for live state, CLI for anything that touches disk or system
 curls the external controller for proxies, groups, delay tests, traffic, connections, and mode.
 It calls the CLI for subscriptions, config parameters, service lifecycle, and overrides.
 
+Ticket #8 refined the persisted-settings edge of this split. `set mode` writes the desired mode
+to the override layer and reloads the generated config; `set group` stores the panel's primary
+group metadata and does not select a mihomo group. Live group/config selection, latency,
+connections, and parameter lookup remain direct API calls.
+
 ## Consequences
 
 The panel's fast paths keep working while the CLI is mid-refactor, and neither surface has to

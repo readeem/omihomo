@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n ${OMIHOMO_TEST_YQ:-} ]]; then
+  [[ -x $OMIHOMO_TEST_YQ ]] || { printf 'OMIHOMO_TEST_YQ is not executable: %s\n' "$OMIHOMO_TEST_YQ" >&2; exit 2; }
+else
+  command -v yq >/dev/null 2>&1 || {
+    printf 'tests require yq; set OMIHOMO_TEST_YQ to a yq v4 executable\n' >&2
+    exit 2
+  }
+fi
+exec "$(dirname "$0")/cli_test.sh"

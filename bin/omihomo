@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+
+pretty=0
+arguments=()
+for argument in "$@"; do
+  if [[ $argument == --pretty ]]; then
+    pretty=1
+  else
+    arguments+=("$argument")
+  fi
+done
+
+if ((${#arguments[@]} == 0)); then
+  source "$OMIHOMO_ROOT/lib/common.sh"
+  omi_error "a command is required" 1
+fi
+
+command_name=${arguments[0]}
+unset 'arguments[0]'
+arguments=("${arguments[@]}")
+case $command_name in
+  core) script="$OMIHOMO_ROOT/libexec/core.sh" ;;
+  sub) script="$OMIHOMO_ROOT/libexec/sub.sh" ;;
+  rule|set) script="$OMIHOMO_ROOT/libexec/override.sh"; arguments=("$command_name" "${arguments[@]}") ;;
+  status|api-info) script="$OMIHOMO_ROOT/libexec/state.sh"; arguments=("$command_name" "${arguments[@]}") ;;
+  *)
+    source "$OMIHOMO_ROOT/lib/common.sh"
+    omi_error "unknown command: $command_name" 1
+    ;;
+esac
+
+output=$(mktemp)
+set +e
+"$script" "${arguments[@]}" >"$output"
+status=$?
+set -e
+if ((status == 0)); then
+  if ((pretty)) && [[ -s $output ]]; then
+    source "$OMIHOMO_ROOT/lib/common.sh"
+    omi_pretty <"$output"
+  else
+    cat "$output"
+  fi
+else
+  cat "$output"
+fi
+rm -f "$output"
+exit "$status"
