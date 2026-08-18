@@ -19,6 +19,12 @@ A policy group declared inside a subscription's YAML. Holds configs and has exac
 them selected at a time.
 _Avoid_: Proxy group, selector
 
+**Primary group**:
+The one group whose selected config the panel treats as *the* current config. A subscription's
+YAML can declare several groups, so this is a setting in the override layer, defaulting to the
+first `select`-type group.
+_Avoid_: Main group, default group
+
 **Config**:
 A single proxy entry: one protocol, one address, one port, one set of credentials. A server
 can host many configs on different ports, which is why "node" is the wrong word for it.
