@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+here=$(dirname "$0")
+
+command -v node >/dev/null 2>&1 || {
+  printf 'tests require node for the widget model tests\n' >&2
+  exit 2
+}
+node --test "$here/model_test.js"
+
 if [[ -n ${OMIHOMO_TEST_YQ:-} ]]; then
   [[ -x $OMIHOMO_TEST_YQ ]] || { printf 'OMIHOMO_TEST_YQ is not executable: %s\n' "$OMIHOMO_TEST_YQ" >&2; exit 2; }
 else
@@ -8,4 +16,4 @@ else
     exit 2
   }
 fi
-exec "$(dirname "$0")/cli_test.sh"
+exec "$here/cli_test.sh"

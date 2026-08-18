@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "omihomo",
+  "name": "Omihomo",
+  "version": "1.0.0",
+  "author": "readeem",
+  "license": "MIT",
+  "description": "Manage a mihomo proxy core from the Omarchy bar: subscriptions, groups, configs, rules, latency, and live connections.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Omihomo",
+    "description": "Start and stop mihomo, switch subscriptions and configs, edit rules, and watch live connections.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 10
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Status refresh interval (seconds)",
+        "min": 2,
+        "max": 3600,
+        "step": 1,
+        "defaultValue": 10
+      }
+    ]
+  }
+}
