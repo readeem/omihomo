@@ -53,8 +53,12 @@ The **connections view** is the same popup at 760px: totals, one row per connect
 network, chain, rule, process, transfer, and age, and close actions for one or all of them.
 
 When the core is not installed the panel replaces its body with a single install action, which
-hands the interactive AUR build to `omarchy-launch-floating-terminal-with-presentation`. Repair
-stays in-panel because it is `pkexec` only, with no build.
+hands the AUR build to `omarchy-launch-floating-terminal-with-presentation`. Uninstall, the last
+row of the panel, takes the same terminal for the same reason: package removal needs sudo. It
+arms on the first activation and only runs on the second, because it also deletes the state
+directory; Esc or moving the cursor off the row cancels. Repair
+stays in-panel because it is one privileged call with no build, and from the panel that call is a
+`pkexec` dialog.
 
 ## Keys
 

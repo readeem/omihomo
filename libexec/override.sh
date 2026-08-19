@@ -37,7 +37,7 @@ validate_rule() {
 override_candidate() {
   local expression=$1 candidate
   candidate=$(mktemp "${OMIHOMO_DATA_DIR}/.override.XXXXXX")
-  if ! "$OMIHOMO_YQ" eval "$expression" "$OMIHOMO_OVERRIDE_FILE" >"$candidate"; then
+  if ! omi_yq eval "$expression" "$OMIHOMO_OVERRIDE_FILE" >"$candidate"; then
     rm -f "$candidate"
     omi_error "failed to update override.yaml" 1
   fi
@@ -70,7 +70,7 @@ rule_list() {
     return 0
   fi
   local rules
-  rules=$("$OMIHOMO_YQ" -o=json '.rules // {}' "$OMIHOMO_OVERRIDE_FILE")
+  rules=$(omi_yq -o=json '.rules // {}' "$OMIHOMO_OVERRIDE_FILE")
   jq -c '
     ([.prepend // [] | to_entries[] | {kind: "prepend", local_index: (.key + 1), rule: .value}] +
      [.append // [] | to_entries[] | {kind: "append", local_index: (.key + 1), rule: .value}] +

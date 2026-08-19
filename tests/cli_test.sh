@@ -317,6 +317,42 @@ test_pretty_errors_are_plain_text() {
   assert_file_contains "$stderr" 'omihomo: mihomo is not installed (exit 10)'
 }
 
+# Uninstall has to take every artifact with it: unit, capabilities, launcher
+# symlink, package, and state.
+test_uninstall_removes_every_artifact() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_PKGS="mihomo-bin"
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add home https://example.com/subscription >/dev/null
+  mkdir -p "$HOME/.local/bin"
+  ln -sfn "$REPO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
+  local unit="$XDG_CONFIG_HOME/systemd/user/omihomo.service"
+  mkdir -p "$(dirname "$unit")"
+  printf '[Service]\n' >"$unit"
+
+  run_cli core uninstall
+
+  [[ ! -e $unit ]] || fail "unit file survived uninstall"
+  [[ ! -e $HOME/.local/bin/omihomo ]] || fail "launcher symlink survived uninstall"
+  [[ ! -d $XDG_DATA_HOME/omihomo ]] || fail "state directory survived uninstall"
+  assert_file_contains "$TEST_ROOT/yay.log" "-Rns --noconfirm mihomo-bin"
+  assert_file_contains "$TEST_ROOT/pkexec.log" "uninstall"
+}
+
+# --keep-data is the same removal with the subscriptions left in place.
+test_uninstall_can_keep_state() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add home https://example.com/subscription >/dev/null
+
+  run_cli core uninstall --keep-data
+
+  [[ -f $XDG_DATA_HOME/omihomo/subscriptions.json ]] || fail "--keep-data dropped the state"
+  [[ ! -f $TEST_ROOT/yay.log ]] || fail "yay ran for a package that is not installed"
+}
+
 tests=(
   test_status_reports_not_installed
   test_subscription_add_and_list_are_flat_json
@@ -334,6 +370,8 @@ tests=(
   test_status_reports_degraded_when_tun_device_is_missing
   test_error_code_10_is_used_when_core_is_missing
   test_pretty_errors_are_plain_text
+  test_uninstall_removes_every_artifact
+  test_uninstall_can_keep_state
   test_core_start_requires_an_active_subscription
   test_turning_tun_on_requires_an_active_unit
   test_active_override_change_reports_unreachable_controller

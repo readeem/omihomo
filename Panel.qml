@@ -34,6 +34,8 @@ Panel {
 
   property bool subFormOpen: false
   property bool ruleFormOpen: false
+  // Uninstall throws away subscriptions and the core, so the row asks twice.
+  property bool uninstallArmed: false
   property int ruleTypeIndex: 0
   property int ruleTargetIndex: 0
 
@@ -127,11 +129,15 @@ Panel {
     } else {
       rows.push({ s: "ruleAdd" })
     }
+    rows.push({ s: "uninstall" })
     return rows
   }
 
   readonly property var navRows: navRowsFor()
   readonly property var cursorRow: cursor >= 0 && cursor < navRows.length ? navRows[cursor] : null
+  // Leaving the row disarms it, so a confirm can never be inherited by whatever
+  // the cursor lands on next.
+  onCursorRowChanged: if (uninstallArmed && (!cursorRow || cursorRow.s !== "uninstall")) uninstallArmed = false
 
   // True when the keyboard cursor is on this exact row. Rows bind their
   // `hasCursor` to it, so mouse hover and j/k paint the same single highlight.
@@ -190,6 +196,7 @@ Panel {
     if (!cursorRow) return
     switch (cursorRow.s) {
     case "install": installCore(); break
+    case "uninstall": uninstallCore(); break
     case "power": omihomo.toggleCore(); break
     case "trace": omihomo.refreshTrace(); break
     case "mode": omihomo.setMode(Model.nextMode(omihomo.mode)); break
@@ -257,6 +264,7 @@ Panel {
 
   function handleEscape() {
     if (editing) { endEdit(); return }
+    if (uninstallArmed) { uninstallArmed = false; return }
     if (filterOpen) { closeFilter(); return }
     if (subFormOpen) { subFormOpen = false; return }
     if (ruleFormOpen) { ruleFormOpen = false; return }
@@ -332,6 +340,16 @@ Panel {
   function installCore() {
     if (!bar) return
     bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(cliPath + " core install"))
+    close()
+  }
+
+  // Uninstall removes packages and capabilities, so it takes the same terminal
+  // as the install: pacman's output and the sudo prompt need somewhere to go.
+  // The first activation only arms the row.
+  function uninstallCore() {
+    if (!bar) return
+    if (!uninstallArmed) { uninstallArmed = true; return }
+    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(cliPath + " core uninstall"))
     close()
   }
 
@@ -453,6 +471,7 @@ Panel {
       subFormOpen = false
       ruleFormOpen = false
       filterOpen = false
+      uninstallArmed = false
       editing = null
       if (panelFlick) panelFlick.contentY = 0
       omihomo.clearMessages()
@@ -1134,6 +1153,23 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
+          }
+
+          // ---- uninstall ----------------------------------------------------
+
+          PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
+
+          ActionRow {
+            visible: omihomo.installed
+            width: parent.width
+            section: "uninstall"
+            title: root.uninstallArmed ? "Confirm uninstall" : "Uninstall mihomo"
+            subtitle: root.uninstallArmed
+              ? "Activate again to remove it. Esc cancels."
+              : "Removes the core, its capabilities, the unit, and saved subscriptions."
+            urgentTrailing: root.uninstallArmed
+            trailing: root.uninstallArmed ? "confirm" : ""
+            onActivated: root.uninstallCore()
           }
         }
       }

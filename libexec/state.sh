@@ -11,9 +11,9 @@ status_json() {
   primary=
   tun=false
   uptime=
-  if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && command -v "$OMIHOMO_YQ" >/dev/null 2>&1; then
-    primary=$("$OMIHOMO_YQ" -r '.omihomo."primary-group" // ""' "$OMIHOMO_OVERRIDE_FILE")
-    tun=$("$OMIHOMO_YQ" -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
+  if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
+    primary=$(omi_yq -r '.omihomo."primary-group" // ""' "$OMIHOMO_OVERRIDE_FILE")
+    tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
   if [[ $state != not-installed && $state != stopped ]]; then
     uptime=$("$OMIHOMO_SYSTEMCTL" --user show "$OMIHOMO_UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)
@@ -37,8 +37,8 @@ command_status() {
   fi
   local tun device
   tun=false
-  if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && command -v "$OMIHOMO_YQ" >/dev/null 2>&1; then
-    tun=$("$OMIHOMO_YQ" -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
+  if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
+    tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
   device=${OMIHOMO_TUN_DEVICE:-mihomo}
   if [[ $tun == true && ! -e /sys/class/net/$device ]]; then

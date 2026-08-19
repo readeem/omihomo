@@ -7,7 +7,8 @@ config selection, latency, connections, or parameter lookup.
 ## Commands
 
 ```text
-omihomo core install|uninstall|repair|start|stop|restart|version
+omihomo core install|repair|start|stop|restart|version
+omihomo core uninstall [--keep-data]
 omihomo core autostart on|off
 
 omihomo sub add <name> <url>
@@ -94,7 +95,19 @@ only after validation succeeds. Updating the active subscription merges `runtime
 `PUT /configs?force=true`; the systemd unit is not restarted. Every mutation of the state files
 holds the one shared `flock`.
 
-`core install` installs the AUR package and the required `jq`, `curl`, and `nftables` tools, writes
-the user unit and default override, and performs
-the single privileged capability and pacman-hook step. It is intentionally terminal-only because
-the AUR build is interactive. `core repair` is the non-build capability reapplication path.
+`core install` installs the AUR package and the required `go-yq`, `jq`, `libcap`, `curl`, and
+`nftables` tools, writes the user unit and default override, and performs the single privileged
+capability and pacman-hook step. It runs unattended: pacman and yay get `--noconfirm`, and one
+`sudo -v` up front covers every privileged step, so nothing pops a second prompt. It is
+terminal-only, because pacman's output and that one password prompt need somewhere to go. `core
+repair` is the non-build capability reapplication path.
+
+The YAML tool has to be mikefarah's yq v4, packaged on Arch as `go-yq`. Arch's `yq` package is
+kislyuk's jq wrapper, which owns the same `/usr/bin/yq` and speaks a different language; `core
+install` replaces it, and every other command fails with an explicit message when the wrong one is
+on `PATH`.
+
+`core uninstall` reverses all of it: it stops and disables the unit, removes the capabilities and
+their pacman hook, drops the `~/.local/bin/omihomo` symlink and the unit file, removes the
+`mihomo-bin` package, and deletes the state directory. `--keep-data` keeps subscriptions, override,
+and cache. Removing the widget itself is `omarchy plugin remove omihomo`.

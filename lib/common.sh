@@ -62,6 +62,48 @@ omi_require_command() {
   command -v "$1" >/dev/null 2>&1 || omi_error "required command not found: $1" 1
 }
 
+# Every YAML read and write goes through here, because "yq" is two different
+# programs. We need mikefarah's Go yq v4 (Arch package go-yq); the `yq` package
+# is kislyuk's jq wrapper, which takes different arguments and answers with a
+# usage dump. Resolve to whichever binary on this machine is the real one.
+omi_yq() {
+  if ! omi_yq_available; then
+    omi_error "mikefarah yq v4 not found: install the go-yq package (the yq package is a different program)" 1
+    return 1
+  fi
+  "$OMIHOMO_YQ_RESOLVED" "$@"
+}
+
+omi_yq_available() {
+  [[ -z ${OMIHOMO_YQ_RESOLVED:-} ]] || return 0
+  local candidate
+  for candidate in "$OMIHOMO_YQ" yq-go go-yq; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" --version 2>/dev/null | grep -qi mikefarah; then
+      OMIHOMO_YQ_RESOLVED=$candidate
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The privileged steps are one setcap and one pacman hook. From a terminal that
+# is plain sudo, which reuses the password the install already asked for; from
+# the panel there is no terminal to type into, so it has to be pkexec.
+omi_privileged() {
+  if [[ -t 0 ]] && command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    pkexec "$@"
+  fi
+}
+
+# Progress for a human. The panel parses stdout, so it only prints on a terminal.
+omi_note() {
+  [[ ${OMIHOMO_PRETTY:-0} == 1 || -t 1 ]] || return 0
+  printf 'omihomo: %s\n' "$1"
+}
+
 omi_mihomo_bin() {
   if [[ -n ${OMIHOMO_MIHOMO_BIN:-} ]]; then
     printf '%s\n' "$OMIHOMO_MIHOMO_BIN"
@@ -85,6 +127,12 @@ omi_require_core() {
 # the same message goes out as a plain line instead.
 omi_error() {
   local message=$1 code=${2:-1}
+  # Only the first error speaks. It is the specific one, and the panel parses
+  # stderr as a single JSON object; wrappers further up just carry the code.
+  if [[ ${OMIHOMO_ERROR_EMITTED:-0} == 1 ]]; then
+    return "$code"
+  fi
+  OMIHOMO_ERROR_EMITTED=1
   if [[ ${OMIHOMO_PRETTY:-0} == 1 || -t 2 ]]; then
     # Code 1 is the generic failure, so it tells a human nothing worth printing.
     if ((code == 1)); then
@@ -128,12 +176,12 @@ omi_unit_active() {
 
 omi_api_address() {
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
-  "$OMIHOMO_YQ" -r '.config."external-controller" // "127.0.0.1:9090"' "$OMIHOMO_OVERRIDE_FILE"
+  omi_yq -r '.config."external-controller" // "127.0.0.1:9090"' "$OMIHOMO_OVERRIDE_FILE"
 }
 
 omi_api_secret() {
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
-  "$OMIHOMO_YQ" -r '.config.secret // ""' "$OMIHOMO_OVERRIDE_FILE"
+  omi_yq -r '.config.secret // ""' "$OMIHOMO_OVERRIDE_FILE"
 }
 
 omi_api_reachable() {
@@ -164,7 +212,7 @@ omi_reload_runtime() {
 
 omi_merge_runtime() {
   local source=$1 override=$2 destination=$3
-  "$OMIHOMO_YQ" eval-all -P '
+  omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
     select(fileIndex == 1) as $override |
     ($override.config // {}) as $config |

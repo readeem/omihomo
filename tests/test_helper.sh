@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL
+  unset OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -84,6 +84,34 @@ case ${1:-} in
 esac
 EOF
   chmod +x "$TEST_ROOT/bin/systemctl"
+
+  # Package and privilege stubs, so uninstall can be exercised without touching
+  # the machine. OMIHOMO_TEST_PKGS lists what pacman should report as installed.
+  cat >"$TEST_ROOT/bin/pacman" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == -Qq ]]; then
+  [[ " ${OMIHOMO_TEST_PKGS:-} " == *" ${2:-} "* ]] || exit 1
+  printf '%s\n' "$2"
+  exit 0
+fi
+printf '%s\n' "$*" >>"$TEST_ROOT/pacman.log"
+EOF
+  chmod +x "$TEST_ROOT/bin/pacman"
+
+  cat >"$TEST_ROOT/bin/yay" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$TEST_ROOT/yay.log"
+EOF
+  chmod +x "$TEST_ROOT/bin/yay"
+
+  cat >"$TEST_ROOT/bin/pkexec" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$TEST_ROOT/pkexec.log"
+EOF
+  chmod +x "$TEST_ROOT/bin/pkexec"
 }
 
 teardown_test() {
