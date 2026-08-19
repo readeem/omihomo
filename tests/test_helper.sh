@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS
+  unset OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -79,8 +79,9 @@ set -euo pipefail
 while [[ ${1:-} == --user ]]; do shift; done
 case ${1:-} in
   is-active) [[ ${OMIHOMO_TEST_UNIT_ACTIVE:-no} == yes ]] ;;
+  is-enabled) [[ ${OMIHOMO_TEST_UNIT_ENABLED:-no} == yes ]] ;;
   show) printf '%s\n' "${OMIHOMO_TEST_ACTIVE_ENTER:-}" ;;
-  *) exit 0 ;;
+  *) printf '%s\n' "$*" >>"$TEST_ROOT/systemctl.log" ;;
 esac
 EOF
   chmod +x "$TEST_ROOT/bin/systemctl"

@@ -242,6 +242,32 @@ EOF
   assert_json_field "$output" state degraded
 }
 
+test_status_reports_autostart_state() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  local output
+  output=$(run_cli status)
+  assert_eq "$(jq -r '.autostart_enabled' <<<"$output")" false
+
+  export OMIHOMO_TEST_UNIT_ENABLED=yes
+  output=$(run_cli status)
+  assert_eq "$(jq -r '.autostart_enabled' <<<"$output")" true
+}
+
+# Autostart is the one path that can enable the unit before it has ever been
+# started, so it has to write the unit file itself.
+test_autostart_writes_the_unit_before_enabling_it() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  run_cli core autostart on
+  [[ -f $XDG_CONFIG_HOME/systemd/user/omihomo.service ]] || fail "autostart did not write the unit"
+  assert_file_contains "$TEST_ROOT/systemctl.log" "enable omihomo.service"
+}
+
 test_error_code_10_is_used_when_core_is_missing() {
   setup_test
   trap teardown_test RETURN
@@ -368,6 +394,8 @@ tests=(
   test_status_exit_code_is_always_zero
   test_status_reports_stopped_for_installed_core
   test_status_reports_degraded_when_tun_device_is_missing
+  test_status_reports_autostart_state
+  test_autostart_writes_the_unit_before_enabling_it
   test_error_code_10_is_used_when_core_is_missing
   test_pretty_errors_are_plain_text
   test_uninstall_removes_every_artifact

@@ -73,8 +73,8 @@ Exit codes are:
 `status` is the exception: it always exits `0` and returns one stable object. Its `state` is
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
-`download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`, and
-`tun_enabled`. The IP, latency, throughput, and config fields are nullable because those live API
+`download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
+`tun_enabled`, and `autostart_enabled`. The IP, latency, throughput, and config fields are nullable because those live API
 values remain panel-owned per ADR-0001.
 
 ## Files
@@ -94,6 +94,10 @@ Subscription updates fetch to a temporary file, validate with `mihomo -t`, and r
 only after validation succeeds. Updating the active subscription merges `runtime.yaml` and sends
 `PUT /configs?force=true`; the systemd unit is not restarted. Every mutation of the state files
 holds the one shared `flock`.
+
+`core autostart on|off` is `systemctl --user enable|disable` on the unit, and is what the panel's
+manage view toggles. Turning it on writes the unit first when it is missing, so autostart works on
+a core that has never been started.
 
 `core install` installs the AUR package and the required `go-yq`, `jq`, `libcap`, `curl`, and
 `nftables` tools, writes the user unit and default override, and performs the single privileged

@@ -27,6 +27,7 @@ Item {
   property string activeSubscription: ""
   property string configuredPrimaryGroup: ""
   property bool tunEnabled: false
+  property bool autostartEnabled: false
   property double startedMs: 0
 
   readonly property bool installed: coreState !== "not-installed" && coreState !== "unknown"
@@ -158,6 +159,7 @@ Item {
     activeSubscription = status.activeSubscription
     configuredPrimaryGroup = status.primaryGroup
     tunEnabled = status.tunEnabled
+    autostartEnabled = status.autostartEnabled
     startedMs = status.startedMs
     if (!coreRunning) {
       downloadRate = 0
@@ -188,6 +190,14 @@ Item {
 
   function repairCore() {
     runCore(["core", "repair"], "Repairing capabilities…")
+  }
+
+  // Autostart is systemd's `enable`, so it goes through the CLI like the rest
+  // of the unit's lifecycle; the next status read reports what stuck.
+  function toggleAutostart() {
+    if (!installed) return
+    runCore(["core", "autostart", autostartEnabled ? "off" : "on"],
+      autostartEnabled ? "Disabling autostart…" : "Enabling autostart…")
   }
 
   function setMode(next) {

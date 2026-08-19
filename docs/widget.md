@@ -6,7 +6,7 @@ plugin folder is loaded from there.
 | File | Role |
 | --- | --- |
 | `manifest.json` | Plugin id `omihomo`, one bar-widget entry point, one setting |
-| `Panel.qml` | Bar button, main popup, connections view, and every row component |
+| `Panel.qml` | Bar button, main popup, connections and manage views, and every row component |
 | `Service.qml` | All state: CLI calls, mihomo API calls, polling, and actions |
 | `Model.js` | Pure parsing and formatting, tested by `tests/model_test.js` |
 | `OmihomoIcon.qml` | The bar mark, drawn natively rather than shipped as an SVG |
@@ -34,7 +34,7 @@ The main popup is 420px wide and carries, top to bottom:
    detail on the hero, then `Group › Config`, throughput, uptime, and egress IP with latency.
    Egress is the only field that costs a network call, so it is fetched on panel open, on a
    config or group change, and on a click — never on a timer.
-3. **Controls** — mode, TUN, connections, and (when the core is degraded) repair.
+3. **Controls** — mode, TUN, connections, and manage.
 4. **Subscriptions** — activate, update, remove, and an inline add form.
 5. **Groups** — every group mihomo reports, with the primary one marked. Selecting a group
    browses it.
@@ -52,13 +52,18 @@ a runtime name back to its provider entry. The panel renders what mihomo states 
 The **connections view** is the same popup at 760px: totals, one row per connection with host,
 network, chain, rule, process, transfer, and age, and close actions for one or all of them.
 
-When the core is not installed the panel replaces its body with a single install action, which
-hands the AUR build to `omarchy-launch-floating-terminal-with-presentation`. Uninstall, the last
-row of the panel, takes the same terminal for the same reason: package removal needs sudo. It
-arms on the first activation and only runs on the second, because it also deletes the state
-directory; Esc or moving the cursor off the row cancels. Repair
+The **manage view** is that same secondary surface at the main width, and holds the three
+operations that outlive a session: autostart, capability repair, and uninstall. Autostart is
+`systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
 stays in-panel because it is one privileged call with no build, and from the panel that call is a
-`pkexec` dialog.
+`pkexec` dialog; a degraded core is surfaced on the Manage row in the controls rather than by
+growing them. Uninstall hands the removal to
+`omarchy-launch-floating-terminal-with-presentation`, because package removal needs sudo. It arms
+on the first activation and only runs on the second, because it also deletes the state directory;
+Esc or moving the cursor off the row cancels.
+
+When the core is not installed the panel replaces its body with a single install action, which
+hands the AUR build to the same terminal for the same reason.
 
 ## Keys
 
@@ -74,6 +79,7 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `t` | Toggle TUN |
 | `m` | Cycle mode |
 | `c` | Connections view |
+| `M` | Manage view |
 | `r` | Refresh |
 | `a` | Add subscription |
 | `u` | Update the selected subscription |
@@ -82,8 +88,11 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `d` / `D` | Latency test the config / the whole group |
 | `/` | Filter configs |
 | `R` | Repair capabilities |
+| `b` | Toggle autostart (manage view) |
 | `i` | Install the core (only when it is missing) |
 | `esc` | Close the form, filter, or view; otherwise close the panel |
+
+In the connections view `c` goes back; in the manage view `M` does.
 
 Every one of those is also reachable with the mouse. A focused text field owns `enter` and
 `esc` and blocks the panel's key handling until it loses focus.

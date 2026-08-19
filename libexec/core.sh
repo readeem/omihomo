@@ -132,10 +132,16 @@ core_restart() {
   omi_systemctl --user restart "$OMIHOMO_UNIT"
 }
 
+# Enabling a unit that was never written fails, so autostart writes it the same
+# way `core start` does rather than assuming the core has been started once.
 core_autostart() {
   omi_require_core
   case ${1:-} in
-    on) omi_systemctl --user enable "$OMIHOMO_UNIT" ;;
+    on)
+      [[ -f $OMIHOMO_UNIT_FILE ]] || omi_write_unit
+      omi_systemctl --user daemon-reload
+      omi_systemctl --user enable "$OMIHOMO_UNIT"
+      ;;
     off) omi_systemctl --user disable "$OMIHOMO_UNIT" ;;
     *) omi_error "autostart expects on or off" 1 ;;
   esac

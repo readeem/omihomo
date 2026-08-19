@@ -174,6 +174,12 @@ omi_unit_active() {
   "$OMIHOMO_SYSTEMCTL" --user is-active --quiet "$OMIHOMO_UNIT" >/dev/null 2>&1
 }
 
+# True when the unit is wired into the session's default target, which is what
+# the panel calls autostart.
+omi_unit_enabled() {
+  "$OMIHOMO_SYSTEMCTL" --user is-enabled --quiet "$OMIHOMO_UNIT" >/dev/null 2>&1
+}
+
 omi_api_address() {
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
   omi_yq -r '.config."external-controller" // "127.0.0.1:9090"' "$OMIHOMO_OVERRIDE_FILE"

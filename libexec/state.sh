@@ -6,20 +6,24 @@ OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 source "$OMIHOMO_ROOT/lib/common.sh"
 
 status_json() {
-  local state=$1 detail=${2:-} active primary tun uptime
+  local state=$1 detail=${2:-} active primary tun autostart uptime
   active=$(omi_active_name)
   primary=
   tun=false
+  autostart=false
   uptime=
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     primary=$(omi_yq -r '.omihomo."primary-group" // ""' "$OMIHOMO_OVERRIDE_FILE")
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
+  if [[ $state != not-installed ]] && omi_unit_enabled; then
+    autostart=true
+  fi
   if [[ $state != not-installed && $state != stopped ]]; then
     uptime=$("$OMIHOMO_SYSTEMCTL" --user show "$OMIHOMO_UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)
   fi
-  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" \
-    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun}'
+  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson autostart "$autostart" \
+    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, autostart_enabled: $autostart}'
 }
 
 command_status() {

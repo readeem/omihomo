@@ -20,8 +20,8 @@ Panel {
   ipcTarget: "omihomo"
   manageIpc: false
 
-  // "main" or "connections". The connections view is the same popup at a
-  // wider content width, with its own rows and its own keys.
+  // "main", "connections", or "manage". Both secondary views are the same
+  // popup with their own rows and their own keys; connections also widens it.
   property string view: "main"
 
   property bool cursorActive: false
@@ -102,12 +102,18 @@ Panel {
       for (i = 0; i < omihomo.connections.length; i++) rows.push({ s: "conn", i: i })
       return rows
     }
+    if (view === "manage") {
+      rows.push({ s: "autostart" })
+      rows.push({ s: "repair" })
+      rows.push({ s: "uninstall" })
+      return rows
+    }
     rows.push({ s: "power" })
     rows.push({ s: "trace" })
     rows.push({ s: "mode" })
     rows.push({ s: "tun" })
     rows.push({ s: "connections" })
-    if (omihomo.coreState === "degraded") rows.push({ s: "repair" })
+    rows.push({ s: "manage" })
     for (i = 0; i < omihomo.subscriptions.length; i++) rows.push({ s: "sub", i: i })
     if (subFormOpen) {
       rows.push({ s: "subName" })
@@ -129,7 +135,6 @@ Panel {
     } else {
       rows.push({ s: "ruleAdd" })
     }
-    rows.push({ s: "uninstall" })
     return rows
   }
 
@@ -185,6 +190,8 @@ Panel {
       omihomo.setMode(Model.MODES[next])
     } else if (cursorRow.s === "tun") {
       omihomo.toggleTun()
+    } else if (cursorRow.s === "autostart") {
+      omihomo.toggleAutostart()
     } else if (cursorRow.s === "ruleType") {
       ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
     } else if (cursorRow.s === "ruleTarget") {
@@ -202,6 +209,8 @@ Panel {
     case "mode": omihomo.setMode(Model.nextMode(omihomo.mode)); break
     case "tun": omihomo.toggleTun(); break
     case "connections": openConnections(); break
+    case "manage": openManage(); break
+    case "autostart": omihomo.toggleAutostart(); break
     case "repair": omihomo.repairCore(); break
     case "sub": activateSubscriptionAt(cursorRow.i); break
     case "subAdd": openSubForm(); break
@@ -241,6 +250,12 @@ Panel {
       else if (lower === "c") closeConnections()
       return
     }
+    if (view === "manage") {
+      if (key === "M") closeManage()
+      else if (key === "R") omihomo.repairCore()
+      else if (lower === "b") omihomo.toggleAutostart()
+      return
+    }
     if (!omihomo.installed) {
       if (lower === "i") installCore()
       return
@@ -250,6 +265,7 @@ Panel {
     case "t": omihomo.toggleTun(); return
     case "m": omihomo.setMode(Model.nextMode(omihomo.mode)); return
     case "c": openConnections(); return
+    case "M": openManage(); return
     case "r": omihomo.refresh(); omihomo.refreshLive(); omihomo.refreshTrace(); return
     case "a": openSubForm(); return
     case "n": openRuleForm(); return
@@ -269,6 +285,7 @@ Panel {
     if (subFormOpen) { subFormOpen = false; return }
     if (ruleFormOpen) { ruleFormOpen = false; return }
     if (view === "connections") { closeConnections(); return }
+    if (view === "manage") { closeManage(); return }
     close()
   }
 
@@ -366,6 +383,21 @@ Panel {
     cursorActive = false
   }
 
+  // The manage view holds the operations that outlive a session: autostart,
+  // capability repair, and uninstall.
+  function openManage() {
+    view = "manage"
+    cursor = 0
+    cursorActive = false
+  }
+
+  function closeManage() {
+    view = "main"
+    cursor = 0
+    cursorActive = false
+    uninstallArmed = false
+  }
+
   function openSubForm() {
     subNameRow.field.text = ""
     subUrlRow.field.text = ""
@@ -437,14 +469,15 @@ Panel {
     })
   }
 
-  // The config and connection lists own their own scrolling, so the cursor is
-  // handed to the ListView; everything else lives in the panel's flickable.
+  // Only the main view scrolls: the connection list owns its own scrolling and
+  // the manage view always fits. Within the main view the config list is its
+  // own ListView, and everything else lives in the panel's flickable.
   function scrollCursorIntoView() {
-    if (!cursorRow) return
+    if (!cursorRow || view !== "main") return
     if (cursorRow.s === "config") {
       configList.currentIndex = cursorRow.i
       scrollItemIntoView(configSection)
-    } else if (cursorRow.s !== "conn") {
+    } else {
       scrollItemIntoView(rowAnchors[rowKey(cursorRow.s, cursorRow.i)] || null)
     }
   }
@@ -554,8 +587,8 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(root.view === "connections" ? Style.space(760) : Style.space(420))
-    contentHeight: panel.fittedContentHeight(root.view === "connections"
-      ? connectionsColumn.implicitHeight : column.implicitHeight, Style.space(680))
+    contentHeight: panel.fittedContentHeight(root.view === "connections" ? connectionsColumn.implicitHeight
+      : root.view === "manage" ? manageColumn.implicitHeight : column.implicitHeight, Style.space(680))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -654,6 +687,90 @@ Panel {
         Text {
           width: parent.width
           text: "enter close · x close · X close all · esc back"
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      // ----------------------------------------------------------- manage view
+
+      Column {
+        id: manageColumn
+        anchors.fill: parent
+        spacing: Style.space(10)
+        visible: root.view === "manage"
+
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(manageTitle.implicitHeight, manageState.implicitHeight)
+
+          Text {
+            id: manageTitle
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Manage"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+          }
+
+          Text {
+            id: manageState
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: Model.stateLabel(omihomo.coreState)
+            color: omihomo.coreState === "degraded" ? root.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+
+        PanelSeparator { foreground: root.foreground }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+
+          ActionRow {
+            width: parent.width
+            section: "autostart"
+            title: "Autostart"
+            subtitle: "Start mihomo when the session starts."
+            trailing: omihomo.autostartEnabled ? "on" : "off"
+            current: omihomo.autostartEnabled
+            onActivated: omihomo.toggleAutostart()
+          }
+
+          ActionRow {
+            width: parent.width
+            section: "repair"
+            title: "Repair capabilities"
+            subtitle: omihomo.coreState === "degraded"
+              ? "The TUN device is missing; reapply the core's capabilities."
+              : "Reapplies the capabilities TUN needs to the mihomo binary."
+            trailing: "R"
+            urgentTrailing: omihomo.coreState === "degraded"
+            onActivated: omihomo.repairCore()
+          }
+
+          ActionRow {
+            width: parent.width
+            section: "uninstall"
+            title: root.uninstallArmed ? "Confirm uninstall" : "Uninstall mihomo"
+            subtitle: root.uninstallArmed
+              ? "Activate again to remove it. Esc cancels."
+              : "Removes the core, its capabilities, the unit, and saved subscriptions."
+            urgentTrailing: root.uninstallArmed
+            trailing: root.uninstallArmed ? "confirm" : ""
+            onActivated: root.uninstallCore()
+          }
+        }
+
+        Text {
+          width: parent.width
+          text: "enter activate · b autostart · R repair · esc back"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -819,13 +936,15 @@ Panel {
               onActivated: root.openConnections()
             }
 
+            // Repair lives in the manage view, so a degraded core is surfaced
+            // on the row that leads there rather than by growing the controls.
             ActionRow {
-              visible: omihomo.coreState === "degraded"
               width: parent.width
-              section: "repair"
-              title: "Repair capabilities"
-              trailing: "R"
-              onActivated: omihomo.repairCore()
+              section: "manage"
+              title: "Manage"
+              trailing: omihomo.coreState === "degraded" ? "needs repair" : "M"
+              urgentTrailing: omihomo.coreState === "degraded"
+              onActivated: root.openManage()
             }
           }
 
@@ -1153,23 +1272,6 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
-          }
-
-          // ---- uninstall ----------------------------------------------------
-
-          PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
-
-          ActionRow {
-            visible: omihomo.installed
-            width: parent.width
-            section: "uninstall"
-            title: root.uninstallArmed ? "Confirm uninstall" : "Uninstall mihomo"
-            subtitle: root.uninstallArmed
-              ? "Activate again to remove it. Esc cancels."
-              : "Removes the core, its capabilities, the unit, and saved subscriptions."
-            urgentTrailing: root.uninstallArmed
-            trailing: root.uninstallArmed ? "confirm" : ""
-            onActivated: root.uninstallCore()
           }
         }
       }

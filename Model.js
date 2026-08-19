@@ -37,6 +37,7 @@ function defaultStatus() {
     activeSubscription: "",
     primaryGroup: "",
     tunEnabled: false,
+    autostartEnabled: false,
     startedMs: 0
   }
 }
@@ -52,6 +53,7 @@ function parseStatus(raw) {
     activeSubscription: text(data.active_subscription),
     primaryGroup: text(data.primary_group),
     tunEnabled: data.tun_enabled === true,
+    autostartEnabled: data.autostart_enabled === true,
     startedMs: parseUnitTimestamp(data.uptime)
   }
 }
