@@ -11,13 +11,17 @@ core_install() {
   fi
   omi_require_command yay
   omi_with_lock omi_init_layout
-  if ! yay -S --needed mihomo-bin libcap nftables yq jq curl >/dev/null 2>&1; then
-    omi_error "mihomo installation failed" 1
+  # yay builds from the AUR and prompts for sudo, so its output belongs on the
+  # terminal: it is the only place the real reason for a failure is written.
+  local status=0
+  yay -S --needed mihomo-bin libcap nftables yq jq curl || status=$?
+  if ((status != 0)); then
+    omi_error "mihomo installation failed: yay exited $status$(omi_aur_hint)" 1
   fi
   local binary
   binary=$(omi_mihomo_bin)
   [[ -n $binary ]] || omi_error "mihomo was not installed" 10
-  if ! pkexec "$OMIHOMO_ROOT/libexec/root.sh" install /usr/bin/mihomo >/dev/null 2>&1; then
+  if ! pkexec "$OMIHOMO_ROOT/libexec/root.sh" install /usr/bin/mihomo; then
     omi_error "granting mihomo capabilities failed" 1
   fi
   mkdir -p "$HOME/.local/bin"
@@ -26,22 +30,32 @@ core_install() {
   omi_systemctl --user daemon-reload
 }
 
+# yay reports an unreachable AUR as "no AUR package found", which reads like the
+# package was renamed. Probing the RPC endpoint separates the two.
+omi_aur_hint() {
+  "$OMIHOMO_CURL" -fsS --max-time 5 -o /dev/null \
+    'https://aur.archlinux.org/rpc/v5/info?arg[]=mihomo-bin' 2>/dev/null && return 0
+  printf ' (aur.archlinux.org is unreachable from this machine, so the AUR build cannot start)'
+}
+
 core_uninstall() {
   omi_require_command yay
   "$OMIHOMO_SYSTEMCTL" --user disable --now "$OMIHOMO_UNIT" >/dev/null 2>&1 || true
   rm -f "$OMIHOMO_UNIT_FILE" "$HOME/.local/bin/omihomo"
   "$OMIHOMO_SYSTEMCTL" --user daemon-reload >/dev/null 2>&1 || true
   if [[ -x $OMIHOMO_ROOT/libexec/root.sh ]]; then
-    pkexec "$OMIHOMO_ROOT/libexec/root.sh" uninstall >/dev/null 2>&1 || omi_error "removing mihomo capabilities failed" 1
+    pkexec "$OMIHOMO_ROOT/libexec/root.sh" uninstall || omi_error "removing mihomo capabilities failed" 1
   fi
-  if ! yay -Rns mihomo-bin >/dev/null 2>&1; then
-    omi_error "mihomo removal failed" 1
+  local status=0
+  yay -Rns mihomo-bin || status=$?
+  if ((status != 0)); then
+    omi_error "mihomo removal failed: yay exited $status" 1
   fi
 }
 
 core_repair() {
   omi_require_core
-  if ! pkexec "$OMIHOMO_ROOT/libexec/root.sh" repair /usr/bin/mihomo >/dev/null 2>&1; then
+  if ! pkexec "$OMIHOMO_ROOT/libexec/root.sh" repair /usr/bin/mihomo; then
     omi_error "repairing mihomo capabilities failed" 1
   fi
 }

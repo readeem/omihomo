@@ -80,9 +80,21 @@ omi_require_core() {
   omi_core_installed || omi_error "mihomo is not installed" 10
 }
 
+# Errors are machine-readable by default, because the panel parses stderr as
+# JSON. When a human is reading (stderr is a terminal, or --pretty was passed)
+# the same message goes out as a plain line instead.
 omi_error() {
   local message=$1 code=${2:-1}
-  printf '{"error":%s,"code":%s}\n' "$(jq -Rn --arg message "$message" '$message')" "$code" >&2
+  if [[ ${OMIHOMO_PRETTY:-0} == 1 || -t 2 ]]; then
+    # Code 1 is the generic failure, so it tells a human nothing worth printing.
+    if ((code == 1)); then
+      printf 'omihomo: %s\n' "$message" >&2
+    else
+      printf 'omihomo: %s (exit %s)\n' "$message" "$code" >&2
+    fi
+  else
+    printf '{"error":%s,"code":%s}\n' "$(jq -Rn --arg message "$message" '$message')" "$code" >&2
+  fi
   return "$code"
 }
 

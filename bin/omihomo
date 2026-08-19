@@ -14,6 +14,8 @@ for argument in "$@"; do
   fi
 done
 
+export OMIHOMO_PRETTY=$pretty
+
 if ((${#arguments[@]} == 0)); then
   source "$OMIHOMO_ROOT/lib/common.sh"
   omi_error "a command is required" 1
@@ -33,18 +35,21 @@ case $command_name in
     ;;
 esac
 
+# Without --pretty there is nothing to reformat, so the command keeps the
+# terminal: interactive verbs like `core install` need a tty for their prompts
+# and their output.
+if ((pretty == 0)); then
+  exec "$script" "${arguments[@]}"
+fi
+
 output=$(mktemp)
 set +e
 "$script" "${arguments[@]}" >"$output"
 status=$?
 set -e
-if ((status == 0)); then
-  if ((pretty)) && [[ -s $output ]]; then
-    source "$OMIHOMO_ROOT/lib/common.sh"
-    omi_pretty <"$output"
-  else
-    cat "$output"
-  fi
+if ((status == 0)) && [[ -s $output ]]; then
+  source "$OMIHOMO_ROOT/lib/common.sh"
+  omi_pretty <"$output"
 else
   cat "$output"
 fi

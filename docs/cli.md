@@ -39,11 +39,22 @@ Read verbs emit one JSON object or array on stdout. Objects and array members ar
 panel can parse them without knowing the CLI implementation. Add `--pretty` anywhere in a command
 to render the successful JSON result for a human. Write verbs emit no stdout on success.
 
-Errors always go to stderr as a JSON object:
+Errors always go to stderr. When stderr is a pipe, which is how the panel reads them, they are a
+JSON object:
 
 ```json
 {"error":"mihomo is not installed","code":10}
 ```
+
+When stderr is a terminal, or `--pretty` was passed, the same error is one plain line instead:
+
+```text
+omihomo: mihomo is not installed (exit 10)
+```
+
+`--pretty` also buffers stdout for reformatting, so interactive verbs such as `core install` should
+be run without it; without `--pretty` the command keeps the terminal and its build output and
+prompts stay visible.
 
 Exit codes are:
 

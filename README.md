@@ -13,6 +13,30 @@ omarchy plugin add https://github.com/readeem/omihomo.git --enable
 Place it with `omarchy bar move omihomo`. The panel's install action builds the core from the
 AUR in a floating terminal; `omihomo core install` does the same by hand.
 
+### Install from a local checkout
+
+For development, link the checkout into Omarchy's user plugin directory:
+
+```sh
+ln -sfn "$(pwd)" ~/.config/omarchy/plugins/omihomo
+omarchy plugin enable omihomo
+omarchy bar move omihomo
+omarchy-shell shell rescanPlugins
+```
+
+Run those commands from the repository root. Omarchy will use the checkout directly, so saved
+changes reload automatically. Verify that the plugin was discovered with:
+
+```sh
+omarchy plugin list --json | jq '.[] | select(.id == "omihomo")'
+```
+
+To remove the local installation without deleting the checkout:
+
+```sh
+rm ~/.config/omarchy/plugins/omihomo
+```
+
 ## Use
 
 Left click opens the panel, right click starts or stops the core. Inside the panel `j`/`k`

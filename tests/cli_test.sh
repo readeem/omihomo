@@ -302,6 +302,21 @@ test_active_override_change_reports_unreachable_controller() {
   assert_file_contains "$stderr" '"code":12'
 }
 
+# The panel parses stderr as JSON; a human reading a terminal gets a plain line.
+test_pretty_errors_are_plain_text() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN=/nonexistent
+  local stderr status
+  stderr=$(mktemp)
+  set +e
+  run_cli --pretty core start 2>"$stderr"
+  status=$?
+  set -e
+  assert_eq "$status" 10
+  assert_file_contains "$stderr" 'omihomo: mihomo is not installed (exit 10)'
+}
+
 tests=(
   test_status_reports_not_installed
   test_subscription_add_and_list_are_flat_json
@@ -318,6 +333,7 @@ tests=(
   test_status_reports_stopped_for_installed_core
   test_status_reports_degraded_when_tun_device_is_missing
   test_error_code_10_is_used_when_core_is_missing
+  test_pretty_errors_are_plain_text
   test_core_start_requires_an_active_subscription
   test_turning_tun_on_requires_an_active_unit
   test_active_override_change_reports_unreachable_controller
