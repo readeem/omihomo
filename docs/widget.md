@@ -6,7 +6,7 @@ plugin folder is loaded from there.
 | File | Role |
 | --- | --- |
 | `manifest.json` | Plugin id `omihomo`, one bar-widget entry point, one setting |
-| `Panel.qml` | Bar button, main popup, connections and manage views, and every row component |
+| `Panel.qml` | Bar button, main popup, connections, rules and manage views, and every row component |
 | `Service.qml` | All state: CLI calls, mihomo API calls, polling, and actions |
 | `Model.js` | Pure parsing and formatting, tested by `tests/model_test.js` |
 | `OmihomoIcon.qml` | The bar mark, drawn natively rather than shipped as an SVG |
@@ -32,38 +32,45 @@ back. This is the same optimistic-state pattern used by Omarchy's Tailscale pane
 
 ## Panel
 
-The main popup is 420px wide and carries, top to bottom:
+Every view is 420px wide. The main popup carries, top to bottom:
 
 1. **Hero** — active subscription, resolved status, and the on/off switch for the core.
 2. **Status readout** — the six fields settled in ticket #5: one status indicator with its
    detail on the hero, then `Group › Config`, throughput, uptime, and egress IP with latency.
    Egress is the only field that costs a network call, so it is fetched on panel open, on a
    config or group change, and on a click — never on a timer.
-3. **Controls** — mode, TUN, connections, and manage.
-4. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
+3. **Configs** — the browsed group's configs in a capped list, with a filter, per-config and
+   whole-group latency tests, and best-effort parameters. Only a `Selector` group can be
+   chosen from; the rest are read-only because they pick for themselves. Picking a config in
+   the primary group is the one thing done every session, so it sits directly under the readout.
+4. **Groups** — every group mihomo reports, with the primary one marked. Selecting a group
+   browses it, which is what the config list above shows.
+5. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
    URL, since the subscription names itself. With no subscriptions the URL field is the section;
    once there is one, it hides behind an add row.
-5. **Groups** — every group mihomo reports, with the primary one marked. Selecting a group
-   browses it.
-6. **Configs** — the browsed group's configs in a capped list, with a filter, per-config and
-   whole-group latency tests, and best-effort parameters. Only a `Selector` group can be
-   chosen from; the rest are read-only because they pick for themselves.
-7. **Rules** — your rules, an add form over the four types from ticket #7, and below them the
-   subscription's own rules, dimmed and read-only.
+6. **Controls** — one line at the bottom of the panel: mode and TUN on the left, because they are
+   state changed in place, and rules, connections, and manage on the right, because they open a
+   view. Each cell is its own cursor target and carries its key in a tooltip.
 
 Configuration parameters are deliberately thin. `GET /proxies/<name>` states a config's type,
 UDP support, liveness, and last delay; it does not expose address, port, or credentials, and
 [the provider research](research/2026-08-18-mihomo-proxy-provider-configs.md) ruled out mapping
 a runtime name back to its provider entry. The panel renders what mihomo states and nothing else.
 
-The **connections view** is the same popup at 760px: totals, one row per connection with host,
-network, chain, rule, process, transfer, and age, and close actions for one or all of them.
+The **connections view** is the same popup: totals, one row per connection with host on the
+first line and route, transfer, and age on the second, and close actions for one or all of them.
 
-The **manage view** is that same secondary surface at the main width, and holds the three
+The **rules view** holds what used to be the panel's last two sections: your rules with an add
+form over the four types from ticket #7, and below them the subscription's own rules, dimmed and
+read-only. It is a view rather than a section because a subscription ships hundreds of rules and
+none of them are read in a normal session. `n` still means "new rule": from the main panel it
+opens the view with the form already up.
+
+The **manage view** holds the three
 operations that outlive a session: autostart, capability repair, and uninstall. Autostart is
 `systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
 stays in-panel because it is one privileged call with no build, and from the panel that call is a
-`pkexec` dialog; a degraded core is surfaced on the Manage row in the controls rather than by
+`pkexec` dialog; a degraded core is surfaced on the manage cell in the controls rather than by
 growing them. Uninstall hands the removal to
 `omarchy-launch-floating-terminal-with-presentation`, because package removal needs sudo. It arms
 on the first activation and only runs on the second, because it also deletes the state directory;
@@ -81,16 +88,16 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `j` / `k`, `↓` / `↑` | Move the cursor |
 | `h` / `l`, `←` / `→` | Change the value on the row (mode, rule type, rule target) |
 | `enter` / `space` | Activate the row |
-| `x` | Delete: subscription, rule, or connection |
+| `x` | Delete: subscription, connection, or rule (rules view) |
 | `s` | Start or stop the core |
 | `t` | Toggle TUN |
 | `m` | Cycle mode |
 | `c` | Connections view |
+| `n` | Rules view, with the add-rule form open |
 | `M` | Manage view |
 | `r` | Refresh |
 | `a` | Add subscription |
 | `u` | Update the selected subscription |
-| `n` | New rule |
 | `p` | Make the selected group primary |
 | `d` / `D` | Latency test the config / the whole group |
 | `/` | Filter configs |
@@ -99,7 +106,8 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `i` | Install the core (only when it is missing) |
 | `esc` | Close the form, filter, or view; otherwise close the panel |
 
-In the connections view `c` goes back; in the manage view `M` does.
+In the connections view `c` goes back and in the manage view `M` does; the rules view leaves
+on Esc, since `n` opens its add form. `n` inside the rules view adds a rule.
 
 Every one of those is also reachable with the mouse. A focused text field owns `enter` and
 `esc` and blocks the panel's key handling until it loses focus.

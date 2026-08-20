@@ -7,7 +7,8 @@ import qs.Ui
 import "Model.js" as Model
 
 // Omihomo's bar widget: a compact core-state icon, a main popup that carries
-// every settled operation, and a wider connections view over the same surface.
+// the operations of a normal session, and three secondary views over the same
+// surface for the ones that are not.
 //
 // Navigation is one flat cursor over `navRows` rather than a per-section state
 // machine: every visible row — control, subscription, group, config, rule,
@@ -20,8 +21,8 @@ Panel {
   ipcTarget: "omihomo"
   manageIpc: false
 
-  // "main", "connections", or "manage". Both secondary views are the same
-  // popup with their own rows and their own keys; connections also widens it.
+  // "main", "connections", "rules", or "manage". Every secondary view is the
+  // same popup at the same width, with its own rows and its own keys.
   property string view: "main"
 
   property bool cursorActive: false
@@ -110,12 +111,26 @@ Panel {
       rows.push({ s: "uninstall" })
       return rows
     }
+    if (view === "rules") {
+      for (i = 0; i < omihomo.rules.length; i++) rows.push({ s: "rule", i: i })
+      if (ruleFormOpen) {
+        rows.push({ s: "ruleType" })
+        rows.push({ s: "ruleValue" })
+        rows.push({ s: "ruleTarget" })
+        rows.push({ s: "ruleSubmit" })
+      } else {
+        rows.push({ s: "ruleAdd" })
+      }
+      return rows
+    }
     rows.push({ s: "power" })
     rows.push({ s: "trace" })
-    rows.push({ s: "mode" })
-    rows.push({ s: "tun" })
-    rows.push({ s: "connections" })
-    rows.push({ s: "manage" })
+    // Configs come before their groups: picking a config in the primary group
+    // is the one thing done every session, so it sits closest to the readout.
+    if (liveReady) {
+      for (i = 0; i < visibleConfigs.length; i++) rows.push({ s: "config", i: i })
+      for (i = 0; i < omihomo.groups.length; i++) rows.push({ s: "group", i: i })
+    }
     for (i = 0; i < omihomo.subscriptions.length; i++) rows.push({ s: "sub", i: i })
     if (subFormOpen) {
       rows.push({ s: "subUrl" })
@@ -123,19 +138,11 @@ Panel {
     } else {
       rows.push({ s: "subAdd" })
     }
-    if (liveReady) {
-      for (i = 0; i < omihomo.groups.length; i++) rows.push({ s: "group", i: i })
-      for (i = 0; i < visibleConfigs.length; i++) rows.push({ s: "config", i: i })
-    }
-    for (i = 0; i < omihomo.rules.length; i++) rows.push({ s: "rule", i: i })
-    if (ruleFormOpen) {
-      rows.push({ s: "ruleType" })
-      rows.push({ s: "ruleValue" })
-      rows.push({ s: "ruleTarget" })
-      rows.push({ s: "ruleSubmit" })
-    } else {
-      rows.push({ s: "ruleAdd" })
-    }
+    rows.push({ s: "mode" })
+    rows.push({ s: "tun" })
+    rows.push({ s: "rules" })
+    rows.push({ s: "connections" })
+    rows.push({ s: "manage" })
     return rows
   }
 
@@ -209,6 +216,7 @@ Panel {
     case "trace": omihomo.refreshTrace(); break
     case "mode": omihomo.setMode(Model.nextMode(omihomo.effectiveMode)); break
     case "tun": omihomo.toggleTun(); break
+    case "rules": openRules(false); break
     case "connections": openConnections(); break
     case "manage": openManage(); break
     case "autostart": omihomo.toggleAutostart(); break
@@ -250,6 +258,11 @@ Panel {
       else if (lower === "c") closeConnections()
       return
     }
+    if (view === "rules") {
+      if (lower === "n") openRuleForm()
+      else if (lower === "r") omihomo.refresh()
+      return
+    }
     if (view === "manage") {
       if (key === "M") closeManage()
       else if (key === "R") omihomo.repairCore()
@@ -268,7 +281,9 @@ Panel {
     case "M": openManage(); return
     case "r": omihomo.refresh(); omihomo.refreshLive(); omihomo.refreshTrace(); return
     case "a": openSubForm(); return
-    case "n": openRuleForm(); return
+    // `n` still means "new rule": it opens the rules view with the form
+    // already up, so the key costs the same two steps it always did.
+    case "n": openRules(true); return
     case "R": omihomo.repairCore(); return
     case "/": openFilter(); return
     }
@@ -285,6 +300,7 @@ Panel {
     if (subFormExplicit) { subFormExplicit = false; return }
     if (ruleFormOpen) { ruleFormOpen = false; return }
     if (view === "connections") { closeConnections(); return }
+    if (view === "rules") { closeRules(); return }
     if (view === "manage") { closeManage(); return }
     close()
   }
@@ -383,6 +399,24 @@ Panel {
     cursorActive = false
   }
 
+  // Rules are their own view rather than a main-panel section: a subscription
+  // ships hundreds of them, and none of them are read in a normal session.
+  function openRules(withForm) {
+    view = "rules"
+    cursor = 0
+    cursorActive = false
+    ruleFormOpen = false
+    if (rulesFlick) rulesFlick.contentY = 0
+    if (withForm) openRuleForm()
+  }
+
+  function closeRules() {
+    view = "main"
+    cursor = 0
+    cursorActive = false
+    ruleFormOpen = false
+  }
+
   // The manage view holds the operations that outlive a session: autostart,
   // capability repair, and uninstall.
   function openManage() {
@@ -453,32 +487,38 @@ Panel {
 
   // ---------------------------------------------------------------- scrolling
 
-  function scrollItemIntoView(item) {
-    if (!panelFlick || !item) return
+  function scrollItemIntoView(item, flick) {
+    if (!flick || !item) return
     Qt.callLater(function() {
       if (!item) return
       var margin = Style.space(6)
-      var point = item.mapToItem(panelFlick.contentItem, 0, 0)
+      var point = item.mapToItem(flick.contentItem, 0, 0)
       var top = point.y
       var bottom = top + item.height
-      var viewTop = panelFlick.contentY
-      var viewBottom = viewTop + panelFlick.height
-      var maxY = Math.max(0, panelFlick.contentHeight - panelFlick.height)
-      if (top < viewTop + margin) panelFlick.contentY = Math.max(0, top - margin)
-      else if (bottom > viewBottom - margin) panelFlick.contentY = Math.min(maxY, bottom + margin - panelFlick.height)
+      var viewTop = flick.contentY
+      var viewBottom = viewTop + flick.height
+      var maxY = Math.max(0, flick.contentHeight - flick.height)
+      if (top < viewTop + margin) flick.contentY = Math.max(0, top - margin)
+      else if (bottom > viewBottom - margin) flick.contentY = Math.min(maxY, bottom + margin - flick.height)
     })
   }
 
-  // Only the main view scrolls: the connection list owns its own scrolling and
-  // the manage view always fits. Within the main view the config list is its
-  // own ListView, and everything else lives in the panel's flickable.
+  // Main and rules are the two flickable views: the connection list owns its
+  // own scrolling and the manage view always fits. Within the main view the
+  // config list is its own ListView, and everything else lives in the
+  // view's flickable.
   function scrollCursorIntoView() {
-    if (!cursorRow || view !== "main") return
+    if (!cursorRow) return
+    if (view === "rules") {
+      scrollItemIntoView(rowAnchors[rowKey(cursorRow.s, cursorRow.i)] || null, rulesFlick)
+      return
+    }
+    if (view !== "main") return
     if (cursorRow.s === "config") {
       configList.currentIndex = cursorRow.i
-      scrollItemIntoView(configSection)
+      scrollItemIntoView(configSection, panelFlick)
     } else {
-      scrollItemIntoView(rowAnchors[rowKey(cursorRow.s, cursorRow.i)] || null)
+      scrollItemIntoView(rowAnchors[rowKey(cursorRow.s, cursorRow.i)] || null, panelFlick)
     }
   }
 
@@ -507,6 +547,7 @@ Panel {
       uninstallArmed = false
       editing = null
       if (panelFlick) panelFlick.contentY = 0
+      if (rulesFlick) rulesFlick.contentY = 0
       omihomo.clearMessages()
       omihomo.refresh()
       omihomo.refreshLive()
@@ -586,8 +627,11 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(root.view === "connections" ? Style.space(760) : Style.space(420))
+    // Every view is the same 420px surface, so switching between them never
+    // moves the popup out from under the pointer.
+    contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(root.view === "connections" ? connectionsColumn.implicitHeight
+      : root.view === "rules" ? rulesColumn.implicitHeight
       : root.view === "manage" ? manageColumn.implicitHeight : column.implicitHeight, Style.space(680))
 
     PanelKeyCatcher {
@@ -631,11 +675,11 @@ Panel {
             id: connectionsTotals
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: omihomo.connections.length + " open   ↓ " + Model.formatBytes(omihomo.connectionsDownload)
-              + "   ↑ " + Model.formatBytes(omihomo.connectionsUpload)
+            text: omihomo.connections.length + " open  ↓ " + Model.formatBytes(omihomo.connectionsDownload)
+              + "  ↑ " + Model.formatBytes(omihomo.connectionsUpload)
             color: root.dim
             font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
+            font.pixelSize: Style.font.caption
           }
         }
 
@@ -901,150 +945,9 @@ Panel {
             }
           }
 
-          // ---- controls ---------------------------------------------------
+          // ---- configs and groups -------------------------------------------
 
           PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
-
-          Column {
-            visible: omihomo.installed
-            width: parent.width
-            spacing: Style.space(4)
-
-            ActionRow {
-              width: parent.width
-              section: "mode"
-              title: "Mode"
-              trailing: omihomo.effectiveMode === "" ? "—" : omihomo.effectiveMode
-              current: true
-              onActivated: omihomo.setMode(Model.nextMode(omihomo.effectiveMode))
-            }
-
-            ActionRow {
-              width: parent.width
-              section: "tun"
-              title: "TUN"
-              trailing: omihomo.tunActive ? "on" : "off"
-              current: omihomo.tunActive
-              onActivated: omihomo.toggleTun()
-            }
-
-            ActionRow {
-              width: parent.width
-              section: "connections"
-              title: "Connections"
-              trailing: omihomo.connections.length > 0 ? String(omihomo.connections.length) : "c"
-              onActivated: root.openConnections()
-            }
-
-            // Repair lives in the manage view, so a degraded core is surfaced
-            // on the row that leads there rather than by growing the controls.
-            ActionRow {
-              width: parent.width
-              section: "manage"
-              title: "Manage"
-              trailing: omihomo.coreState === "degraded" ? "needs repair" : "M"
-              urgentTrailing: omihomo.coreState === "degraded"
-              onActivated: root.openManage()
-            }
-          }
-
-          // ---- subscriptions ----------------------------------------------
-
-          PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
-
-          Column {
-            id: subscriptionSection
-            visible: omihomo.installed
-            width: parent.width
-            spacing: Style.space(4)
-
-            PanelSectionHeader {
-              text: "SUBSCRIPTIONS"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Repeater {
-              model: omihomo.subscriptions
-              SubscriptionRow {
-                required property var modelData
-                required property int index
-                width: subscriptionSection.width
-                subscription: modelData
-                rowIndex: index
-              }
-            }
-
-            ActionRow {
-              visible: !root.subFormOpen
-              width: parent.width
-              section: "subAdd"
-              title: "Add subscription"
-              trailing: "a"
-              onActivated: root.openSubForm()
-            }
-
-            Column {
-              visible: root.subFormOpen
-              width: parent.width
-              spacing: Style.space(4)
-
-              FieldRow {
-                id: subUrlRow
-                width: parent.width
-                section: "subUrl"
-                label: "URL"
-                placeholder: "https://…"
-                onSubmitted: root.submitSubForm()
-              }
-
-              ActionRow {
-                width: parent.width
-                section: "subSubmit"
-                title: "Fetch and add"
-                trailing: root.subFormUrl === "" ? "incomplete" : "enter"
-                onActivated: root.submitSubForm()
-              }
-            }
-          }
-
-          // ---- groups and configs ------------------------------------------
-
-          PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
-
-          Column {
-            id: groupSection
-            visible: omihomo.installed
-            width: parent.width
-            spacing: Style.space(4)
-
-            PanelSectionHeader {
-              text: "GROUPS"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Text {
-              visible: !root.liveReady
-              width: parent.width
-              text: omihomo.activeSubscription === "" ? "Activate a subscription to browse groups."
-                : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse groups.")
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-
-            Repeater {
-              model: root.liveReady ? omihomo.groups : []
-              GroupRow {
-                required property var modelData
-                required property int index
-                width: groupSection.width
-                group: modelData
-                rowIndex: index
-              }
-            }
-          }
 
           Column {
             id: configSection
@@ -1131,13 +1034,217 @@ Panel {
             }
           }
 
-          // ---- rules -------------------------------------------------------
+          Column {
+            id: groupSection
+            visible: omihomo.installed
+            width: parent.width
+            spacing: Style.space(4)
+
+            PanelSectionHeader {
+              text: "GROUPS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              visible: !root.liveReady
+              width: parent.width
+              text: omihomo.activeSubscription === "" ? "Activate a subscription to browse groups."
+                : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse groups.")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+
+            Repeater {
+              model: root.liveReady ? omihomo.groups : []
+              GroupRow {
+                required property var modelData
+                required property int index
+                width: groupSection.width
+                group: modelData
+                rowIndex: index
+              }
+            }
+          }
+
+          // ---- subscriptions ------------------------------------------------
 
           PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
 
           Column {
-            id: ruleSection
+            id: subscriptionSection
             visible: omihomo.installed
+            width: parent.width
+            spacing: Style.space(4)
+
+            PanelSectionHeader {
+              text: "SUBSCRIPTIONS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Repeater {
+              model: omihomo.subscriptions
+              SubscriptionRow {
+                required property var modelData
+                required property int index
+                width: subscriptionSection.width
+                subscription: modelData
+                rowIndex: index
+              }
+            }
+
+            ActionRow {
+              visible: !root.subFormOpen
+              width: parent.width
+              section: "subAdd"
+              title: "Add subscription"
+              trailing: "a"
+              onActivated: root.openSubForm()
+            }
+
+            Column {
+              visible: root.subFormOpen
+              width: parent.width
+              spacing: Style.space(4)
+
+              FieldRow {
+                id: subUrlRow
+                width: parent.width
+                section: "subUrl"
+                label: "URL"
+                placeholder: "https://…"
+                onSubmitted: root.submitSubForm()
+              }
+
+              ActionRow {
+                width: parent.width
+                section: "subSubmit"
+                title: "Fetch and add"
+                trailing: root.subFormUrl === "" ? "incomplete" : "enter"
+                onActivated: root.submitSubForm()
+              }
+            }
+          }
+
+          // ---- controls -----------------------------------------------------
+          //
+          // The panel ends on one line: the two pieces of state that are changed
+          // in place on the left, the three views that own everything else on the
+          // right. Repair lives in the manage view, so a degraded core is surfaced
+          // on the cell that leads there.
+
+          Column {
+            visible: omihomo.installed
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelSeparator { foreground: root.foreground }
+
+            RowLayout {
+              width: parent.width
+              spacing: 0
+
+              ControlCell {
+                section: "mode"
+                label: "MODE"
+                value: omihomo.effectiveMode === "" ? "—" : omihomo.effectiveMode
+                tooltip: "Cycle mode · m"
+                onActivated: omihomo.setMode(Model.nextMode(omihomo.effectiveMode))
+              }
+
+              ControlCell {
+                section: "tun"
+                label: "TUN"
+                value: omihomo.tunActive ? "on" : "off"
+                dimValue: !omihomo.tunActive
+                tooltip: "Toggle TUN · t"
+                onActivated: omihomo.toggleTun()
+              }
+
+              Item { Layout.fillWidth: true; Layout.preferredHeight: 1 }
+
+              ControlCell {
+                section: "rules"
+                value: "rules"
+                label: String(omihomo.rules.length)
+                labelFirst: false
+                tooltip: "Your rules · n"
+                onActivated: root.openRules(false)
+              }
+
+              ControlCell {
+                section: "connections"
+                value: "conns"
+                label: String(omihomo.connections.length)
+                labelFirst: false
+                tooltip: "Connections · c"
+                onActivated: root.openConnections()
+              }
+
+              ControlCell {
+                section: "manage"
+                value: "manage"
+                labelFirst: false
+                urgentValue: omihomo.coreState === "degraded"
+                tooltip: omihomo.coreState === "degraded" ? "Needs repair · M" : "Manage · M"
+                onActivated: root.openManage()
+              }
+            }
+          }
+        }
+      }
+
+      // ------------------------------------------------------------ rules view
+
+      Flickable {
+        id: rulesFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: rulesColumn.implicitHeight
+        clip: true
+        visible: root.view === "rules"
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+          id: rulesColumn
+          width: rulesFlick.width
+          spacing: Style.space(10)
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(rulesTitle.implicitHeight, rulesTotals.implicitHeight)
+
+            Text {
+              id: rulesTitle
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Rules"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            Text {
+              id: rulesTotals
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              text: omihomo.rules.length + " yours · " + omihomo.subscriptionRules.length + " inherited"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          PanelSeparator { foreground: root.foreground }
+
+          Column {
+            id: ruleSection
             width: parent.width
             spacing: Style.space(4)
 
@@ -1220,7 +1327,7 @@ Panel {
 
           Column {
             id: effectiveSection
-            visible: omihomo.installed && omihomo.subscriptionRules.length > 0
+            visible: omihomo.subscriptionRules.length > 0
             width: parent.width
             spacing: Style.space(4)
 
@@ -1251,6 +1358,14 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
+          }
+
+          Text {
+            width: parent.width
+            text: "enter activate · x delete · n new rule · esc back"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
         }
       }
@@ -1332,6 +1447,72 @@ Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
+    }
+  }
+
+  // One cell of the control footer. State cells lead with their label
+  // ("MODE rule"); the cells that open a view lead with the value and trail a
+  // count ("rules 4"), so the two halves of the footer stay tellable apart.
+  component ControlCell: CursorSurface {
+    id: controlCell
+
+    property string section: ""
+    property string label: ""
+    property string value: ""
+    property bool labelFirst: true
+    property bool dimValue: false
+    property bool urgentValue: false
+    property string tooltip: ""
+
+    signal activated()
+
+    hasCursor: root.at(controlCell.section)
+    foreground: root.foreground
+    fill: root.hoverFill
+    implicitWidth: cellRow.implicitWidth + Style.space(16)
+    implicitHeight: cellRow.implicitHeight + Style.spacing.md
+
+    Component.onCompleted: root.registerRowAnchor(root.rowKey(controlCell.section), controlCell)
+
+    MouseArea {
+      id: cellMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onContainsMouseChanged: if (containsMouse) root.focusRow(controlCell.section)
+      onClicked: controlCell.activated()
+    }
+
+    Row {
+      id: cellRow
+      anchors.centerIn: parent
+      spacing: Style.space(6)
+      layoutDirection: controlCell.labelFirst ? Qt.LeftToRight : Qt.RightToLeft
+
+      Text {
+        visible: controlCell.label !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        text: controlCell.label
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        font.letterSpacing: 1.2
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: controlCell.value
+        color: controlCell.urgentValue ? root.urgent : (controlCell.dimValue ? root.dim : root.foreground)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+    }
+
+    PanelToolTip {
+      visible: controlCell.tooltip !== "" && cellMouse.containsMouse
+      text: controlCell.tooltip
+      fontFamily: root.fontFamily
     }
   }
 
@@ -1761,6 +1942,9 @@ Panel {
     }
   }
 
+  // At 420px a connection cannot state everything on one line, so the host
+  // takes the first and its route, transfer, and age share the second: the
+  // route elides, the numbers never do.
   component ConnectionRow: CursorSurface {
     id: connectionRow
 
@@ -1786,7 +1970,7 @@ Panel {
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(8)
       anchors.rightMargin: Style.space(6)
-      spacing: Style.space(10)
+      spacing: Style.space(8)
 
       ColumnLayout {
         id: connectionLabels
@@ -1802,40 +1986,39 @@ Panel {
           elide: Text.ElideRight
         }
 
-        Text {
+        RowLayout {
           Layout.fillWidth: true
-          text: {
-            if (!connectionRow.connection) return ""
-            var parts = []
-            var connection = connectionRow.connection
-            if (connection.network !== "") parts.push(connection.network)
-            if (connection.chain !== "") parts.push(connection.chain)
-            if (connection.rule !== "") parts.push(connection.rule)
-            if (connection.process !== "") parts.push(connection.process)
-            return parts.join(" · ")
+          spacing: Style.space(8)
+
+          Text {
+            Layout.fillWidth: true
+            text: {
+              if (!connectionRow.connection) return ""
+              var parts = []
+              var connection = connectionRow.connection
+              if (connection.network !== "") parts.push(connection.network)
+              if (connection.chain !== "") parts.push(connection.chain)
+              if (connection.rule !== "") parts.push(connection.rule)
+              if (connection.process !== "") parts.push(connection.process)
+              return parts.join(" · ")
+            }
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
           }
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+
+          Text {
+            text: connectionRow.connection
+              ? "↓ " + Model.formatBytes(connectionRow.connection.download)
+                + "  ↑ " + Model.formatBytes(connectionRow.connection.upload)
+                + " · " + Model.formatDuration(connectionRow.connection.durationMs)
+              : ""
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
-      }
-
-      Text {
-        text: connectionRow.connection
-          ? "↓ " + Model.formatBytes(connectionRow.connection.download)
-            + "   ↑ " + Model.formatBytes(connectionRow.connection.upload)
-          : ""
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-      }
-
-      Text {
-        text: connectionRow.connection ? Model.formatDuration(connectionRow.connection.durationMs) : ""
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
       }
 
       PanelActionButton {
