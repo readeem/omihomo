@@ -21,7 +21,7 @@ test_subscription_add_and_list_are_flat_json() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   local output
   output=$(run_cli sub list)
   [[ $(jq 'length' <<<"$output") == 1 ]] || fail "expected one subscription"
@@ -30,12 +30,72 @@ test_subscription_add_and_list_are_flat_json() {
   [[ $(jq -e '.[0] | has("userinfo") | not' <<<"$output") == true ]] || fail "list must stay flat"
 }
 
+# The subscription server picks the format from the User-Agent: an unrecognised
+# client is answered with a base64 share-link list that `mihomo -t` rejects.
+test_subscription_fetch_asks_as_a_clash_client() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  run_cli sub add https://example.test/subscription/work
+  assert_eq "$(head -n 1 "$TEST_ROOT/curl-agent.log")" clash.meta
+}
+
+test_subscription_takes_its_name_from_the_server() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE="base64:$(printf 'Omega Hangout' | base64)"
+
+  run_cli sub add https://example.test/subscription/work
+  assert_json_field "$(run_cli sub list | jq '.[0]')" name "Omega Hangout"
+  [[ -f "$XDG_DATA_HOME/omihomo/cache/Omega Hangout.yaml" ]] || fail "cache is not named after the subscription"
+}
+
+# A header is the server's to write, so a title that would escape the cache
+# directory or break a CLI argument has to be neutralised before it is stored.
+test_unsafe_and_missing_titles_still_produce_a_usable_name() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE='../../etc/passwd'
+
+  run_cli sub add https://example.test/subscription/work
+  assert_json_field "$(run_cli sub list | jq '.[0]')" name "etc passwd"
+
+  unset OMIHOMO_TEST_TITLE
+  export OMIHOMO_TEST_NO_TITLE=yes
+  run_cli sub add https://example.test/subscription/backup
+  assert_json_field "$(run_cli sub list | jq '.[1]')" name example.test
+}
+
+test_repeated_titles_are_suffixed_and_repeated_urls_are_refused() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=shared
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/backup
+  local output
+  output=$(run_cli sub list)
+  assert_eq "$(jq -r '[.[].name] | join(",")' <<<"$output")" "shared,shared 2"
+
+  local status
+  set +e
+  run_cli sub add https://example.test/subscription/work 2>/dev/null
+  status=$?
+  set -e
+  assert_eq "$status" 1
+  assert_eq "$(run_cli sub list | jq 'length')" 2
+}
+
 test_invalid_subscription_update_keeps_previous_cache() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   local cache="$XDG_DATA_HOME/omihomo/cache/work.yaml"
   local before
   before=$(<"$cache")
@@ -59,7 +119,7 @@ test_subscription_fetch_failure_uses_exit_code_21() {
   local stderr status
   stderr=$(mktemp)
   set +e
-  run_cli sub add work https://example.test/subscription/work 2>"$stderr"
+  run_cli sub add https://example.test/subscription/work 2>"$stderr"
   status=$?
   set -e
   assert_eq "$status" 21
@@ -71,7 +131,7 @@ test_activation_merges_override_and_reloads_active_core() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   cat >"$XDG_DATA_HOME/omihomo/override.yaml" <<'EOF'
 config:
   external-controller: 127.0.0.1:9090
@@ -100,7 +160,7 @@ test_active_update_reloads_without_restarting_the_unit() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_SUBSCRIPTION_BODY='proxies: []'
@@ -112,8 +172,8 @@ test_failed_active_activation_keeps_previous_subscription() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add work https://example.test/subscription/work
-  run_cli sub add backup https://example.test/subscription/backup
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/backup
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_API_UNREACHABLE=yes
@@ -132,7 +192,7 @@ test_running_core_rejects_removing_active_subscription() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   local stderr status
@@ -152,7 +212,7 @@ test_rule_filter_and_append_are_applied_to_runtime() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'rules:\n  - DOMAIN-SUFFIX,old.example,DIRECT\n  - DOMAIN-SUFFIX,keep.example,DIRECT'
 
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   run_cli rule raw 'DOMAIN-SUFFIX,first.example,DIRECT'
   run_cli rule raw append 'DOMAIN-SUFFIX,last.example,DIRECT'
   run_cli rule raw filter 'DOMAIN-SUFFIX,old.example,DIRECT'
@@ -191,7 +251,7 @@ test_pretty_is_applied_by_dispatcher() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   local output
   output=$(run_cli --pretty sub list)
   assert_file_contains <(printf '%s\n' "$output") 'name'
@@ -314,7 +374,7 @@ test_active_override_change_reports_unreachable_controller() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add work https://example.test/subscription/work
+  run_cli sub add https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_API_UNREACHABLE=yes
@@ -350,7 +410,7 @@ test_uninstall_removes_every_artifact() {
   trap teardown_test RETURN
   export OMIHOMO_TEST_PKGS="mihomo-bin"
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add home https://example.com/subscription >/dev/null
+  run_cli sub add https://example.com/subscription >/dev/null
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$REPO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
   local unit="$XDG_CONFIG_HOME/systemd/user/omihomo.service"
@@ -371,7 +431,7 @@ test_uninstall_can_keep_state() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add home https://example.com/subscription >/dev/null
+  run_cli sub add https://example.com/subscription >/dev/null
 
   run_cli core uninstall --keep-data
 
@@ -382,6 +442,10 @@ test_uninstall_can_keep_state() {
 tests=(
   test_status_reports_not_installed
   test_subscription_add_and_list_are_flat_json
+  test_subscription_fetch_asks_as_a_clash_client
+  test_subscription_takes_its_name_from_the_server
+  test_unsafe_and_missing_titles_still_produce_a_usable_name
+  test_repeated_titles_are_suffixed_and_repeated_urls_are_refused
   test_invalid_subscription_update_keeps_previous_cache
   test_subscription_fetch_failure_uses_exit_code_21
   test_activation_merges_override_and_reloads_active_core

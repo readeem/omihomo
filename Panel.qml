@@ -32,7 +32,10 @@ Panel {
   property string expandedConfig: ""
   readonly property string configFilter: filterOpen ? configFilterField.text : ""
 
-  property bool subFormOpen: false
+  // With no subscriptions the URL field is the section, so it is always open;
+  // once there is one, the field hides behind the add row.
+  property bool subFormExplicit: false
+  readonly property bool subFormOpen: subFormExplicit || omihomo.subscriptions.length === 0
   property bool ruleFormOpen: false
   // Uninstall throws away subscriptions and the core, so the row asks twice.
   property bool uninstallArmed: false
@@ -42,7 +45,6 @@ Panel {
   // Form values live in their fields: binding a TextField's `text` to panel
   // state breaks the moment the user types into it, so the field is the
   // source and the panel reads it.
-  readonly property string subFormName: subNameRow.field.text
   readonly property string subFormUrl: subUrlRow.field.text
   readonly property string ruleFormValue: ruleValueRow.field.text
 
@@ -116,7 +118,6 @@ Panel {
     rows.push({ s: "manage" })
     for (i = 0; i < omihomo.subscriptions.length; i++) rows.push({ s: "sub", i: i })
     if (subFormOpen) {
-      rows.push({ s: "subName" })
       rows.push({ s: "subUrl" })
       rows.push({ s: "subSubmit" })
     } else {
@@ -214,7 +215,6 @@ Panel {
     case "repair": omihomo.repairCore(); break
     case "sub": activateSubscriptionAt(cursorRow.i); break
     case "subAdd": openSubForm(); break
-    case "subName": beginEdit(subNameRow.field); break
     case "subUrl": beginEdit(subUrlRow.field); break
     case "subSubmit": submitSubForm(); break
     case "group": browseGroupAt(cursorRow.i); break
@@ -282,7 +282,7 @@ Panel {
     if (editing) { endEdit(); return }
     if (uninstallArmed) { uninstallArmed = false; return }
     if (filterOpen) { closeFilter(); return }
-    if (subFormOpen) { subFormOpen = false; return }
+    if (subFormExplicit) { subFormExplicit = false; return }
     if (ruleFormOpen) { ruleFormOpen = false; return }
     if (view === "connections") { closeConnections(); return }
     if (view === "manage") { closeManage(); return }
@@ -399,16 +399,16 @@ Panel {
   }
 
   function openSubForm() {
-    subNameRow.field.text = ""
     subUrlRow.field.text = ""
-    subFormOpen = true
-    Qt.callLater(function() { root.focusRow("subName"); root.beginEdit(subNameRow.field) })
+    subFormExplicit = true
+    Qt.callLater(function() { root.focusRow("subUrl"); root.beginEdit(subUrlRow.field) })
   }
 
   function submitSubForm() {
-    if (subFormName === "" || subFormUrl === "") return
-    omihomo.addSubscription(subFormName, subFormUrl)
-    subFormOpen = false
+    if (subFormUrl === "") return
+    omihomo.addSubscription(subFormUrl)
+    subUrlRow.field.text = ""
+    subFormExplicit = false
     endEdit()
   }
 
@@ -501,7 +501,7 @@ Panel {
       cursorActive = false
       cursor = 0
       view = "main"
-      subFormOpen = false
+      subFormExplicit = false
       ruleFormOpen = false
       filterOpen = false
       uninstallArmed = false
@@ -964,15 +964,6 @@ Panel {
               fontFamily: root.fontFamily
             }
 
-            Text {
-              visible: omihomo.subscriptions.length === 0
-              width: parent.width
-              text: "No subscriptions yet."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-
             Repeater {
               model: omihomo.subscriptions
               SubscriptionRow {
@@ -999,18 +990,6 @@ Panel {
               spacing: Style.space(4)
 
               FieldRow {
-                id: subNameRow
-                width: parent.width
-                section: "subName"
-                label: "NAME"
-                placeholder: "home"
-                onSubmitted: {
-                  root.focusRow("subUrl")
-                  root.beginEdit(subUrlRow.field)
-                }
-              }
-
-              FieldRow {
                 id: subUrlRow
                 width: parent.width
                 section: "subUrl"
@@ -1023,7 +1002,7 @@ Panel {
                 width: parent.width
                 section: "subSubmit"
                 title: "Fetch and add"
-                trailing: root.subFormName === "" || root.subFormUrl === "" ? "incomplete" : "enter"
+                trailing: root.subFormUrl === "" ? "incomplete" : "enter"
                 onActivated: root.submitSubForm()
               }
             }

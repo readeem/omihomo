@@ -35,7 +35,9 @@ The main popup is 420px wide and carries, top to bottom:
    Egress is the only field that costs a network call, so it is fetched on panel open, on a
    config or group change, and on a click — never on a timer.
 3. **Controls** — mode, TUN, connections, and manage.
-4. **Subscriptions** — activate, update, remove, and an inline add form.
+4. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
+   URL, since the subscription names itself. With no subscriptions the URL field is the section;
+   once there is one, it hides behind an add row.
 5. **Groups** — every group mihomo reports, with the primary one marked. Selecting a group
    browses it.
 6. **Configs** — the browsed group's configs in a capped list, with a filter, per-config and

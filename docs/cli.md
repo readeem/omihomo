@@ -11,7 +11,7 @@ omihomo core install|repair|start|stop|restart|version
 omihomo core uninstall [--keep-data]
 omihomo core autostart on|off
 
-omihomo sub add <name> <url>
+omihomo sub add <url>
 omihomo sub list
 omihomo sub remove <name>
 omihomo sub update <name>
@@ -89,6 +89,18 @@ runtime.yaml             merged YAML loaded by mihomo
 active                   active subscription name, one line
 .lock                    shared write lock
 ```
+
+`sub add` takes only the URL. The subscription names itself: the name is the `profile-title`
+response header, base64-decoded when it carries the `base64:` prefix, falling back to the
+`content-disposition` filename and then to the URL's host. Because that name is a server's to
+write and Omihomo uses it as both a cache filename and a CLI argument, it is stripped of path
+separators and control characters, trimmed, and capped at 64 characters; a name already taken
+gets a numeric suffix. Adding a URL that is already on the list is an error. A subscription keeps
+the name it was added under: `sub update` refreshes its YAML and quota, not its name.
+
+Fetches identify as `clash.meta`. Subscription servers content-negotiate on User-Agent and answer
+an unrecognised client with a base64 list of share links, which fails `mihomo -t` validation with
+exit `20`. `OMIHOMO_USER_AGENT` overrides the string for a server that wants a different one.
 
 Subscription updates fetch to a temporary file, validate with `mihomo -t`, and replace the cache
 only after validation succeeds. Updating the active subscription merges `runtime.yaml` and sends

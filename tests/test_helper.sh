@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -37,10 +37,12 @@ set -euo pipefail
 output=
 headers=
 url=
+agent=
 method=GET
 while (($#)); do
   case $1 in
     -o) output=$2; shift 2 ;;
+    -A) agent=$2; shift 2 ;;
     -D) headers=$2; shift 2 ;;
     -X) method=$2; shift 2 ;;
     --data|--data-raw|--data-binary|--json) shift 2 ;;
@@ -58,10 +60,16 @@ if [[ ${OMIHOMO_TEST_API_UNREACHABLE:-no} == yes && $url == *127.0.0.1* ]]; then
   exit 1
 fi
 if [[ $url == *subscription* ]]; then
+  printf '%s\n' "$agent" >>"$TEST_ROOT/curl-agent.log"
   [[ ${OMIHOMO_TEST_FETCH_FAIL:-no} == yes ]] && exit 1
   printf '%s\n' "${OMIHOMO_TEST_SUBSCRIPTION_BODY:-proxies: []}" >"$output"
   if [[ -n ${headers:-} ]]; then
+    # The subscription names itself, so the stub titles it after the last path
+    # segment: /subscription/work answers to "work".
     printf 'subscription-userinfo: upload=10; download=20; total=100; expire=200\r\n' >"$headers"
+    if [[ ${OMIHOMO_TEST_NO_TITLE:-no} != yes ]]; then
+      printf 'profile-title: %s\r\n' "${OMIHOMO_TEST_TITLE:-${url##*/}}" >>"$headers"
+    fi
   fi
   exit 0
 fi

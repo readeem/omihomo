@@ -231,11 +231,12 @@ Item {
     overrideCmd.launch(cli(["rule", "remove", String(index)]))
   }
 
-  function addSubscription(name, url) {
+  // The subscription names itself from its own headers, so there is nothing to
+  // mark pending: the name only exists once the fetch has come back.
+  function addSubscription(url) {
     if (subActionCmd.running) return
-    pendingSubscription = name
-    reportDone("Fetching " + name + "…")
-    subActionCmd.launch(cli(["sub", "add", name, url]))
+    reportDone("Fetching subscription…")
+    subActionCmd.launch(cli(["sub", "add", url]))
   }
 
   function updateSubscription(name) {

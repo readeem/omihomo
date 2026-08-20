@@ -17,6 +17,10 @@ OMIHOMO_UNIT_FILE=${OMIHOMO_UNIT_FILE:-${CONFIG_HOME}/systemd/user/${OMIHOMO_UNI
 OMIHOMO_YQ=${OMIHOMO_YQ:-yq}
 OMIHOMO_CURL=${OMIHOMO_CURL:-curl}
 OMIHOMO_SYSTEMCTL=${OMIHOMO_SYSTEMCTL:-systemctl}
+# Subscription servers content-negotiate on User-Agent. A client they do not
+# recognise gets a base64 list of share links, which `mihomo -t` then rejects;
+# a Clash-family agent gets the mihomo YAML we actually want.
+OMIHOMO_USER_AGENT=${OMIHOMO_USER_AGENT:-clash.meta}
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"

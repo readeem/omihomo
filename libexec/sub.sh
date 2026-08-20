@@ -10,6 +10,12 @@ subscription_exists() {
   jq -e --arg name "$name" 'any(.[]; .name == $name)' "$OMIHOMO_SUBSCRIPTIONS_FILE" >/dev/null
 }
 
+# The URL is what the user actually chose, so it is what "already added" means.
+subscription_url_exists() {
+  local url=$1
+  jq -e --arg url "$url" 'any(.[]; .url == $url)' "$OMIHOMO_SUBSCRIPTIONS_FILE" >/dev/null
+}
+
 subscription_userinfo_json() {
   local headers=$1 line value upload download total expire
   line=$(grep -i '^subscription-userinfo:' "$headers" | tail -n 1 | tr -d '\r' || true)
@@ -24,9 +30,60 @@ subscription_userinfo_json() {
 
 fetch_subscription() {
   local url=$1 body=$2 headers=$3
-  if ! "$OMIHOMO_CURL" -fsSL -D "$headers" -o "$body" "$url"; then
+  if ! "$OMIHOMO_CURL" -fsSL -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" "$url"; then
     omi_error "subscription fetch failed" 21
   fi
+}
+
+subscription_header() {
+  local headers=$1 field=$2 line
+  line=$(grep -i "^${field}:" "$headers" | tail -n 1 | tr -d '\r' || true)
+  [[ -n $line ]] || return 0
+  printf '%s\n' "${line#*: }"
+}
+
+# A name arrives from a server header, so it has to be made safe for a cache
+# filename and a CLI argument before anything writes it: no path separators, no
+# control characters, no leading dot, and a bounded length.
+sanitize_name() {
+  local name
+  name=$(tr -d '[:cntrl:]' <<<"$1" | tr '/\\' '  ' | tr -s '[:space:]' ' ')
+  name=${name%"${name##*[![:space:]]}"}
+  while [[ $name == [.[:space:]]* ]]; do name=${name#?}; done
+  name=${name:0:64}
+  printf '%s\n' "${name%"${name##*[![:space:]]}"}"
+}
+
+# The subscription names itself. `profile-title` is the ecosystem's header for
+# it, optionally base64; `content-disposition` carries the older filename form.
+# Neither is guaranteed, so the URL's host is the last resort.
+subscription_fetched_name() {
+  local headers=$1 url=$2 title disposition
+  title=$(subscription_header "$headers" profile-title)
+  if [[ $title == base64:* ]]; then
+    title=$(base64 -d <<<"${title#base64:}" 2>/dev/null || true)
+  fi
+  if [[ -z $(sanitize_name "$title") ]]; then
+    disposition=$(subscription_header "$headers" content-disposition)
+    title=$(sed -n 's/.*filename="\([^"]*\)".*/\1/p' <<<"$disposition")
+    [[ -n $title ]] || title=$(sed -n 's/.*filename=\([^;]*\).*/\1/p' <<<"$disposition")
+  fi
+  title=$(sanitize_name "$title")
+  if [[ -z $title ]]; then
+    title=${url#*://}
+    title=$(sanitize_name "${title%%/*}")
+  fi
+  printf '%s\n' "${title:-subscription}"
+}
+
+# Two subscriptions can advertise the same title, and the name is the handle
+# every other command takes, so later arrivals get a numeric suffix.
+unique_name() {
+  local base=$1 candidate=$1 index=2
+  while subscription_exists "$candidate"; do
+    candidate="$base $((index++))"
+  done
+  printf '%s\n' "$candidate"
 }
 
 fetch_validated_subscription() {
@@ -48,15 +105,15 @@ fetch_validated_subscription() {
 }
 
 subscription_add() {
-  local name=${1:-} url=${2:-}
+  local url=${1:-}
   omi_init_layout
-  [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || omi_error "invalid subscription name" 1
   [[ $url =~ ^https?:// ]] || omi_error "subscription URL must use http or https" 1
-  subscription_exists "$name" && omi_error "subscription already exists: $name" 1
-  local body headers record temporary
+  subscription_url_exists "$url" && omi_error "subscription already exists for this URL" 1
+  local name body headers record temporary
   fetch_validated_subscription "$url" || return $?
   body=$FETCH_BODY
   headers=$FETCH_HEADERS
+  name=$(unique_name "$(subscription_fetched_name "$headers" "$url")")
   omi_atomic_move "$body" "$OMIHOMO_CACHE_DIR/${name}.yaml"
   record=$(jq -cn --arg name "$name" --arg url "$url" --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson userinfo "$(subscription_userinfo_json "$headers")" \
     '{name: $name, url: $url, updated_at: $updated, userinfo: $userinfo}')
@@ -152,7 +209,7 @@ subscription_activate() {
 }
 
 case ${1:-} in
-  add) omi_with_lock subscription_add "${2:-}" "${3:-}" ;;
+  add) omi_with_lock subscription_add "${2:-}" ;;
   list) subscription_list ;;
   remove) omi_with_lock subscription_remove "${2:-}" ;;
   update) omi_with_lock subscription_update "${2:-}" ;;
