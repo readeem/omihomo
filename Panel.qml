@@ -60,7 +60,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
-  readonly property color barIconColor: omihomo.coreRunning ? barForeground : Qt.darker(barForeground, 1.55)
+  readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)
 
   // The plugin invokes its own CLI by absolute path, derived from where this
   // file sits — no PATH lookup, so a stale copy can never be picked up.
@@ -186,7 +186,7 @@ Panel {
   function adjustCursorRow(delta) {
     if (!cursorRow) return
     if (cursorRow.s === "mode") {
-      var index = Model.MODES.indexOf(omihomo.mode)
+      var index = Model.MODES.indexOf(omihomo.effectiveMode)
       var next = (index < 0 ? 0 : index + delta + Model.MODES.length) % Model.MODES.length
       omihomo.setMode(Model.MODES[next])
     } else if (cursorRow.s === "tun") {
@@ -207,7 +207,7 @@ Panel {
     case "uninstall": uninstallCore(); break
     case "power": omihomo.toggleCore(); break
     case "trace": omihomo.refreshTrace(); break
-    case "mode": omihomo.setMode(Model.nextMode(omihomo.mode)); break
+    case "mode": omihomo.setMode(Model.nextMode(omihomo.effectiveMode)); break
     case "tun": omihomo.toggleTun(); break
     case "connections": openConnections(); break
     case "manage": openManage(); break
@@ -263,7 +263,7 @@ Panel {
     switch (key) {
     case "s": omihomo.toggleCore(); return
     case "t": omihomo.toggleTun(); return
-    case "m": omihomo.setMode(Model.nextMode(omihomo.mode)); return
+    case "m": omihomo.setMode(Model.nextMode(omihomo.effectiveMode)); return
     case "c": openConnections(); return
     case "M": openManage(); return
     case "r": omihomo.refresh(); omihomo.refreshLive(); omihomo.refreshTrace(); return
@@ -566,9 +566,9 @@ Panel {
           iconSize: Style.space(11)
           color: root.barIconColor
           badgeColor: root.urgent
-          crossed: omihomo.installed && !omihomo.coreRunning
+          crossed: omihomo.installed && !omihomo.coreActive
           warning: omihomo.coreState === "degraded" || !omihomo.installed
-          tunnelled: omihomo.tunEnabled && omihomo.coreState === "on"
+          tunnelled: omihomo.tunActive && omihomo.coreActive
         }
       }
     }
@@ -738,8 +738,8 @@ Panel {
             section: "autostart"
             title: "Autostart"
             subtitle: "Start mihomo when the session starts."
-            trailing: omihomo.autostartEnabled ? "on" : "off"
-            current: omihomo.autostartEnabled
+            trailing: omihomo.autostartActive ? "on" : "off"
+            current: omihomo.autostartActive
             onActivated: omihomo.toggleAutostart()
           }
 
@@ -812,15 +812,15 @@ Panel {
                 : Model.stateLabel(omihomo.coreState)
               foreground: root.foreground
               fontFamily: root.fontFamily
-              iconOpacity: omihomo.coreRunning ? 1.0 : 0.5
+              iconOpacity: omihomo.coreActive ? 1.0 : 0.5
               iconComponent: Component {
                 OmihomoIcon {
                   iconSize: Style.font.display
-                  color: omihomo.coreRunning ? root.foreground : root.dim
+                  color: omihomo.coreActive ? root.foreground : root.dim
                   badgeColor: root.urgent
-                  crossed: omihomo.installed && !omihomo.coreRunning
+                  crossed: omihomo.installed && !omihomo.coreActive
                   warning: omihomo.coreState === "degraded" || !omihomo.installed
-                  tunnelled: omihomo.tunEnabled && omihomo.coreState === "on"
+                  tunnelled: omihomo.tunActive && omihomo.coreActive
                 }
               }
 
@@ -828,7 +828,7 @@ Panel {
                 ToggleSwitch {
                   id: powerSwitch
                   visible: omihomo.installed
-                  checked: omihomo.coreRunning
+                  checked: omihomo.coreActive
                   busy: omihomo.busy
                   hasCursor: header.ringVisible
                   foreground: hero.foreground
@@ -837,7 +837,7 @@ Panel {
 
                   PanelToolTip {
                     visible: powerSwitch.containsMouse
-                    text: omihomo.coreRunning ? "Stop mihomo" : "Start mihomo"
+                    text: omihomo.coreActive ? "Stop mihomo" : "Start mihomo"
                     fontFamily: hero.fontFamily
                   }
                 }
@@ -914,17 +914,17 @@ Panel {
               width: parent.width
               section: "mode"
               title: "Mode"
-              trailing: omihomo.mode === "" ? "—" : omihomo.mode
+              trailing: omihomo.effectiveMode === "" ? "—" : omihomo.effectiveMode
               current: true
-              onActivated: omihomo.setMode(Model.nextMode(omihomo.mode))
+              onActivated: omihomo.setMode(Model.nextMode(omihomo.effectiveMode))
             }
 
             ActionRow {
               width: parent.width
               section: "tun"
               title: "TUN"
-              trailing: omihomo.tunEnabled ? "on" : "off"
-              current: omihomo.tunEnabled
+              trailing: omihomo.tunActive ? "on" : "off"
+              current: omihomo.tunActive
               onActivated: omihomo.toggleTun()
             }
 

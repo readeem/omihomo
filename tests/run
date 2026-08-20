@@ -8,6 +8,12 @@ command -v node >/dev/null 2>&1 || {
 }
 node --test "$here/model_test.js"
 
+if command -v qs >/dev/null 2>&1 && [[ -d /usr/share/omarchy/shell/Commons ]]; then
+  "$here/service_state_test.sh"
+else
+  printf 'skipping service state test: Quickshell or Omarchy shell imports are not installed\n'
+fi
+
 if [[ -n ${OMIHOMO_TEST_YQ:-} ]]; then
   [[ -x $OMIHOMO_TEST_YQ ]] || { printf 'OMIHOMO_TEST_YQ is not executable: %s\n' "$OMIHOMO_TEST_YQ" >&2; exit 2; }
 else

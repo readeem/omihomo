@@ -30,8 +30,19 @@ Item {
   property bool autostartEnabled: false
   property double startedMs: 0
 
+  // Confirmed state keeps following status reads. While an action is settling,
+  // these desired values override it for rendering so an older read cannot
+  // repaint over the user's click. -1 means there is no pending boolean.
+  property int _desiredCoreRunning: -1
+  property int _desiredTunEnabled: -1
+  property int _desiredAutostartEnabled: -1
+
   readonly property bool installed: coreState !== "not-installed" && coreState !== "unknown"
   readonly property bool coreRunning: coreState === "on" || coreState === "degraded"
+  readonly property bool coreActive: _desiredCoreRunning === -1 ? coreRunning : _desiredCoreRunning === 1
+  readonly property bool tunActive: _desiredTunEnabled === -1 ? tunEnabled : _desiredTunEnabled === 1
+  readonly property bool autostartActive: _desiredAutostartEnabled === -1
+    ? autostartEnabled : _desiredAutostartEnabled === 1
   readonly property bool apiReady: coreRunning && apiAddress !== ""
 
   // ---- controller ---------------------------------------------------------
@@ -39,6 +50,8 @@ Item {
   property string apiSecret: ""
   property int mixedPort: 0
   property string mode: ""
+  property string _desiredMode: ""
+  readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
 
   // ---- data ---------------------------------------------------------------
   property var subscriptions: []
@@ -64,6 +77,8 @@ Item {
   property string actionStatus: ""
   property string lastError: ""
   property int lastErrorCode: 0
+  property string _coreAction: ""
+  property string _overrideAction: ""
 
   readonly property string primaryGroup: Model.primaryGroupName(groups, configuredPrimaryGroup)
   readonly property var primaryGroupEntry: Model.groupByName(groups, primaryGroup)
@@ -154,6 +169,7 @@ Item {
   function applyStatus(raw) {
     var status = Model.parseStatus(raw)
     var wasReady = apiReady
+    var confirmedCoreRunning = status.state === "on" || status.state === "degraded"
     coreState = status.state
     coreDetail = status.detail
     activeSubscription = status.activeSubscription
@@ -161,6 +177,12 @@ Item {
     tunEnabled = status.tunEnabled
     autostartEnabled = status.autostartEnabled
     startedMs = status.startedMs
+    if (_desiredCoreRunning !== -1 && confirmedCoreRunning === (_desiredCoreRunning === 1))
+      _desiredCoreRunning = -1
+    if (_desiredTunEnabled !== -1 && tunEnabled === (_desiredTunEnabled === 1))
+      _desiredTunEnabled = -1
+    if (_desiredAutostartEnabled !== -1 && autostartEnabled === (_desiredAutostartEnabled === 1))
+      _desiredAutostartEnabled = -1
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
@@ -175,60 +197,90 @@ Item {
     }
   }
 
+  function applyConfigs(raw) {
+    var parsed = Model.parseConfigs(raw)
+    mode = parsed.mode
+    mixedPort = parsed.mixedPort > 0 ? parsed.mixedPort : parsed.port
+    if (_desiredMode !== "" && mode === _desiredMode) _desiredMode = ""
+  }
+
   // ---- writes -------------------------------------------------------------
 
-  function runCore(args, message) {
-    if (coreCmd.running) return
+  function runCore(args, message, action) {
+    if (coreCmd.running) return false
+    _coreAction = action || ""
     reportDone(message)
-    coreCmd.launch(cli(args))
+    if (coreCmd.launch(cli(args))) return true
+    _coreAction = ""
+    return false
   }
 
   function toggleCore() {
-    if (!installed) return
-    runCore(coreRunning ? ["core", "stop"] : ["core", "start"], coreRunning ? "Stopping mihomo…" : "Starting mihomo…")
+    if (!installed || coreCmd.running) return
+    var desired = coreActive ? 0 : 1
+    _desiredCoreRunning = desired
+    if (!runCore(desired === 1 ? ["core", "start"] : ["core", "stop"],
+      desired === 1 ? "Starting mihomo…" : "Stopping mihomo…", "core"))
+      _desiredCoreRunning = -1
   }
 
   function repairCore() {
-    runCore(["core", "repair"], "Repairing capabilities…")
+    runCore(["core", "repair"], "Repairing capabilities…", "repair")
   }
 
   // Autostart is systemd's `enable`, so it goes through the CLI like the rest
   // of the unit's lifecycle; the next status read reports what stuck.
   function toggleAutostart() {
-    if (!installed) return
-    runCore(["core", "autostart", autostartEnabled ? "off" : "on"],
-      autostartEnabled ? "Disabling autostart…" : "Enabling autostart…")
+    if (!installed || coreCmd.running) return
+    var desired = autostartActive ? 0 : 1
+    _desiredAutostartEnabled = desired
+    if (!runCore(["core", "autostart", desired === 1 ? "on" : "off"],
+      desired === 1 ? "Enabling autostart…" : "Disabling autostart…", "autostart"))
+      _desiredAutostartEnabled = -1
   }
 
   function setMode(next) {
-    if (overrideCmd.running || next === "") return
+    if (overrideCmd.running || next === "" || next === effectiveMode) return
     reportDone("")
-    mode = next
-    overrideCmd.launch(cli(["set", "mode", next]))
+    _desiredMode = next
+    _overrideAction = "mode"
+    if (!overrideCmd.launch(cli(["set", "mode", next]))) {
+      _desiredMode = ""
+      _overrideAction = ""
+    }
   }
 
   function toggleTun() {
     if (overrideCmd.running) return
-    reportDone(tunEnabled ? "" : "Enabling TUN…")
-    overrideCmd.launch(cli(["set", "tun", tunEnabled ? "off" : "on"]))
+    var desired = tunActive ? 0 : 1
+    reportDone(desired === 1 ? "Enabling TUN…" : "")
+    _desiredTunEnabled = desired
+    _overrideAction = "tun"
+    if (!overrideCmd.launch(cli(["set", "tun", desired === 1 ? "on" : "off"]))) {
+      _desiredTunEnabled = -1
+      _overrideAction = ""
+    }
   }
 
   function setPrimaryGroup(name) {
     if (overrideCmd.running || name === "") return
     reportDone("")
-    overrideCmd.launch(cli(["set", "group", name]))
+    _overrideAction = "group"
+    if (!overrideCmd.launch(cli(["set", "group", name]))) _overrideAction = ""
   }
 
   function addRule(type, value, target) {
     if (overrideCmd.running) return
     reportDone("")
-    overrideCmd.launch(cli(["rule", "add", type, value, target]))
+    _overrideAction = "rule"
+    if (!overrideCmd.launch(cli(["rule", "add", type, value, target]))) _overrideAction = ""
   }
 
   function removeRule(index) {
     if (overrideCmd.running || index <= 0) return
     reportDone("")
-    overrideCmd.launch(cli(["rule", "remove", String(index)]))
+    _overrideAction = "rule"
+    if (!overrideCmd.launch(cli(["rule", "remove", String(index)]))) _overrideAction = ""
   }
 
   // The subscription names itself from its own headers, so there is nothing to
@@ -373,9 +425,7 @@ Item {
     id: configsCmd
     onFinished: function(code, out) {
       if (code !== 0) return
-      var parsed = Model.parseConfigs(out)
-      root.mode = parsed.mode
-      root.mixedPort = parsed.mixedPort > 0 ? parsed.mixedPort : parsed.port
+      root.applyConfigs(out)
     }
   }
 
@@ -430,7 +480,13 @@ Item {
   Cmd {
     id: coreCmd
     onFinished: function(code, out, err) {
-      if (code !== 0) root.reportError(code, err)
+      var action = root._coreAction
+      root._coreAction = ""
+      if (code !== 0) {
+        if (action === "core") root._desiredCoreRunning = -1
+        else if (action === "autostart") root._desiredAutostartEnabled = -1
+        root.reportError(code, err)
+      }
       else root.reportDone("")
       delayedRefresh.restart()
     }
@@ -449,7 +505,13 @@ Item {
   Cmd {
     id: overrideCmd
     onFinished: function(code, out, err) {
-      if (code !== 0) root.reportError(code, err)
+      var action = root._overrideAction
+      root._overrideAction = ""
+      if (code !== 0) {
+        if (action === "mode") root._desiredMode = ""
+        else if (action === "tun") root._desiredTunEnabled = -1
+        root.reportError(code, err)
+      }
       else root.reportDone("")
       delayedRefresh.restart()
     }

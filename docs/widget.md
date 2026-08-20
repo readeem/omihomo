@@ -25,6 +25,11 @@ Per [ADR-0001](adr/0001-panel-talks-to-mihomo-directly.md) the widget has two ca
 Errors are whatever the CLI put on stderr; the panel shows the message and falls back to the
 exit-code table in [cli.md](cli.md) when a command dies without one.
 
+Core power, TUN, autostart, and mode keep confirmed and desired values separate. A click updates
+the desired value immediately, stale reads continue updating only the confirmed value, and the
+desired value disappears once a read agrees. A failed command clears it and rolls the control
+back. This is the same optimistic-state pattern used by Omarchy's Tailscale panel.
+
 ## Panel
 
 The main popup is 420px wide and carries, top to bottom:
@@ -116,6 +121,10 @@ Then place it with `omarchy bar move omihomo`. Installing the mihomo core itself
 install action, or `omihomo core install` in a terminal.
 
 ## Verifying a change
+
+`tests/run` includes a Quickshell-native service test that injects stale status and config reads
+between a click and its confirmation. It uses `/usr/bin/true` and `/usr/bin/false` as fake CLIs,
+so it does not touch the real service or configuration.
 
 `qmllint` catches syntax and binding mistakes without a compositor:
 
