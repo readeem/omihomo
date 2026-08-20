@@ -96,6 +96,15 @@ set_mode() {
   local mode=${1:-}
   [[ $mode == rule || $mode == global || $mode == direct ]] || omi_error "mode must be rule, global, or direct" 1
   omi_init_layout
+  if [[ $mode == global ]]; then
+    local active cache primary
+    active=$(omi_active_name)
+    [[ -n $active ]] || omi_error "global mode needs an active subscription" 13
+    cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
+    [[ -f $cache ]] || omi_error "active subscription cache is missing" 13
+    primary=$(omi_resolve_primary_group "$cache" "$OMIHOMO_OVERRIDE_FILE")
+    [[ -n $primary ]] || omi_error "global mode needs a subscription group" 1
+  fi
   override_candidate ".config.mode = \"$mode\""
 }
 
@@ -125,6 +134,7 @@ set_tun() {
 set_group() {
   local group=${1:-}
   [[ -n $group ]] || omi_error "group name is required" 1
+  [[ $group != GLOBAL ]] || omi_error "GLOBAL is managed by Omihomo" 1
   omi_init_layout
   OMIHOMO_GROUP="$group" override_candidate '.omihomo."primary-group" = strenv(OMIHOMO_GROUP)'
 }

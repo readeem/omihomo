@@ -9,6 +9,10 @@ var MODES = ["rule", "global", "direct"]
 // the rest pick for themselves and are shown read-only.
 var GROUP_TYPES = ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"]
 
+function isSystemGroup(group) {
+  return !!group && (group.system === true || text(group.name) === "GLOBAL")
+}
+
 function text(value) {
   return value === null || value === undefined ? "" : String(value)
 }
@@ -227,7 +231,8 @@ function parseProxies(raw) {
         type: text(entry.type),
         now: text(entry.now),
         all: entry.all.slice(),
-        selectable: text(entry.type) === "Selector"
+        selectable: text(entry.type) === "Selector",
+        system: (text(entry.name) || text(name)) === "GLOBAL"
       })
     } else {
       configs[text(name)] = entry
@@ -237,15 +242,29 @@ function parseProxies(raw) {
   return { groups: groups, configs: configs }
 }
 
-// The primary group is an override-layer setting; when it is unset or points
-// at a group this subscription does not declare, fall back to the first
-// selectable group, which is what the CLI defaults to.
+function userGroups(groups) {
+  var visible = []
+  for (var i = 0; i < groups.length; i++) {
+    if (!isSystemGroup(groups[i])) visible.push(groups[i])
+  }
+  return visible
+}
+
+// GLOBAL is runtime plumbing, never a primary group. A stale explicit setting
+// falls through to the same subscription-owned default as an empty setting.
 function primaryGroupName(groups, configured) {
   var wanted = text(configured)
   var i
-  for (i = 0; i < groups.length; i++) if (groups[i].name === wanted) return wanted
-  for (i = 0; i < groups.length; i++) if (groups[i].selectable) return groups[i].name
-  return groups.length > 0 ? groups[0].name : ""
+  for (i = 0; i < groups.length; i++) {
+    if (groups[i].name === wanted && !isSystemGroup(groups[i])) return wanted
+  }
+  for (i = 0; i < groups.length; i++) {
+    if (groups[i].selectable && !isSystemGroup(groups[i])) return groups[i].name
+  }
+  for (i = 0; i < groups.length; i++) {
+    if (!isSystemGroup(groups[i])) return groups[i].name
+  }
+  return ""
 }
 
 function groupByName(groups, name) {
@@ -511,6 +530,8 @@ if (typeof module !== "undefined") {
     parseApiInfo: parseApiInfo,
     parseConfigs: parseConfigs,
     parseProxies: parseProxies,
+    isSystemGroup: isSystemGroup,
+    userGroups: userGroups,
     primaryGroupName: primaryGroupName,
     groupByName: groupByName,
     historyDelay: historyDelay,

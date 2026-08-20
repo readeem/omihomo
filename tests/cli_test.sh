@@ -155,6 +155,55 @@ EOF
   fi
 }
 
+test_runtime_routes_global_through_the_primary_group() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies:\n  - name: Tokyo\n    type: direct\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [Tokyo]\n  - name: Backup\n    type: select\n    proxies: [Tokyo]'
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -r '."proxy-groups"[0].name' "$runtime")" GLOBAL
+  assert_eq "$(yq -r '."proxy-groups"[0].proxies[0]' "$runtime")" VPN
+
+  run_cli set group Backup
+  assert_eq "$(yq -r '."proxy-groups"[0].proxies[0]' "$runtime")" Backup
+
+  run_cli set mode global
+  assert_eq "$(yq -r '.mode' "$runtime")" global
+}
+
+test_global_mode_requires_a_subscription_group() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local stderr status
+  stderr=$(mktemp)
+  set +e
+  run_cli set mode global 2>"$stderr"
+  status=$?
+  set -e
+  assert_eq "$status" 1
+  assert_file_contains "$stderr" 'global mode needs a subscription group'
+}
+
+test_global_cannot_be_set_as_primary() {
+  setup_test
+  trap teardown_test RETURN
+  local stderr status
+  stderr=$(mktemp)
+  set +e
+  run_cli set group GLOBAL 2>"$stderr"
+  status=$?
+  set -e
+  assert_eq "$status" 1
+  assert_file_contains "$stderr" 'GLOBAL is managed by Omihomo'
+}
+
 test_active_update_reloads_without_restarting_the_unit() {
   setup_test
   trap teardown_test RETURN
@@ -525,6 +574,9 @@ tests=(
   test_invalid_subscription_update_keeps_previous_cache
   test_subscription_fetch_failure_uses_exit_code_21
   test_activation_merges_override_and_reloads_active_core
+  test_runtime_routes_global_through_the_primary_group
+  test_global_mode_requires_a_subscription_group
+  test_global_cannot_be_set_as_primary
   test_active_update_reloads_without_restarting_the_unit
   test_failed_active_activation_keeps_previous_subscription
   test_running_core_rejects_removing_active_subscription

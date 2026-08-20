@@ -112,6 +112,11 @@ holds the one shared `flock`.
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.
 An active subscription and the capabilities installed with the core are required.
 
+The generated runtime owns Mihomo's `GLOBAL` system group and points it at the resolved primary
+subscription group. This makes global mode follow the same selected config as rule mode without
+showing `GLOBAL`, `DIRECT`, or `REJECT` as manual config choices. `set mode global` fails when the
+active subscription has no groups, and `set group GLOBAL` is rejected.
+
 `core autostart on|off` is `systemctl --user enable|disable` on the unit, and is what the panel's
 manage view toggles. Turning it on writes the unit first when it is missing, so autostart works on
 a core that has never been started.

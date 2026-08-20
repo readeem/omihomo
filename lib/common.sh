@@ -259,9 +259,24 @@ omi_reload_runtime() {
   fi
 }
 
+# Resolve the same primary group the panel shows. GLOBAL is mihomo's system
+# group, so only subscription groups can become Omihomo's primary.
+omi_resolve_primary_group() {
+  local source=$1 override=$2 configured
+  configured=$(omi_yq -r '.omihomo."primary-group" // ""' "$override")
+  OMIHOMO_CONFIGURED_PRIMARY=$configured omi_yq -r '
+    [."proxy-groups"[]? | select(.name != "GLOBAL")] as $groups |
+    (strenv(OMIHOMO_CONFIGURED_PRIMARY)) as $wanted |
+    (($groups | map(select(.name == $wanted)) | .[0].name) //
+     ($groups | map(select(.type == "select")) | .[0].name) //
+     ($groups[0].name // ""))
+  ' "$source"
+}
+
 omi_merge_runtime() {
-  local source=$1 override=$2 destination=$3
-  omi_yq eval-all -P '
+  local source=$1 override=$2 destination=$3 primary
+  primary=$(omi_resolve_primary_group "$source" "$override")
+  OMIHOMO_PRIMARY_GROUP=$primary omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
     select(fileIndex == 1) as $override |
     ($override.config // {}) as $config |
@@ -269,7 +284,15 @@ omi_merge_runtime() {
     ($override.rules.append // []) as $append |
     ($override.rules.filter // []) as $filter |
     ($base * $config) as $merged |
-    ($merged | .rules = ($prepend + ((.rules // []) | map(. as $rule | select(($filter | contains([$rule]) | not))) + $append)))
+    (($merged.rules // []) | map(select(. as $rule | ($filter | contains([$rule]) | not)))) as $base_rules |
+    ($prepend + $base_rules + $append) as $rules |
+    (($merged."proxy-groups" // []) | map(select(.name != "GLOBAL"))) as $groups |
+    $merged |
+    .rules = $rules |
+    ."proxy-groups" = ((
+      [{"name": "GLOBAL", "type": "select", "proxies": [strenv(OMIHOMO_PRIMARY_GROUP)]}] |
+        map(select(strenv(OMIHOMO_PRIMARY_GROUP) != ""))
+      ) + $groups)
   ' "$source" "$override" >"$destination"
 }
 

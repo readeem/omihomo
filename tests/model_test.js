@@ -90,28 +90,42 @@ test("rule validation mirrors the CLI's per-type rules", () => {
 test("proxies split into groups and configs", () => {
   const parsed = Model.parseProxies(JSON.stringify({
     proxies: {
+      "GLOBAL": { name: "GLOBAL", type: "Selector", now: "DIRECT", all: ["DIRECT", "Proxy"] },
       "Proxy": { name: "Proxy", type: "Selector", now: "Tokyo 01", all: ["Tokyo 01", "DIRECT"] },
       "Auto": { name: "Auto", type: "URLTest", now: "Tokyo 01", all: ["Tokyo 01"] },
       "Tokyo 01": { name: "Tokyo 01", type: "Vmess", udp: true, history: [{ delay: 182 }] },
       "DIRECT": { name: "DIRECT", type: "Direct", history: [] }
     }
   }))
-  assert.deepEqual(parsed.groups.map(g => g.name), ["Auto", "Proxy"])
+  assert.deepEqual(parsed.groups.map(g => g.name), ["Auto", "GLOBAL", "Proxy"])
+  assert.equal(parsed.groups.find(g => g.name === "GLOBAL").system, true)
   assert.equal(parsed.groups.find(g => g.name === "Proxy").selectable, true)
+  assert.equal(parsed.groups.find(g => g.name === "Proxy").system, false)
   assert.equal(parsed.groups.find(g => g.name === "Auto").selectable, false)
   assert.equal(Model.historyDelay(parsed.configs["Tokyo 01"]), 182)
   assert.equal(parsed.configs["Proxy"], undefined)
 })
 
-test("the primary group falls back to the first selectable group", () => {
+test("the primary group fallback skips mihomo's GLOBAL group", () => {
   const groups = [
+    { name: "GLOBAL", selectable: true },
     { name: "Auto", selectable: false },
     { name: "Proxy", selectable: true }
   ]
   assert.equal(Model.primaryGroupName(groups, "Proxy"), "Proxy")
+  assert.equal(Model.primaryGroupName(groups, "GLOBAL"), "Proxy")
   assert.equal(Model.primaryGroupName(groups, ""), "Proxy")
   assert.equal(Model.primaryGroupName(groups, "Deleted"), "Proxy")
+  assert.equal(Model.primaryGroupName([{ name: "GLOBAL", selectable: true }], ""), "")
   assert.equal(Model.primaryGroupName([], "Proxy"), "")
+})
+
+test("system groups are removed from user-facing group lists", () => {
+  const groups = [
+    { name: "GLOBAL", system: true },
+    { name: "Proxy", system: false }
+  ]
+  assert.deepEqual(Model.userGroups(groups).map(group => group.name), ["Proxy"])
 })
 
 test("our own rules are peeled off the head of the merged list", () => {

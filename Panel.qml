@@ -69,14 +69,15 @@ Panel {
   readonly property string cliPath: pluginDir + "bin/omihomo"
 
   readonly property bool liveReady: omihomo.apiReady
-  readonly property string browsedGroup: Model.groupByName(omihomo.groups, browseGroup)
+  readonly property var visibleGroups: Model.userGroups(omihomo.groups)
+  readonly property string browsedGroup: Model.groupByName(visibleGroups, browseGroup)
     ? browseGroup : omihomo.primaryGroup
-  readonly property var browsedGroupEntry: Model.groupByName(omihomo.groups, browsedGroup)
+  readonly property var browsedGroupEntry: Model.groupByName(visibleGroups, browsedGroup)
   readonly property var visibleConfigs: browsedGroupEntry
     ? Model.filterNames(browsedGroupEntry.all, configFilter) : []
   readonly property var ruleTargets: {
     var targets = ["DIRECT", "REJECT"]
-    for (var i = 0; i < omihomo.groups.length; i++) targets.push(omihomo.groups[i].name)
+    for (var i = 0; i < visibleGroups.length; i++) targets.push(visibleGroups[i].name)
     return targets
   }
   readonly property string ruleType: Model.RULE_TYPES[Math.max(0, Math.min(ruleTypeIndex, Model.RULE_TYPES.length - 1))]
@@ -129,7 +130,7 @@ Panel {
     // is the one thing done every session, so it sits closest to the readout.
     if (liveReady) {
       for (i = 0; i < visibleConfigs.length; i++) rows.push({ s: "config", i: i })
-      for (i = 0; i < omihomo.groups.length; i++) rows.push({ s: "group", i: i })
+      for (i = 0; i < visibleGroups.length; i++) rows.push({ s: "group", i: i })
     }
     for (i = 0; i < omihomo.subscriptions.length; i++) rows.push({ s: "sub", i: i })
     if (subFormOpen) {
@@ -333,7 +334,7 @@ Panel {
   }
 
   function browseGroupAt(index) {
-    var group = omihomo.groups[index]
+    var group = visibleGroups[index]
     if (!group) return
     browseGroup = group.name
     configFilterField.text = ""
@@ -342,7 +343,7 @@ Panel {
 
   function makeSelectedGroupPrimary() {
     if (!cursorRow || cursorRow.s !== "group") return
-    var group = omihomo.groups[cursorRow.i]
+    var group = visibleGroups[cursorRow.i]
     if (group) omihomo.setPrimaryGroup(group.name)
   }
 
@@ -1079,7 +1080,7 @@ Panel {
               }
 
               Repeater {
-                model: root.liveReady ? omihomo.groups : []
+                model: root.liveReady ? root.visibleGroups : []
                 GroupRow {
                   required property var modelData
                   required property int index

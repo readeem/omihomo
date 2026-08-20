@@ -43,8 +43,9 @@ Every view is 420px wide. The main popup carries, top to bottom:
    whole-group latency tests, and best-effort parameters. Only a `Selector` group can be
    chosen from; the rest are read-only because they pick for themselves. Picking a config in
    the primary group is the one thing done every session, so it sits directly under the readout.
-4. **Groups** — every group mihomo reports, with the primary one marked. Selecting a group
-   browses it, which is what the config list above shows.
+4. **Groups** — subscription groups, with the primary one marked. Mihomo's `GLOBAL` system
+   group stays hidden because Omihomo generates and manages it. Selecting a group browses it,
+   which is what the config list above shows.
 5. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
    URL, since the subscription names itself. With no subscriptions the URL field is the section;
    once there is one, it hides behind an add row.
