@@ -17,6 +17,7 @@ OMIHOMO_UNIT_FILE=${OMIHOMO_UNIT_FILE:-${CONFIG_HOME}/systemd/user/${OMIHOMO_UNI
 OMIHOMO_YQ=${OMIHOMO_YQ:-yq}
 OMIHOMO_CURL=${OMIHOMO_CURL:-curl}
 OMIHOMO_SYSTEMCTL=${OMIHOMO_SYSTEMCTL:-systemctl}
+OMIHOMO_GETCAP=${OMIHOMO_GETCAP:-getcap}
 # Subscription servers content-negotiate on User-Agent. A client they do not
 # recognise gets a base64 list of share links, which `mihomo -t` then rejects;
 # a Clash-family agent gets the mihomo YAML we actually want.
@@ -91,9 +92,8 @@ omi_yq_available() {
   return 1
 }
 
-# The privileged steps are one setcap and one pacman hook. From a terminal that
-# is plain sudo, which reuses the password the install already asked for; from
-# the panel there is no terminal to type into, so it has to be pkexec.
+# Installation and repair each enter one privileged helper. A terminal uses
+# sudo; a panel action has no terminal for password input, so it uses pkexec.
 omi_privileged() {
   if [[ -t 0 ]] && command -v sudo >/dev/null 2>&1; then
     sudo "$@"
@@ -124,6 +124,19 @@ omi_core_installed() {
 
 omi_require_core() {
   omi_core_installed || omi_error "mihomo is not installed" 10
+}
+
+omi_tun_capabilities_ok() {
+  local binary output value capabilities
+  binary=$(omi_mihomo_bin)
+  [[ -n $binary && -x $binary ]] || return 1
+  output=$("$OMIHOMO_GETCAP" "$binary" 2>/dev/null) || return 1
+  value=${output#* }
+  [[ $value == *=ep ]] || return 1
+  capabilities=${value%=ep}
+  [[ ,$capabilities, == *,cap_net_admin,* ]] &&
+    [[ ,$capabilities, == *,cap_net_raw,* ]] &&
+    [[ ,$capabilities, == *,cap_net_bind_service,* ]]
 }
 
 # Errors are machine-readable by default, because the panel parses stderr as
@@ -167,6 +180,32 @@ omi_systemctl() {
   if ! "$OMIHOMO_SYSTEMCTL" "$@" >/dev/null 2>&1; then
     omi_error "systemd operation failed" 1
   fi
+}
+
+omi_write_unit() {
+  mkdir -p "$(dirname "$OMIHOMO_UNIT_FILE")"
+  cat >"$OMIHOMO_UNIT_FILE" <<EOF
+[Unit]
+Description=Omihomo mihomo proxy core
+After=network-online.target
+
+[Service]
+ExecStart=$(omi_mihomo_bin) -d $OMIHOMO_DATA_DIR -f $OMIHOMO_RUNTIME_FILE
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+omi_start_core() {
+  omi_require_core
+  omi_require_command nft
+  [[ -n $(omi_active_name) ]] || omi_error "no active subscription" 13
+  [[ -f $OMIHOMO_RUNTIME_FILE ]] || omi_error "active runtime config is missing" 13
+  [[ -f $OMIHOMO_UNIT_FILE ]] || omi_write_unit
+  omi_systemctl --user daemon-reload
+  omi_systemctl --user start "$OMIHOMO_UNIT"
 }
 
 omi_active_name() {

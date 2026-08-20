@@ -11,16 +11,11 @@ core_install() {
   fi
   omi_require_command yay
   omi_with_lock omi_init_layout
-  # One password prompt for the whole install: sudo caches the credential and
-  # every privileged step below reuses it, so nothing pops a second dialog.
-  sudo -v || omi_error "sudo is required to install mihomo" 1
   omi_install_packages
   local binary
   binary=$(omi_mihomo_bin)
   [[ -n $binary ]] || omi_error "mihomo was not installed" 10
-  if ! omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" install /usr/bin/mihomo; then
-    omi_error "granting mihomo capabilities failed" 1
-  fi
+  omi_tun_capabilities_ok || omi_error "mihomo was installed without its TUN capabilities" 1
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$OMIHOMO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
   omi_write_unit
@@ -28,22 +23,22 @@ core_install() {
   omi_note "mihomo is installed. Open the panel and add a subscription."
 }
 
-# Repo packages through pacman, the core through yay, both unattended the way
-# Omarchy's own install scripts run them. Output stays on the terminal: it is
-# the only place the real reason for a failure is written.
+# The root helper installs dependencies and the pacman hook in one authenticated
+# call. yay keeps that sudo timestamp alive while it installs mihomo; the hook
+# grants the capabilities inside yay's existing pacman transaction.
 omi_install_packages() {
-  local conflict=() status=0
+  local prepare_args=(prepare) status=0
   # Arch's `yq` package is the jq wrapper and owns the same /usr/bin/yq as
   # go-yq, so pacman has to be told it may replace it.
   if pacman -Qq yq >/dev/null 2>&1; then
     omi_note "replacing the yq package (a jq wrapper) with go-yq, the yq mihomo configs need"
-    conflict=(--ask 4)
+    prepare_args+=(--replace-yq)
   fi
-  sudo pacman -S --needed --noconfirm "${conflict[@]}" go-yq jq libcap nftables curl || status=$?
+  omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" "${prepare_args[@]}" || status=$?
   if ((status != 0)); then
-    omi_error "installing the omihomo dependencies failed: pacman exited $status" 1
+    omi_error "preparing mihomo dependencies failed" 1
   fi
-  yay -S --needed --noconfirm --answerdiff=None --answerclean=None mihomo-bin || status=$?
+  yay -S --sudoloop --needed --noconfirm --answerdiff=None --answerclean=None mihomo-bin || status=$?
   if ((status != 0)); then
     omi_error "mihomo installation failed: yay exited $status$(omi_aur_hint)" 1
   fi
@@ -112,14 +107,8 @@ core_repair() {
 }
 
 core_start() {
-  omi_require_core
-  omi_require_command nft
   omi_with_lock omi_init_layout
-  [[ -n $(omi_active_name) ]] || omi_error "no active subscription" 13
-  [[ -f $OMIHOMO_RUNTIME_FILE ]] || omi_error "active runtime config is missing" 13
-  [[ -f $OMIHOMO_UNIT_FILE ]] || omi_write_unit
-  omi_systemctl --user daemon-reload
-  omi_systemctl --user start "$OMIHOMO_UNIT"
+  omi_start_core
 }
 
 core_stop() {
@@ -154,22 +143,6 @@ core_version() {
     omi_error "mihomo version could not be read" 1
   fi
   jq -cn --arg version "$version" '{version: $version}'
-}
-
-omi_write_unit() {
-  mkdir -p "$(dirname "$OMIHOMO_UNIT_FILE")"
-  cat >"$OMIHOMO_UNIT_FILE" <<EOF
-[Unit]
-Description=Omihomo mihomo proxy core
-After=network-online.target
-
-[Service]
-ExecStart=$(omi_mihomo_bin) -d $OMIHOMO_DATA_DIR -f $OMIHOMO_RUNTIME_FILE
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-EOF
 }
 
 case ${1:-} in

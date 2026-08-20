@@ -12,7 +12,8 @@ test("status parses the CLI's stable object", () => {
     state: "degraded", status: "degraded", detail: "tun device is missing",
     ip: null, latency: null, download: null, upload: null, config: null,
     uptime: "Tue 2026-08-18 13:06:48 MSK", active_subscription: "home",
-    primary_group: "Proxy", tun_enabled: true, autostart_enabled: true
+    primary_group: "Proxy", tun_enabled: true, autostart_enabled: true,
+    capabilities_ok: true
   }))
   assert.equal(status.state, "degraded")
   assert.equal(status.detail, "tun device is missing")
@@ -20,6 +21,7 @@ test("status parses the CLI's stable object", () => {
   assert.equal(status.primaryGroup, "Proxy")
   assert.equal(status.tunEnabled, true)
   assert.equal(status.autostartEnabled, true)
+  assert.equal(status.capabilitiesOk, true)
   assert.ok(status.startedMs > 0)
 })
 
@@ -32,6 +34,7 @@ test("status nulls read as empty, and garbage falls back to unknown", () => {
   assert.equal(status.activeSubscription, "")
   assert.equal(status.startedMs, 0)
   assert.equal(status.autostartEnabled, false)
+  assert.equal(status.capabilitiesOk, false)
   assert.equal(Model.parseStatus("not json").state, "unknown")
 })
 

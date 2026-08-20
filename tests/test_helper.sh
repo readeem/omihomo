@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_CAPABILITIES
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -121,6 +121,22 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_ROOT/pkexec.log"
 EOF
   chmod +x "$TEST_ROOT/bin/pkexec"
+
+  cat >"$TEST_ROOT/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$TEST_ROOT/sudo.log"
+EOF
+  chmod +x "$TEST_ROOT/bin/sudo"
+
+  cat >"$TEST_ROOT/bin/getcap" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${OMIHOMO_TEST_CAPABILITIES:-no} == yes ]]; then
+  printf '%s cap_net_bind_service,cap_net_admin,cap_net_raw=ep\n' "$1"
+fi
+EOF
+  chmod +x "$TEST_ROOT/bin/getcap"
 }
 
 teardown_test() {

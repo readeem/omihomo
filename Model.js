@@ -38,6 +38,7 @@ function defaultStatus() {
     primaryGroup: "",
     tunEnabled: false,
     autostartEnabled: false,
+    capabilitiesOk: false,
     startedMs: 0
   }
 }
@@ -54,6 +55,7 @@ function parseStatus(raw) {
     primaryGroup: text(data.primary_group),
     tunEnabled: data.tun_enabled === true,
     autostartEnabled: data.autostart_enabled === true,
+    capabilitiesOk: data.capabilities_ok === true,
     startedMs: parseUnitTimestamp(data.uptime)
   }
 }

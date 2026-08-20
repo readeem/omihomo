@@ -64,9 +64,10 @@ Exit codes are:
 | 0 | Success |
 | 1 | Generic failure or invalid arguments |
 | 10 | Core is not installed |
-| 11 | User unit is not active |
+| 11 | Operation conflicts with the current core state |
 | 12 | Unit is active but the mihomo API is unreachable |
 | 13 | No active subscription |
+| 14 | TUN capabilities are missing |
 | 20 | YAML failed `mihomo -t` validation |
 | 21 | Subscription fetch failed |
 
@@ -74,8 +75,8 @@ Exit codes are:
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
 `download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
-`tun_enabled`, and `autostart_enabled`. The IP, latency, throughput, and config fields are nullable because those live API
-values remain panel-owned per ADR-0001.
+`tun_enabled`, `autostart_enabled`, and `capabilities_ok`. The IP, latency, throughput, and config
+fields are nullable because those live API values remain panel-owned per ADR-0001.
 
 ## Files
 
@@ -107,16 +108,20 @@ only after validation succeeds. Updating the active subscription merges `runtime
 `PUT /configs?force=true`; the systemd unit is not restarted. Every mutation of the state files
 holds the one shared `flock`.
 
+`set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
+core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.
+An active subscription and the capabilities installed with the core are required.
+
 `core autostart on|off` is `systemctl --user enable|disable` on the unit, and is what the panel's
 manage view toggles. Turning it on writes the unit first when it is missing, so autostart works on
 a core that has never been started.
 
 `core install` installs the AUR package and the required `go-yq`, `jq`, `libcap`, `curl`, and
-`nftables` tools, writes the user unit and default override, and performs the single privileged
-capability and pacman-hook step. It runs unattended: pacman and yay get `--noconfirm`, and one
-`sudo -v` up front covers every privileged step, so nothing pops a second prompt. It is
-terminal-only, because pacman's output and that one password prompt need somewhere to go. `core
-repair` is the non-build capability reapplication path.
+`nftables` tools, writes the user unit and default override, and prepares the capability hook in
+one privileged call. `yay --sudoloop` keeps that authorization alive while it installs the AUR
+package, and the pacman hook grants capabilities inside that package transaction. Installation is
+terminal-only because pacman's output and the one setup password prompt need somewhere to go.
+`core repair` is the explicit capability reapplication path.
 
 The YAML tool has to be mikefarah's yq v4, packaged on Arch as `go-yq`. Arch's `yq` package is
 kislyuk's jq wrapper, which owns the same `/usr/bin/yq` and speaks a different language; `core

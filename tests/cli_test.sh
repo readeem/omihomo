@@ -13,7 +13,7 @@ test_status_reports_not_installed() {
   output=$(run_cli status)
   assert_json_field "$output" state not-installed
   assert_json_field "$output" active_subscription null
-  [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime")' <<<"$output") == true ]] || fail "status shape is missing #5 fields"
+  [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime") and has("capabilities_ok")' <<<"$output") == true ]] || fail "status shape is missing fields"
 }
 
 test_subscription_add_and_list_are_flat_json() {
@@ -277,6 +277,16 @@ test_status_reports_stopped_for_installed_core() {
   assert_json_field "$output" state stopped
 }
 
+test_status_reports_whether_tun_capabilities_are_installed() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  assert_eq "$(run_cli status | jq -r '.capabilities_ok')" false
+  export OMIHOMO_TEST_CAPABILITIES=yes
+  assert_eq "$(run_cli status | jq -r '.capabilities_ok')" true
+}
+
 test_status_reports_degraded_when_tun_device_is_missing() {
   setup_test
   trap teardown_test RETURN
@@ -356,18 +366,84 @@ test_core_start_requires_an_active_subscription() {
   assert_file_contains "$stderr" '"code":13'
 }
 
-test_turning_tun_on_requires_an_active_unit() {
+test_turning_tun_on_starts_an_inactive_unit_without_privilege() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CAPABILITIES=yes
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  run_cli set tun on
+
+  assert_eq "$(yq -r '.config.tun.enable' "$XDG_DATA_HOME/omihomo/override.yaml")" true
+  assert_file_contains "$TEST_ROOT/systemctl.log" "start omihomo.service"
+  [[ ! -e $TEST_ROOT/pkexec.log ]] || fail "TUN enable invoked pkexec"
+  [[ ! -e $TEST_ROOT/sudo.log ]] || fail "TUN enable invoked sudo"
+}
+
+test_turning_tun_on_reloads_an_active_unit_without_privilege() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CAPABILITIES=yes
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+
+  run_cli set tun on
+
+  assert_file_contains "$TEST_ROOT/curl-put.log" "/configs?force=true"
+  [[ ! -e $TEST_ROOT/pkexec.log ]] || fail "TUN reload invoked pkexec"
+  [[ ! -e $TEST_ROOT/sudo.log ]] || fail "TUN reload invoked sudo"
+}
+
+test_turning_tun_on_requires_an_active_subscription() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CAPABILITIES=yes
   local stderr status
   stderr=$(mktemp)
   set +e
   run_cli set tun on 2>"$stderr"
   status=$?
   set -e
-  assert_eq "$status" 11
-  assert_file_contains "$stderr" '"code":11'
+  assert_eq "$status" 13
+  assert_file_contains "$stderr" '"code":13'
+}
+
+test_turning_tun_on_with_missing_capabilities_does_not_prompt() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local stderr status
+  stderr=$(mktemp)
+
+  set +e
+  run_cli set tun on 2>"$stderr"
+  status=$?
+  set -e
+
+  assert_eq "$status" 14
+  assert_file_contains "$stderr" '"code":14'
+  [[ ! -e $TEST_ROOT/pkexec.log ]] || fail "missing capabilities invoked pkexec"
+  [[ ! -e $TEST_ROOT/sudo.log ]] || fail "missing capabilities invoked sudo"
+}
+
+test_install_has_one_privileged_setup_boundary() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CAPABILITIES=yes
+
+  script -qec "$REPO_ROOT/bin/omihomo core install" /dev/null >/dev/null
+
+  assert_eq "$(wc -l <"$TEST_ROOT/sudo.log")" 1
+  assert_file_contains "$TEST_ROOT/sudo.log" "root.sh prepare"
+  assert_file_contains "$TEST_ROOT/yay.log" "--sudoloop"
 }
 
 test_active_override_change_reports_unreachable_controller() {
@@ -457,6 +533,7 @@ tests=(
   test_pretty_is_applied_by_dispatcher
   test_status_exit_code_is_always_zero
   test_status_reports_stopped_for_installed_core
+  test_status_reports_whether_tun_capabilities_are_installed
   test_status_reports_degraded_when_tun_device_is_missing
   test_status_reports_autostart_state
   test_autostart_writes_the_unit_before_enabling_it
@@ -465,7 +542,11 @@ tests=(
   test_uninstall_removes_every_artifact
   test_uninstall_can_keep_state
   test_core_start_requires_an_active_subscription
-  test_turning_tun_on_requires_an_active_unit
+  test_turning_tun_on_starts_an_inactive_unit_without_privilege
+  test_turning_tun_on_reloads_an_active_unit_without_privilege
+  test_turning_tun_on_requires_an_active_subscription
+  test_turning_tun_on_with_missing_capabilities_does_not_prompt
+  test_install_has_one_privileged_setup_boundary
   test_active_override_change_reports_unreachable_controller
 )
 

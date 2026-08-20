@@ -100,17 +100,26 @@ set_mode() {
 }
 
 set_tun() {
-  local state=${1:-} enabled
+  local state=${1:-} enabled start_core=0
   [[ $state == on || $state == off ]] || omi_error "tun expects on or off" 1
   if [[ $state == on ]]; then
     omi_require_core
-    omi_unit_active || omi_error "mihomo service is not active" 11
-    omi_api_reachable || omi_error "mihomo controller is unreachable" 12
+    omi_tun_capabilities_ok || omi_error "mihomo TUN capabilities are missing; run core repair" 14
+    [[ -n $(omi_active_name) ]] || omi_error "no active subscription" 13
+    if omi_unit_active; then
+      omi_api_reachable || omi_error "mihomo controller is unreachable" 12
+    else
+      omi_require_command nft
+      start_core=1
+    fi
   fi
   enabled=false
   [[ $state == on ]] && enabled=true
   omi_init_layout
   override_candidate ".config.tun.enable = $enabled"
+  if ((start_core == 1)); then
+    omi_start_core
+  fi
 }
 
 set_group() {

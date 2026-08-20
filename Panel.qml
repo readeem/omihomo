@@ -107,7 +107,7 @@ Panel {
     }
     if (view === "manage") {
       rows.push({ s: "autostart" })
-      rows.push({ s: "repair" })
+      if (!omihomo.capabilitiesOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       return rows
     }
@@ -789,11 +789,10 @@ Panel {
 
           ActionRow {
             width: parent.width
+            visible: !omihomo.capabilitiesOk
             section: "repair"
             title: "Repair capabilities"
-            subtitle: omihomo.coreState === "degraded"
-              ? "The TUN device is missing; reapply the core's capabilities."
-              : "Reapplies the capabilities TUN needs to the mihomo binary."
+            subtitle: "The mihomo binary is missing the capabilities TUN needs."
             trailing: "R"
             urgentTrailing: omihomo.coreState === "degraded"
             onActivated: omihomo.repairCore()
@@ -814,7 +813,9 @@ Panel {
 
         Text {
           width: parent.width
-          text: "enter activate · b autostart · R repair · esc back"
+          text: omihomo.capabilitiesOk
+            ? "enter activate · b autostart · esc back"
+            : "enter activate · b autostart · R repair · esc back"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

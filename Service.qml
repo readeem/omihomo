@@ -28,6 +28,7 @@ Item {
   property string configuredPrimaryGroup: ""
   property bool tunEnabled: false
   property bool autostartEnabled: false
+  property bool capabilitiesOk: false
   property double startedMs: 0
 
   // Confirmed state keeps following status reads. While an action is settling,
@@ -176,6 +177,7 @@ Item {
     configuredPrimaryGroup = status.primaryGroup
     tunEnabled = status.tunEnabled
     autostartEnabled = status.autostartEnabled
+    capabilitiesOk = status.capabilitiesOk
     startedMs = status.startedMs
     if (_desiredCoreRunning !== -1 && confirmedCoreRunning === (_desiredCoreRunning === 1))
       _desiredCoreRunning = -1
@@ -225,6 +227,7 @@ Item {
   }
 
   function repairCore() {
+    if (capabilitiesOk) return
     runCore(["core", "repair"], "Repairing capabilities…", "repair")
   }
 

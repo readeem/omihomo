@@ -17,10 +17,10 @@ stays user-level and control is plain `systemctl --user`.
 
 ## Consequences
 
-Installation is the privileged setup moment behind one password prompt: `sudo` when the command
-runs in a terminal, which is where install and uninstall live, and `pkexec` when the panel makes
-the call itself and has no terminal to type into. Runtime operation is
-unprivileged; `core repair` is an explicit maintenance path that reapplies the same capabilities
-after a package upgrade, and uninstall removes them. If setcap turns out not to reach parity with
-root for `auto-route` or DNS hijack, the fallback is
-koala's setuid approach and nothing else in the design moves.
+Installation is the privileged setup moment behind one password prompt. Its root helper installs
+the dependencies and pacman hook together; `yay` keeps the resulting sudo authorization alive,
+and the hook applies capabilities in the package transaction. Runtime operation is unprivileged.
+`core repair` is an explicit maintenance path that uses `pkexec` from the panel, while package
+upgrades reapply capabilities through the hook and uninstall removes them. If setcap turns out not
+to reach parity with root for `auto-route` or DNS hijack, the fallback is koala's setuid approach
+and nothing else in the design moves.
