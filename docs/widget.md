@@ -48,9 +48,11 @@ Every view is 420px wide. The main popup carries, top to bottom:
 5. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
    URL, since the subscription names itself. With no subscriptions the URL field is the section;
    once there is one, it hides behind an add row.
-6. **Controls** — one line at the bottom of the panel: mode and TUN on the left, because they are
-   state changed in place, and rules, connections, and manage on the right, because they open a
-   view. Each cell is its own cursor target and carries its key in a tooltip.
+6. **Controls** — one line pinned to the bottom of the popup: mode and TUN on the left, because
+   they are state changed in place, and rules, connections, and manage on the right, because they
+   open a view. Each cell is its own cursor target and carries its key in a tooltip. Everything
+   above it scrolls; the footer does not, so the controls are reachable from anywhere in a long
+   panel.
 
 Configuration parameters are deliberately thin. `GET /proxies/<name>` states a config's type,
 UDP support, liveness, and last delay; it does not expose address, port, or credentials, and
