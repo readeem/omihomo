@@ -44,6 +44,10 @@ moves, `enter` activates, and single letters do the rest — `s` core, `t` TUN, 
 connections, `a` add subscription, `n` new rule, `d` latency. The full key table is in
 [docs/widget.md](./docs/widget.md).
 
+Subscription URLs may return a full Mihomo YAML config or a raw share-link format supported by
+the installed Mihomo version. Raw subscriptions get one generated `Proxy` selector and a final
+`MATCH,Proxy` rule.
+
 ## Layout
 
 ```text

@@ -6,23 +6,23 @@ Omarchy bar, backed by a small bash CLI. This file is the glossary; it is not a 
 ## Language
 
 **Subscription**:
-A named remote URL that returns one mihomo YAML file. Exactly one YAML per subscription.
+A named remote source for one set of groups, configs, and rules. Omihomo manages one imported
+configuration per subscription.
 _Avoid_: Profile, feed, source
 
 **Active subscription**:
-The one subscription whose YAML is currently loaded into the running mihomo core. There is
-never more than one.
+The one subscription currently loaded into the running mihomo core. There is never more than one.
 _Avoid_: Current profile, selected config
 
 **Group**:
-A policy group declared inside a subscription's YAML. Holds configs and has exactly one of
-them selected at a time.
+A policy group provided by a subscription. Holds configs and has exactly one of them selected at
+a time.
 _Avoid_: Proxy group, selector
 
 **Primary group**:
 The one group whose selected config the panel treats as *the* current config. A subscription's
-YAML can declare several groups, so this is a setting in the override layer, defaulting to the
-first `select`-type group.
+configuration can declare several groups, so this is a setting in the override layer, defaulting
+to the first `select`-type group.
 _Avoid_: Main group, default group
 
 **Config**:
@@ -31,9 +31,8 @@ can host many configs on different ports, which is why "node" is the wrong word 
 _Avoid_: Node, profile, proxy, server
 
 **Override layer**:
-A user-owned file of edits merged onto a subscription's fetched YAML to produce the YAML
-mihomo actually runs. Survives subscription updates because the fetched YAML is only ever a
-cache.
+A user-owned set of edits applied to a subscription before it becomes active. It survives
+subscription updates.
 _Avoid_: Patch, local config, customisation
 
 **Core**:

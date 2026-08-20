@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+url=${!#}
+case $url in
+  */proxies/Fail/delay*)
+    sleep 0.15
+    exit 22
+    ;;
+  */proxies/Pass/delay*)
+    sleep 0.15
+    printf '{"delay":87}\n'
+    ;;
+  */group/Proxy/delay*)
+    sleep 0.2
+    printf '{"Pass":91}\n'
+    ;;
+  https://cloudflare.com/cdn-cgi/trace)
+    sleep 0.15
+    exit 22
+    ;;
+  *)
+    exit 22
+    ;;
+esac

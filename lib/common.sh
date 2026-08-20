@@ -18,9 +18,8 @@ OMIHOMO_YQ=${OMIHOMO_YQ:-yq}
 OMIHOMO_CURL=${OMIHOMO_CURL:-curl}
 OMIHOMO_SYSTEMCTL=${OMIHOMO_SYSTEMCTL:-systemctl}
 OMIHOMO_GETCAP=${OMIHOMO_GETCAP:-getcap}
-# Subscription servers content-negotiate on User-Agent. A client they do not
-# recognise gets a base64 list of share links, which `mihomo -t` then rejects;
-# a Clash-family agent gets the mihomo YAML we actually want.
+# Subscription servers content-negotiate on User-Agent. A Clash-family agent
+# usually gets a full config, which Omihomo can preserve without wrapping it.
 OMIHOMO_USER_AGENT=${OMIHOMO_USER_AGENT:-clash.meta}
 
 omi_init_layout() {

@@ -68,7 +68,7 @@ Exit codes are:
 | 12 | Unit is active but the mihomo API is unreachable |
 | 13 | No active subscription |
 | 14 | TUN capabilities are missing |
-| 20 | YAML failed `mihomo -t` validation |
+| 20 | Subscription content was rejected by Mihomo |
 | 21 | Subscription fetch failed |
 
 `status` is the exception: it always exits `0` and returns one stable object. Its `state` is
@@ -84,7 +84,7 @@ The state directory is `$XDG_DATA_HOME/omihomo`, falling back to `~/.local/share
 
 ```text
 subscriptions.json       array of {name, url, updated_at, userinfo}
-cache/<name>.yaml        last validated subscription fetch
+cache/<name>.yaml        validated config or generated raw-subscription wrapper
 override.yaml            global user-owned settings and rule lists
 runtime.yaml             merged YAML loaded by mihomo
 active                   active subscription name, one line
@@ -99,14 +99,26 @@ separators and control characters, trimmed, and capped at 64 characters; a name 
 gets a numeric suffix. Adding a URL that is already on the list is an error. A subscription keeps
 the name it was added under: `sub update` refreshes its YAML and quota, not its name.
 
-Fetches identify as `clash.meta`. Subscription servers content-negotiate on User-Agent and answer
-an unrecognised client with a base64 list of share links, which fails `mihomo -t` validation with
-exit `20`. `OMIHOMO_USER_AGENT` overrides the string for a server that wants a different one.
+Fetches identify as `clash.meta`. `OMIHOMO_USER_AGENT` overrides the string for a server that wants
+a different one. Omihomo accepts full Mihomo YAML and raw subscription formats supported by the
+installed Mihomo version. It does not promise support for arbitrary converter formats.
 
-Subscription updates fetch to a temporary file, validate with `mihomo -t`, and replace the cache
-only after validation succeeds. Updating the active subscription merges `runtime.yaml` and sends
-`PUT /configs?force=true`; the systemd unit is not restarted. Every mutation of the state files
-holds the one shared `flock`.
+A mapping with a structural Mihomo key such as `proxies`, `proxy-providers`, `proxy-groups`,
+`rules`, `rule-providers`, `dns`, or `tun` is treated as a full config and cached unchanged after
+`mihomo -t` validation. Other content is preflighted through a file-backed provider in an isolated
+temporary core. This forces Mihomo to parse raw base64 and share-link lists without fetching the
+URL twice or touching the running service. Rejected content exits with code `20` and leaves no
+subscription record or cache.
+
+For accepted raw content, the cached YAML is a generated config with one HTTP provider named
+`subscription`, one `Proxy` selector, and a final `MATCH,Proxy` rule. The provider cache path is
+`providers/<sha256-of-url>.yaml`, so subscriptions with the same display name remain independent.
+Mihomo owns provider refreshes after activation.
+
+Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
+An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed
+conversion, merge, or reload keeps the previous cache, metadata, and runtime. The systemd unit is
+not restarted. Every mutation of the state files holds the one shared `flock`.
 
 `set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.

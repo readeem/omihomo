@@ -90,6 +90,129 @@ test_repeated_titles_are_suffixed_and_repeated_urls_are_refused() {
   assert_eq "$(run_cli sub list | jq 'length')" 2
 }
 
+test_raw_subscription_is_cached_as_a_provider_wrapper() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=raw
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+  local url='https://example.test/subscription/raw?token=a%2Bb&tag=x'
+
+  run_cli sub add "$url"
+
+  local cache="$XDG_DATA_HOME/omihomo/cache/raw.yaml"
+  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
+  assert_eq "$(yq -r '."proxy-providers".subscription.url' "$cache")" "$url"
+  assert_eq "$(yq -r '."proxy-providers".subscription.path' "$cache")" './providers/d314e84c465c28453ac705094c504c6004c0bfc32741962e9939760a7f3484ec.yaml'
+  assert_eq "$(yq -r '."proxy-groups"[0].name' "$cache")" Proxy
+  assert_eq "$(yq -r '.rules[0]' "$cache")" MATCH,Proxy
+  assert_json_field "$(run_cli sub list | jq '.[0]')" upload 10
+  assert_eq "$(wc -l <"$TEST_ROOT/curl-agent.log")" 1
+}
+
+test_base64_subscription_is_cached_as_a_provider_wrapper() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=encoded
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
+
+  run_cli sub add https://example.test/subscription/encoded
+
+  local cache="$XDG_DATA_HOME/omihomo/cache/encoded.yaml"
+  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
+  assert_eq "$(yq -r '."proxy-groups"[0].use[0]' "$cache")" subscription
+}
+
+test_full_config_subscription_is_not_wrapped() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=full
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/full-config.yaml"
+
+  run_cli sub add https://example.test/subscription/full
+
+  local cache="$XDG_DATA_HOME/omihomo/cache/full.yaml"
+  cmp -s "$REPO_ROOT/tests/fixtures/full-config.yaml" "$cache" || fail "full config changed during import"
+  assert_eq "$(yq -r '."proxy-groups"[0].name' "$cache")" 'Local select'
+  assert_eq "$(yq -r 'has("proxy-providers")' "$cache")" false
+}
+
+test_provider_yaml_subscription_is_not_wrapped() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=provider
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/provider.yaml"
+
+  run_cli sub add https://example.test/subscription/provider
+
+  local cache="$XDG_DATA_HOME/omihomo/cache/provider.yaml"
+  cmp -s "$REPO_ROOT/tests/fixtures/provider.yaml" "$cache" || fail "provider YAML was wrapped"
+}
+
+test_garbage_subscription_leaves_no_partial_state() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=garbage
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/garbage.txt"
+  local stderr status
+  stderr=$(mktemp)
+
+  set +e
+  run_cli sub add https://example.test/subscription/garbage 2>"$stderr"
+  status=$?
+  set -e
+
+  assert_eq "$status" 20
+  assert_eq "$(run_cli sub list | jq 'length')" 0
+  assert_eq "$(find "$XDG_DATA_HOME/omihomo/cache" -type f | wc -l)" 0
+  if find "$XDG_DATA_HOME/omihomo" -maxdepth 1 -name '.*.??????' | grep -q .; then
+    fail "subscription import left temporary files"
+  fi
+  assert_file_contains "$stderr" 'mihomo rejected the raw subscription: convert v2ray subscribe error: format invalid'
+  if grep -Fq password "$stderr"; then
+    fail "raw provider error exposed credentials"
+  fi
+}
+
+test_invalid_full_config_has_a_distinct_validation_error() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY='proxies: INVALID'
+  local stderr status
+  stderr=$(mktemp)
+
+  set +e
+  run_cli sub add https://example.test/subscription/invalid-full 2>"$stderr"
+  status=$?
+  set -e
+
+  assert_eq "$status" 20
+  assert_file_contains "$stderr" 'mihomo rejected the YAML'
+  assert_eq "$(run_cli sub list | jq 'length')" 0
+}
+
+test_raw_subscriptions_with_the_same_title_use_independent_provider_paths() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=shared
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+
+  run_cli sub add https://example.test/subscription/one
+  run_cli sub add https://example.test/subscription/two
+
+  local first="$XDG_DATA_HOME/omihomo/cache/shared.yaml"
+  local second="$XDG_DATA_HOME/omihomo/cache/shared 2.yaml"
+  [[ $(yq -r '."proxy-providers".subscription.path' "$first") != \
+    "$(yq -r '."proxy-providers".subscription.path' "$second")" ]] ||
+    fail "same-title subscriptions share a provider cache path"
+}
+
 test_invalid_subscription_update_keeps_previous_cache() {
   setup_test
   trap teardown_test RETURN
@@ -215,6 +338,35 @@ test_active_update_reloads_without_restarting_the_unit() {
   export OMIHOMO_TEST_SUBSCRIPTION_BODY='proxies: []'
   run_cli sub update work
   assert_file_contains "$TEST_ROOT/curl-put.log" '/configs?force=true'
+}
+
+test_failed_active_raw_update_keeps_previous_cache_and_runtime() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local cache="$XDG_DATA_HOME/omihomo/cache/work.yaml"
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  local cache_before runtime_before subscriptions_before stderr status
+  cache_before=$(<"$cache")
+  runtime_before=$(<"$runtime")
+  subscriptions_before=$(<"$XDG_DATA_HOME/omihomo/subscriptions.json")
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_API_UNREACHABLE=yes
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+  stderr=$(mktemp)
+
+  set +e
+  run_cli sub update work 2>"$stderr"
+  status=$?
+  set -e
+
+  assert_eq "$status" 12
+  assert_eq "$(<"$cache")" "$cache_before"
+  assert_eq "$(<"$runtime")" "$runtime_before"
+  assert_eq "$(<"$XDG_DATA_HOME/omihomo/subscriptions.json")" "$subscriptions_before"
 }
 
 test_failed_active_activation_keeps_previous_subscription() {
@@ -571,6 +723,13 @@ tests=(
   test_subscription_takes_its_name_from_the_server
   test_unsafe_and_missing_titles_still_produce_a_usable_name
   test_repeated_titles_are_suffixed_and_repeated_urls_are_refused
+  test_raw_subscription_is_cached_as_a_provider_wrapper
+  test_base64_subscription_is_cached_as_a_provider_wrapper
+  test_full_config_subscription_is_not_wrapped
+  test_provider_yaml_subscription_is_not_wrapped
+  test_garbage_subscription_leaves_no_partial_state
+  test_invalid_full_config_has_a_distinct_validation_error
+  test_raw_subscriptions_with_the_same_title_use_independent_provider_paths
   test_invalid_subscription_update_keeps_previous_cache
   test_subscription_fetch_failure_uses_exit_code_21
   test_activation_merges_override_and_reloads_active_core
@@ -578,6 +737,7 @@ tests=(
   test_global_mode_requires_a_subscription_group
   test_global_cannot_be_set_as_primary
   test_active_update_reloads_without_restarting_the_unit
+  test_failed_active_raw_update_keeps_previous_cache_and_runtime
   test_failed_active_activation_keeps_previous_subscription
   test_running_core_rejects_removing_active_subscription
   test_rule_filter_and_append_are_applied_to_runtime

@@ -68,10 +68,15 @@ Item {
   property double uploadRate: 0
   property string egressIp: ""
   property int egressLatency: 0
+  property bool traceTesting: false
   property bool traceFailed: false
 
-  property string testingConfig: ""
-  property string testingGroup: ""
+  // Manual results sit above `/proxies` snapshots. A slow snapshot may have
+  // started before the click, so it must not repaint an old latency over the
+  // test that the user is watching.
+  property var configTestResults: ({}) // config name -> { state, delay }
+  property string _singleTestName: ""
+  property var _groupTestNames: []
   property string pendingConfig: ""
   property string pendingSubscription: ""
 
@@ -85,6 +90,7 @@ Item {
   readonly property var primaryGroupEntry: Model.groupByName(groups, primaryGroup)
   readonly property string currentConfig: primaryGroupEntry ? primaryGroupEntry.now : ""
   readonly property bool busy: coreCmd.running || subActionCmd.running || overrideCmd.running || apiActionCmd.running
+  readonly property bool pingTestsRunning: delayCmd.running || groupDelayCmd.running
 
   readonly property int refreshIntervalSec: {
     var n = parseInt(String(setting("refreshIntervalSec", 10)), 10)
@@ -164,7 +170,8 @@ Item {
     var args = ["curl", "-fsS", "--max-time", "8", "-w", "\n%{time_total}"]
     if (mixedPort > 0) args.push("-x", "http://127.0.0.1:" + mixedPort)
     args.push("https://cloudflare.com/cdn-cgi/trace")
-    traceCmd.launch(args)
+    traceTesting = true
+    if (!traceCmd.launch(args)) traceTesting = false
   }
 
   function applyStatus(raw) {
@@ -325,18 +332,75 @@ Item {
       JSON.stringify({ name: config })))
   }
 
+  function configTestState(name) {
+    var result = configTestResults[String(name)]
+    return result ? String(result.state || "") : ""
+  }
+
+  function configDelay(name) {
+    var result = configTestResults[String(name)]
+    if (result && result.state === "success") return Number(result.delay) || 0
+    return Model.historyDelay(configEntries[String(name)])
+  }
+
+  function copyConfigTestResults() {
+    var copy = {}
+    for (var name in configTestResults) copy[name] = configTestResults[name]
+    return copy
+  }
+
+  function startConfigTests(names) {
+    var next = copyConfigTestResults()
+    for (var i = 0; i < names.length; i++)
+      next[String(names[i])] = { state: "testing", delay: 0 }
+    configTestResults = next
+  }
+
+  // Publish the whole batch once. Config rows then move straight from
+  // "testing" to their final result without repainting one by one.
+  function finishConfigTests(names, delays) {
+    var next = copyConfigTestResults()
+    var changedEntries = false
+    for (var i = 0; i < names.length; i++) {
+      var name = String(names[i])
+      var delay = delays && delays[name] !== undefined ? Number(delays[name]) : 0
+      if (isFinite(delay) && delay > 0) {
+        applyDelay(name, delay, false)
+        changedEntries = true
+        next[name] = { state: "success", delay: delay }
+      } else {
+        next[name] = { state: "failed", delay: 0 }
+      }
+    }
+    if (changedEntries) configEntriesChanged()
+    configTestResults = next
+  }
+
   function testConfig(name) {
-    if (!apiReady || delayCmd.running || name === "") return
-    testingConfig = name
-    delayCmd.launch(apiArgs("GET", "/proxies/" + encodeURIComponent(name)
-      + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))
+    if (!apiReady || pingTestsRunning || name === "") return
+    _singleTestName = name
+    startConfigTests([name])
+    if (!delayCmd.launch(apiArgs("GET", "/proxies/" + encodeURIComponent(name)
+      + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))) {
+      finishConfigTests([name], {})
+      _singleTestName = ""
+    }
   }
 
   function testGroup(name) {
-    if (!apiReady || groupDelayCmd.running || name === "") return
-    testingGroup = name
-    groupDelayCmd.launch(apiArgs("GET", "/group/" + encodeURIComponent(name)
-      + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))
+    if (!apiReady || pingTestsRunning || name === "") return
+    var group = Model.groupByName(groups, name)
+    var names = group && group.all ? group.all.slice() : []
+    if (names.length === 0) return
+    _groupTestNames = names
+    startConfigTests(names)
+    // The controller tests the group's configs concurrently. Process keeps
+    // that bulk request asynchronous from the panel's render loop.
+    if (!groupDelayCmd.launch(apiArgs("GET", "/group/" + encodeURIComponent(name)
+      + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))) {
+      finishConfigTests(names, {})
+      _groupTestNames = []
+    }
   }
 
   function closeConnection(id) {
@@ -446,12 +510,18 @@ Item {
   Cmd {
     id: traceCmd
     onFinished: function(code, out) {
+      root.traceTesting = false
       if (code !== 0) {
-        // Keep the last known values; the panel dims them instead of blanking.
+        // Keep the last known values internally. The row says "failed" until
+        // the next check, then a successful result replaces them.
         root.traceFailed = true
         return
       }
       var trace = Model.parseTrace(out)
+      if (trace.ip === "" || trace.latency <= 0) {
+        root.traceFailed = true
+        return
+      }
       root.traceFailed = false
       root.egressIp = trace.ip
       root.egressLatency = trace.latency
@@ -461,22 +531,23 @@ Item {
   Cmd {
     id: delayCmd
     onFinished: function(code, out) {
-      var name = root.testingConfig
-      root.testingConfig = ""
-      if (code !== 0 || name === "") return
-      var delay = Model.parseDelay(out)
-      if (delay === null) return
-      root.applyDelay(name, delay)
+      var name = root._singleTestName
+      root._singleTestName = ""
+      if (name === "") return
+      var delay = code === 0 ? Model.parseDelay(out) : null
+      var result = {}
+      if (delay !== null) result[name] = delay
+      root.finishConfigTests([name], result)
     }
   }
 
   Cmd {
     id: groupDelayCmd
     onFinished: function(code, out) {
-      root.testingGroup = ""
-      if (code !== 0) return
-      var delays = Model.parseGroupDelay(out)
-      for (var name in delays) root.applyDelay(name, delays[name])
+      var names = root._groupTestNames
+      root._groupTestNames = []
+      if (names.length === 0) return
+      root.finishConfigTests(names, code === 0 ? Model.parseGroupDelay(out) : {})
     }
   }
 
@@ -537,15 +608,15 @@ Item {
     }
   }
 
-  // Record a fresh delay on the config entry so the list and the parameters
-  // view read from one place.
-  function applyDelay(name, delay) {
+  // Record a fresh delay on the config entry too, so the parameters view sees
+  // the same manual result as the list's state overlay.
+  function applyDelay(name, delay, notify) {
     var entry = configEntries[name]
     if (!entry) return
     if (!entry.history || typeof entry.history.length !== "number") entry.history = []
     entry.history.push({ delay: delay })
     entry.alive = delay > 0
-    configEntriesChanged()
+    if (notify !== false) configEntriesChanged()
   }
 
   // `/traffic` is a long-lived stream, so it runs only while the panel is on

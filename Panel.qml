@@ -88,8 +88,9 @@ Panel {
     ? Model.formatDuration(nowMs - omihomo.startedMs) : "—"
   readonly property string configText: omihomo.primaryGroup === "" ? "—"
     : omihomo.primaryGroup + " › " + (omihomo.currentConfig !== "" ? omihomo.currentConfig : "—")
-  readonly property string egressText: omihomo.egressIp === "" ? "—"
-    : omihomo.egressIp + " · " + Model.formatDelay(omihomo.egressLatency)
+  readonly property string egressText: omihomo.traceTesting ? "testing…"
+    : (omihomo.traceFailed ? "failed" : (omihomo.egressIp === "" ? "—"
+      : omihomo.egressIp + " · " + Model.formatDelay(omihomo.egressLatency)))
   readonly property string throughputText: "↓ " + Model.formatRate(omihomo.downloadRate)
     + "   ↑ " + Model.formatRate(omihomo.uploadRate)
 
@@ -963,7 +964,7 @@ Panel {
                 label: "EGRESS"
                 section: "trace"
                 value: root.egressText
-                faded: omihomo.traceFailed
+                faded: omihomo.traceFailed && !omihomo.traceTesting
                 onActivated: omihomo.refreshTrace()
               }
             }
@@ -1815,9 +1816,8 @@ Panel {
     readonly property var entry: omihomo.configEntries[configRow.configName] || null
     readonly property bool selected: root.browsedGroupEntry && root.browsedGroupEntry.now === configRow.configName
     readonly property bool pending: omihomo.pendingConfig === configRow.configName
-    readonly property bool testing: omihomo.testingConfig === configRow.configName
-      || omihomo.testingGroup === root.browsedGroup
-    readonly property int delay: Model.historyDelay(configRow.entry)
+    readonly property string testState: omihomo.configTestState(configRow.configName)
+    readonly property int delay: omihomo.configDelay(configRow.configName)
     readonly property bool expanded: root.expandedConfig === configRow.configName
 
     hasCursor: root.at("config", configRow.rowIndex)
@@ -1859,8 +1859,10 @@ Panel {
         }
 
         Text {
-          text: configRow.testing ? "testing…" : Model.formatDelay(configRow.delay)
-          color: configRow.delay > 0 && !configRow.testing ? root.foreground : root.dim
+          text: configRow.testState === "testing" ? "testing…"
+            : (configRow.testState === "failed" ? "failed" : Model.formatDelay(configRow.delay))
+          color: configRow.testState === "failed" ? root.urgent
+            : (configRow.delay > 0 && configRow.testState !== "testing" ? root.foreground : root.dim)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
@@ -1871,6 +1873,7 @@ Panel {
           foreground: root.foreground
           fontFamily: root.fontFamily
           size: Style.space(18)
+          enabled: !omihomo.pingTestsRunning
           Layout.alignment: Qt.AlignVCenter
           onClicked: omihomo.testConfig(configRow.configName)
         }

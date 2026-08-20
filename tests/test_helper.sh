@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_CAPABILITIES
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_CAPABILITIES
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -22,6 +22,17 @@ if [[ ${1:-} == -t ]]; then
   file=${3:-}
   grep -q INVALID "$file" && exit 1
   exit 0
+fi
+if [[ ${1:-} == -d ]]; then
+  file=${4:-}
+  cp "$file" "$TEST_ROOT/mihomo-preflight.yaml"
+  provider=$(yq -r '."proxy-providers".subscription.path' "$file")
+  cp "$provider" "$TEST_ROOT/mihomo-preflight-body"
+  if grep -Eq 'INVALID|this is not a subscription' "$provider"; then
+    printf 'level=error msg="convert v2ray subscribe error: format invalid near trojan://password@example.test:443"\n' >&2
+  fi
+  trap 'exit 0' TERM
+  while :; do sleep 0.05; done
 fi
 if [[ ${1:-} == -v ]]; then
   printf 'mihomo version test\n'
@@ -45,6 +56,7 @@ while (($#)); do
     -A) agent=$2; shift 2 ;;
     -D) headers=$2; shift 2 ;;
     -X) method=$2; shift 2 ;;
+    --unix-socket|--max-time) shift 2 ;;
     --data|--data-raw|--data-binary|--json) shift 2 ;;
     -w) shift 2 ;;
     -s|-S|-f|-L|-N|-k|-H) shift; [[ $1 == *:* ]] && shift || true ;;
@@ -56,13 +68,26 @@ if [[ $method == PUT ]]; then
   printf '%s\n' "$url" >>"$TEST_ROOT/curl-put.log"
   exit 0
 fi
+if [[ $url == http://localhost/providers/proxies/subscription ]]; then
+  [[ -f $TEST_ROOT/mihomo-preflight-body ]] || exit 1
+  if grep -Eq 'INVALID|this is not a subscription' "$TEST_ROOT/mihomo-preflight-body"; then
+    printf '{"proxies":[]}\n'
+  else
+    printf '{"proxies":[{"name":"Tokyo"},{"name":"Berlin"}]}\n'
+  fi
+  exit 0
+fi
 if [[ ${OMIHOMO_TEST_API_UNREACHABLE:-no} == yes && $url == *127.0.0.1* ]]; then
   exit 1
 fi
 if [[ $url == *subscription* ]]; then
   printf '%s\n' "$agent" >>"$TEST_ROOT/curl-agent.log"
   [[ ${OMIHOMO_TEST_FETCH_FAIL:-no} == yes ]] && exit 1
-  printf '%s\n' "${OMIHOMO_TEST_SUBSCRIPTION_BODY:-proxies: []}" >"$output"
+  if [[ -n ${OMIHOMO_TEST_SUBSCRIPTION_FIXTURE:-} ]]; then
+    cp "$OMIHOMO_TEST_SUBSCRIPTION_FIXTURE" "$output"
+  else
+    printf '%s\n' "${OMIHOMO_TEST_SUBSCRIPTION_BODY:-proxies: []}" >"$output"
+  fi
   if [[ -n ${headers:-} ]]; then
     # The subscription names itself, so the stub titles it after the last path
     # segment: /subscription/work answers to "work".

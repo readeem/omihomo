@@ -1,0 +1,2 @@
+ss://YWVzLTEyOC1nY206cGFzc3dvcmQ@127.0.0.1:8388#Tokyo
+trojan://password@example.com:443?security=tls&sni=example.com#Berlin
