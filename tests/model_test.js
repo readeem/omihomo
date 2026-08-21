@@ -176,29 +176,108 @@ test("a partial traffic line is dropped rather than read as zero", () => {
   assert.equal(Model.parseTraffic(""), null)
 })
 
-test("connections carry a host, a duration, and their totals", () => {
+const snapshot = (connections, extra) => JSON.stringify(Object.assign({
+  downloadTotal: 4096, uploadTotal: 512, connections
+}, extra || {}))
+
+const conn = (id, host, process, over) => Object.assign({
+  id, upload: 1, download: 2, start: "2026-08-18T11:00:00Z",
+  chains: ["Tokyo 01", "Proxy"], rule: "DomainSuffix", rulePayload: "example.org",
+  metadata: { network: "tcp", host, destinationPort: "443", processPath: process }
+}, over || {})
+
+test("a connection snapshot carries a host, a start, and its totals", () => {
   const now = Date.parse("2026-08-18T12:00:00Z")
-  const parsed = Model.parseConnections(JSON.stringify({
-    downloadTotal: 4096, uploadTotal: 512,
-    connections: [
-      { id: "a", upload: 1, download: 2, start: "2026-08-18T11:00:00Z",
-        chains: ["Tokyo 01", "Proxy"], rule: "DomainSuffix", rulePayload: "example.org",
-        metadata: { network: "tcp", host: "github.com", destinationPort: "443",
-                    processPath: "/usr/bin/firefox" } },
-      { id: "b", upload: 0, download: 0, start: "2026-08-18T11:59:00Z", chains: [],
-        rule: "Match", metadata: { network: "udp", host: "", destinationIP: "1.1.1.1",
-                                   destinationPort: "53" } }
-    ]
-  }), now)
+  const parsed = Model.parseConnections(snapshot([
+    conn("a", "github.com", "/usr/bin/firefox"),
+    { id: "b", upload: 0, download: 0, start: "2026-08-18T11:59:00Z", chains: [],
+      rule: "Match", metadata: { network: "udp", host: "", destinationIP: "1.1.1.1",
+                                 destinationPort: "53" } }
+  ]), now)
   assert.equal(parsed.downloadTotal, 4096)
-  // Newest first: the one-minute-old connection sorts above the hour-old one.
-  assert.deepEqual(parsed.items.map(c => c.id), ["b", "a"])
-  assert.equal(parsed.items[0].host, "1.1.1.1:53")
-  assert.equal(parsed.items[1].host, "github.com:443")
-  assert.equal(parsed.items[1].chain, "Tokyo 01")
-  assert.equal(parsed.items[1].rule, "DomainSuffix(example.org)")
-  assert.equal(parsed.items[1].process, "firefox")
-  assert.equal(Model.formatDuration(parsed.items[1].durationMs), "1h 0m")
+  assert.deepEqual(parsed.items.map(c => c.id), ["a", "b"])
+  assert.equal(parsed.items[0].host, "github.com:443")
+  assert.equal(parsed.items[0].chain, "Tokyo 01")
+  assert.equal(parsed.items[0].rule, "DomainSuffix(example.org)")
+  assert.equal(parsed.items[0].process, "firefox")
+  assert.equal(parsed.items[0].open, true)
+  assert.equal(Model.formatDuration(now - parsed.items[0].startMs), "1h 0m")
+  assert.equal(parsed.items[1].host, "1.1.1.1:53")
+})
+
+test("a connection missing from the next snapshot is closed, not dropped", () => {
+  const first = Model.parseConnections(snapshot([
+    conn("a", "github.com", "/usr/bin/firefox"),
+    conn("b", "cdn.jsdelivr.net", "/usr/bin/firefox")
+  ]), 1000)
+  let log = Model.mergeConnectionLog([], first.items, 1000, 200)
+  assert.equal(Model.openConnectionCount(log), 2)
+
+  // "b" is gone from the second snapshot, and "c" is new.
+  const second = Model.parseConnections(snapshot([
+    conn("a", "github.com", "/usr/bin/firefox", { download: 900 }),
+    conn("c", "github.com", "/usr/bin/firefox")
+  ]), 5000)
+  log = Model.mergeConnectionLog(log, second.items, 5000, 200)
+
+  assert.deepEqual(log.map(e => e.id), ["a", "b", "c"])
+  assert.equal(Model.openConnectionCount(log), 2)
+  const closed = log.find(e => e.id === "b")
+  assert.equal(closed.open, false)
+  // It closed when it was last seen, not when the poll noticed it was gone.
+  assert.equal(closed.closedAtMs, 1000)
+  // The reopened figures land, but the original start survives them.
+  assert.equal(log.find(e => e.id === "a").download, 900)
+  assert.equal(log.find(e => e.id === "a").startMs, first.items[0].startMs)
+})
+
+test("the log keeps every open connection and caps the closed ones", () => {
+  const open = Model.parseConnections(snapshot([conn("keep", "github.com", "/usr/bin/firefox")]), 1000)
+  let log = Model.mergeConnectionLog([], open.items, 1000, 2)
+  for (let i = 0; i < 4; i++) {
+    const round = Model.parseConnections(snapshot([
+      conn("keep", "github.com", "/usr/bin/firefox"),
+      conn("gone" + i, "cdn.jsdelivr.net", "/usr/bin/firefox")
+    ]), 2000 + i * 1000)
+    log = Model.mergeConnectionLog(log, round.items, 2000 + i * 1000, 2)
+  }
+  // "keep" and the last round's "gone3" are still open, and of the three that
+  // have closed only the two most recent survive the cap.
+  assert.deepEqual(log.filter(e => e.open).map(e => e.id), ["keep", "gone3"])
+  assert.deepEqual(log.filter(e => !e.open).map(e => e.id), ["gone1", "gone2"])
+  assert.equal(Model.openConnectionCount(log), 2)
+})
+
+test("stacks group by process, destination, and state", () => {
+  const first = Model.parseConnections(snapshot([
+    conn("a", "github.com", "/usr/bin/firefox", { start: "2026-08-18T11:00:00Z", download: 10 }),
+    conn("b", "github.com", "/usr/bin/firefox", { start: "2026-08-18T11:30:00Z", download: 20 }),
+    conn("c", "github.com", "/usr/bin/curl", { start: "2026-08-18T11:45:00Z", download: 30 })
+  ]), 1000)
+  let log = Model.mergeConnectionLog([], first.items, 1000, 200)
+
+  // Firefox keeps one socket to github and loses the other.
+  const second = Model.parseConnections(snapshot([
+    conn("a", "github.com", "/usr/bin/firefox", { start: "2026-08-18T11:00:00Z", download: 10 }),
+    conn("c", "github.com", "/usr/bin/curl", { start: "2026-08-18T11:45:00Z", download: 30 })
+  ]), 5000)
+  log = Model.mergeConnectionLog(log, second.items, 5000, 200)
+
+  const stacks = Model.stackConnections(log)
+  // Two processes on one host, newest open stack first, and firefox's closed
+  // socket is its own row rather than a count hidden inside the open one.
+  assert.equal(stacks.length, 3)
+  assert.deepEqual(stacks.map(s => [s.process, s.open, s.count]),
+    [["curl", true, 1], ["firefox", true, 1], ["firefox", false, 1]])
+  assert.deepEqual(stacks[2].ids, ["b"])
+  assert.equal(stacks[2].closedAtMs, 1000)
+
+  // A stack sums its members and is as old as the oldest of them.
+  const together = Model.stackConnections(Model.mergeConnectionLog([], first.items, 1000, 200))
+  const firefox = together.find(s => s.process === "firefox")
+  assert.equal(firefox.count, 2)
+  assert.equal(firefox.download, 30)
+  assert.equal(firefox.startMs, Date.parse("2026-08-18T11:00:00Z"))
 })
 
 test("systemd's ActiveEnterTimestamp parses as local time", () => {

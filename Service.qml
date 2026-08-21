@@ -10,9 +10,10 @@ import "Model.js" as Model
 // mihomo's external controller.
 //
 // Polling is scoped to what the user can actually see. `panelOpen` gates the
-// proxy/rule/subscription reads and the traffic stream; `connectionsOpen`
-// gates the connections poll. The bar icon only needs `omihomo status`, which
-// runs on the shared refresh timer whether the panel is open or not.
+// proxy/rule/subscription reads, the traffic stream, and the connections poll;
+// `connectionsOpen` only decides how fast that last one runs. The bar icon
+// needs `omihomo status` alone, which runs on the shared refresh timer whether
+// the panel is open or not.
 Item {
   id: root
 
@@ -60,7 +61,14 @@ Item {
   property var subscriptionRules: []   // the subscription's, read-only
   property var groups: []
   property var configEntries: ({})     // config name -> `GET /proxies` entry
-  property var connections: []
+  // `/connections` is a snapshot of what is open right now, so the panel keeps
+  // its own log of it: `connectionLog` holds every connection seen since the
+  // core started, open or closed, and `connectionStacks` is what the view
+  // draws — one row per process, destination, and state.
+  property var connectionLog: []
+  readonly property var connectionStacks: Model.stackConnections(connectionLog)
+  readonly property int openConnectionCount: Model.openConnectionCount(connectionLog)
+  readonly property int connectionLogCap: 200
   property double connectionsDownload: 0
   property double connectionsUpload: 0
 
@@ -158,8 +166,14 @@ Item {
     apiRulesCmd.launch(apiArgs("GET", "/rules"))
   }
 
+  // The log only fills while the panel is on screen: every 2s in the
+  // connections view, and on the shared refresh interval everywhere else in
+  // the panel, which is enough to notice a connection has gone. A connection
+  // that opens and closes with the panel shut is never logged at all — the
+  // deliberate trade for a bar widget that costs nothing when nobody is
+  // looking at it.
   function refreshConnections() {
-    if (!apiReady || !connectionsOpen) return
+    if (!apiReady || !panelOpen) return
     connectionsCmd.launch(apiArgs("GET", "/connections"))
   }
 
@@ -209,7 +223,7 @@ Item {
       uploadRate = 0
       groups = []
       configEntries = ({})
-      connections = []
+      connectionLog = []
     }
     if (installed && apiAddress === "" && !apiInfoCmd.running) apiInfoCmd.launch(cli(["api-info"]))
     if (panelOpen && apiReady) {
@@ -415,14 +429,49 @@ Item {
     }
   }
 
-  function closeConnection(id) {
-    if (!apiReady || id === "") return
-    apiActionCmd.launch(apiArgs("DELETE", "/connections/" + encodeURIComponent(id)))
+  // A stack closes as one call: curl applies its -X to every URL it is given,
+  // so a row reading x4 costs one process rather than four, which `launch`
+  // would refuse anyway. It runs without -f because half a stack is often
+  // already gone by the time the row is activated, and a 404 on an id mihomo
+  // has forgotten is not something to report.
+  function closeStack(stack) {
+    var ids = stack ? stack.ids : null
+    if (!apiReady || !ids || ids.length === 0) return
+    var args = ["curl", "-sS", "--max-time", "6", "-X", "DELETE"]
+    if (apiSecret !== "") args.push("-H", "Authorization: Bearer " + apiSecret)
+    for (var i = 0; i < ids.length; i++) {
+      args.push("http://" + apiAddress + "/connections/" + encodeURIComponent(ids[i]))
+    }
+    apiActionCmd.launch(args)
   }
 
   function closeAllConnections() {
     if (!apiReady) return
     apiActionCmd.launch(apiArgs("DELETE", "/connections"))
+  }
+
+  // A closed connection exists only in the panel's log, so dropping one is a
+  // local edit and needs no call at all.
+  function forgetStack(stack) {
+    var ids = stack ? stack.ids : null
+    if (!ids || ids.length === 0) return
+    var drop = {}
+    var i
+    for (i = 0; i < ids.length; i++) drop[ids[i]] = true
+    var kept = []
+    for (i = 0; i < connectionLog.length; i++) {
+      var entry = connectionLog[i]
+      if (entry.open || !drop[entry.id]) kept.push(entry)
+    }
+    connectionLog = kept
+  }
+
+  function clearConnectionLog() {
+    var kept = []
+    for (var i = 0; i < connectionLog.length; i++) {
+      if (connectionLog[i].open) kept.push(connectionLog[i])
+    }
+    connectionLog = kept
   }
 
   // ---- processes ----------------------------------------------------------
@@ -512,8 +561,10 @@ Item {
     id: connectionsCmd
     onFinished: function(code, out) {
       if (code !== 0) return
-      var parsed = Model.parseConnections(out, Date.now())
-      root.connections = parsed.items
+      var now = Date.now()
+      var parsed = Model.parseConnections(out, now)
+      root.connectionLog = Model.mergeConnectionLog(root.connectionLog, parsed.items, now,
+        root.connectionLogCap)
       root.connectionsDownload = parsed.downloadTotal
       root.connectionsUpload = parsed.uploadTotal
     }
@@ -661,9 +712,9 @@ Item {
 
   Timer {
     id: connectionsTimer
-    interval: 2000
+    interval: root.connectionsOpen ? 2000 : root.refreshIntervalSec * 1000
     repeat: true
-    running: root.connectionsOpen && root.apiReady
+    running: root.panelOpen && root.apiReady
     triggeredOnStart: true
     onTriggered: root.refreshConnections()
   }

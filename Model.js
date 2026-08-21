@@ -321,8 +321,15 @@ function parseTrace(raw) {
   return { ip: ip, latency: latency }
 }
 
+// `GET /connections` only ever states what is open right now, so a panel that
+// renders it directly loses every connection the moment it finishes and
+// repaints its whole list on each poll. The three functions below turn that
+// snapshot into a log instead: `parseConnections` reads one snapshot,
+// `mergeConnectionLog` folds it into what came before, and `stackConnections`
+// collapses the result into the rows the view draws.
 function parseConnections(raw, nowMs) {
   var data = parseJson(raw, null)
+  var now = number(nowMs, Date.now())
   var out = { downloadTotal: 0, uploadTotal: 0, items: [] }
   if (!data || typeof data !== "object") return out
   out.downloadTotal = number(data.downloadTotal, 0)
@@ -344,11 +351,132 @@ function parseConnections(raw, nowMs) {
       rule: text(entry.rule) + (text(entry.rulePayload) !== "" ? "(" + text(entry.rulePayload) + ")" : ""),
       upload: number(entry.upload, 0),
       download: number(entry.download, 0),
-      durationMs: isFinite(started) ? Math.max(0, number(nowMs, Date.now()) - started) : 0
+      startMs: isFinite(started) ? started : now,
+      open: true,
+      lastSeenMs: now,
+      closedAtMs: 0
     })
   }
-  out.items.sort(function(a, b) { return a.durationMs - b.durationMs })
   return out
+}
+
+// Fold one snapshot into the log. An id that is still there keeps its original
+// start and takes the fresh figures; an id that was open and is no longer in
+// the snapshot is closed, keeping the last figures it reported. It closes at
+// `lastSeenMs` rather than now, because a poll can only prove a connection was
+// already gone by the time it looked, and between two polls — or across a
+// stretch with the panel shut — that gap is the whole story.
+function mergeConnectionLog(log, items, nowMs, cap) {
+  var now = number(nowMs, Date.now())
+  var previous = log && typeof log.length === "number" ? log : []
+  var fresh = items && typeof items.length === "number" ? items : []
+  var incoming = {}
+  var i
+  for (i = 0; i < fresh.length; i++) incoming[fresh[i].id] = fresh[i]
+
+  var out = []
+  var kept = {}
+  for (i = 0; i < previous.length; i++) {
+    var entry = previous[i]
+    var update = incoming[entry.id]
+    kept[entry.id] = true
+    if (update) {
+      update.startMs = entry.startMs
+      out.push(update)
+    } else if (entry.open) {
+      out.push(closedEntry(entry, now))
+    } else {
+      out.push(entry)
+    }
+  }
+  for (i = 0; i < fresh.length; i++) {
+    if (!kept[fresh[i].id]) out.push(fresh[i])
+  }
+  return trimClosedConnections(out, number(cap, 200))
+}
+
+function closedEntry(entry, nowMs) {
+  var closed = {}
+  for (var field in entry) closed[field] = entry[field]
+  closed.open = false
+  closed.closedAtMs = entry.lastSeenMs > 0 ? entry.lastSeenMs : nowMs
+  return closed
+}
+
+// Closed entries are the half of the log that only grows, so cap them: keep
+// the most recently closed and drop the rest. Open ones are never dropped.
+function trimClosedConnections(log, limit) {
+  var closed = []
+  var i
+  for (i = 0; i < log.length; i++) if (!log[i].open) closed.push(log[i])
+  if (closed.length <= limit) return log
+  closed.sort(function(a, b) { return b.closedAtMs - a.closedAtMs })
+  var keep = {}
+  for (i = 0; i < limit; i++) keep[closed[i].id] = true
+  var out = []
+  for (i = 0; i < log.length; i++) if (log[i].open || keep[log[i].id]) out.push(log[i])
+  return out
+}
+
+// One row per process, destination, and state: the four sockets Firefox has
+// open to github.com are one row reading x4, and the ones it has finished with
+// are a second, dimmed row rather than the same row quietly changing meaning.
+// Open stacks sort above closed ones, newest first within each, so a poll only
+// ever updates a row in place or puts a new one at the top.
+function stackConnections(log) {
+  var list = log && typeof log.length === "number" ? log : []
+  var byKey = {}
+  var stacks = []
+  for (var i = 0; i < list.length; i++) {
+    var entry = list[i]
+    var key = connectionStackKey(entry)
+    var stack = byKey[key]
+    if (!stack) {
+      stack = {
+        key: key,
+        host: entry.host,
+        process: entry.process,
+        network: entry.network,
+        chain: entry.chain,
+        rule: entry.rule,
+        open: entry.open,
+        count: 0,
+        upload: 0,
+        download: 0,
+        startMs: entry.startMs,
+        closedAtMs: entry.closedAtMs,
+        ids: []
+      }
+      byKey[key] = stack
+      stacks.push(stack)
+    }
+    stack.count++
+    stack.upload += entry.upload
+    stack.download += entry.download
+    stack.ids.push(entry.id)
+    // A stack is as old as its oldest member and as recent as its last close.
+    if (entry.startMs < stack.startMs) stack.startMs = entry.startMs
+    if (entry.closedAtMs > stack.closedAtMs) stack.closedAtMs = entry.closedAtMs
+    if (stack.chain === "") stack.chain = entry.chain
+    if (stack.rule === "") stack.rule = entry.rule
+    if (stack.network === "") stack.network = entry.network
+  }
+  stacks.sort(function(a, b) {
+    if (a.open !== b.open) return a.open ? -1 : 1
+    return a.open ? b.startMs - a.startMs : b.closedAtMs - a.closedAtMs
+  })
+  return stacks
+}
+
+function connectionStackKey(entry) {
+  return text(entry.process) + "\u0000" + text(entry.host) + "\u0000" + (entry.open ? "open" : "closed")
+}
+
+function openConnectionCount(log) {
+  var list = log && typeof log.length === "number" ? log : []
+  var open = 0
+  for (var i = 0; i < list.length; i++) if (list[i].open) open++
+  return open
 }
 
 function connectionHost(metadata) {
@@ -472,7 +600,11 @@ function formatDate(ms) {
 function relativeTime(iso, nowMs) {
   var then = Date.parse(text(iso))
   if (!isFinite(then)) return ""
-  var delta = number(nowMs, Date.now()) - then
+  return relativeSince(then, nowMs)
+}
+
+function relativeSince(thenMs, nowMs) {
+  var delta = number(nowMs, Date.now()) - number(thenMs, 0)
   if (delta < 0) return "just now"
   var minutes = Math.floor(delta / 60000)
   if (minutes < 1) return "just now"
@@ -540,6 +672,9 @@ if (typeof module !== "undefined") {
     parseTraffic: parseTraffic,
     parseTrace: parseTrace,
     parseConnections: parseConnections,
+    mergeConnectionLog: mergeConnectionLog,
+    stackConnections: stackConnections,
+    openConnectionCount: openConnectionCount,
     connectionHost: connectionHost,
     parseApiRules: parseApiRules,
     stripOwnRules: stripOwnRules,
@@ -551,6 +686,7 @@ if (typeof module !== "undefined") {
     formatDelay: formatDelay,
     formatDate: formatDate,
     relativeTime: relativeTime,
+    relativeSince: relativeSince,
     parseUnitTimestamp: parseUnitTimestamp,
     nextMode: nextMode,
     filterNames: filterNames

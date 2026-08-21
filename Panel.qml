@@ -104,7 +104,7 @@ Panel {
       return rows
     }
     if (view === "connections") {
-      for (i = 0; i < omihomo.connections.length; i++) rows.push({ s: "conn", i: i })
+      for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
       return rows
     }
     if (view === "manage") {
@@ -220,6 +220,7 @@ Panel {
     case "tun": omihomo.toggleTun(); break
     case "rules": openRules(false); break
     case "connections": openConnections(); break
+    case "conn": activateConnectionAt(cursorRow.i); break
     case "manage": openManage(); break
     case "autostart": omihomo.toggleAutostart(); break
     case "repair": omihomo.repairCore(); break
@@ -247,15 +248,17 @@ Panel {
       target = ruleAt(cursorRow.i)
       if (target) omihomo.removeRule(target.index)
     } else if (cursorRow.s === "conn") {
-      target = connectionAt(cursorRow.i)
-      if (target) omihomo.closeConnection(target.id)
+      activateConnectionAt(cursorRow.i)
     }
   }
 
   function handleTextKey(key) {
     var lower = key.toLowerCase()
     if (view === "connections") {
-      if (key === "X") omihomo.closeAllConnections()
+      // Not "X": PanelKeyCatcher takes both cases of x as its delete key, so
+      // an uppercase one never gets here.
+      if (key === "A") omihomo.closeAllConnections()
+      else if (key === "L") omihomo.clearConnectionLog()
       else if (lower === "r") omihomo.refreshConnections()
       else if (lower === "c") closeConnections()
       return
@@ -320,8 +323,18 @@ Panel {
   }
 
   function connectionAt(index) {
-    var list = omihomo.connections
+    var list = omihomo.connectionStacks
     return list.length === 0 ? null : list[Math.max(0, Math.min(index, list.length - 1))]
+  }
+
+  // One key does both jobs, because a row means one of two things: an open
+  // stack is closed at the core, and a closed one is only in the panel's log,
+  // so it is dropped from it.
+  function activateConnectionAt(index) {
+    var stack = connectionAt(index)
+    if (!stack) return
+    if (stack.open) omihomo.closeStack(stack)
+    else omihomo.forgetStack(stack)
   }
 
   function activateSubscriptionAt(index) {
@@ -686,7 +699,9 @@ Panel {
             id: connectionsTotals
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: omihomo.connections.length + " open  ↓ " + Model.formatBytes(omihomo.connectionsDownload)
+            horizontalAlignment: Text.AlignRight
+            text: omihomo.openConnectionCount + " open · " + omihomo.connectionLog.length + " logged"
+              + "\n↓ " + Model.formatBytes(omihomo.connectionsDownload)
               + "  ↑ " + Model.formatBytes(omihomo.connectionsUpload)
             color: root.dim
             font.family: root.fontFamily
@@ -697,9 +712,9 @@ Panel {
         PanelSeparator { foreground: root.foreground }
 
         Text {
-          visible: omihomo.connections.length === 0
+          visible: omihomo.connectionStacks.length === 0
           width: parent.width
-          text: root.liveReady ? "No open connections." : "mihomo is not running."
+          text: root.liveReady ? "Nothing logged yet." : "mihomo is not running."
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -716,7 +731,7 @@ Panel {
           interactive: contentHeight > height
           ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-          model: omihomo.connections
+          model: omihomo.connectionStacks
           currentIndex: root.cursorRow && root.cursorRow.s === "conn" ? root.cursorRow.i : -1
           onCurrentIndexChanged: if (currentIndex >= 0) Qt.callLater(keepCurrentVisible)
           function keepCurrentVisible() {
@@ -733,7 +748,7 @@ Panel {
             ConnectionRow {
               id: connectionRow
               width: parent.width
-              connection: modelData
+              stack: modelData
               rowIndex: index
             }
           }
@@ -741,7 +756,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "enter close · x close · X close all · esc back"
+          text: "enter close · x close · A close all · L clear log · esc back"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1206,7 +1221,7 @@ Panel {
             ControlCell {
               section: "connections"
               value: "conns"
-              label: String(omihomo.connections.length)
+              label: String(omihomo.openConnectionCount)
               labelFirst: false
               tooltip: "Connections · c"
               onActivated: root.openConnections()
@@ -1972,14 +1987,19 @@ Panel {
     }
   }
 
-  // At 420px a connection cannot state everything on one line, so the host
+  // At 420px a stack cannot state everything on one line, so the destination
   // takes the first and its route, transfer, and age share the second: the
-  // route elides, the numbers never do.
+  // route elides, the numbers never do. The leading mark and the brightness
+  // are what say open or closed, because the panel has a foreground, a dim,
+  // and an urgent, and no colour to spare for a third state.
   component ConnectionRow: CursorSurface {
     id: connectionRow
 
-    property var connection: null
+    property var stack: null
     property int rowIndex: 0
+
+    readonly property bool live: !!stack && stack.open
+    readonly property color labelColor: connectionRow.live ? root.foreground : root.dim
 
     hasCursor: root.at("conn", connectionRow.rowIndex)
     foreground: root.foreground
@@ -1991,7 +2011,7 @@ Panel {
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onContainsMouseChanged: if (containsMouse) root.focusRow("conn", connectionRow.rowIndex)
-      onClicked: if (connectionRow.connection) omihomo.closeConnection(connectionRow.connection.id)
+      onClicked: root.activateConnectionAt(connectionRow.rowIndex)
     }
 
     RowLayout {
@@ -2002,6 +2022,14 @@ Panel {
       anchors.rightMargin: Style.space(6)
       spacing: Style.space(8)
 
+      Text {
+        text: connectionRow.live ? "●" : "○"
+        color: connectionRow.labelColor
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        Layout.alignment: Qt.AlignVCenter
+      }
+
       ColumnLayout {
         id: connectionLabels
         Layout.fillWidth: true
@@ -2009,8 +2037,12 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: connectionRow.connection ? connectionRow.connection.host : ""
-          color: root.foreground
+          text: {
+            if (!connectionRow.stack) return ""
+            var stack = connectionRow.stack
+            return stack.process === "" ? stack.host : stack.process + " → " + stack.host
+          }
+          color: connectionRow.labelColor
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
@@ -2020,16 +2052,21 @@ Panel {
           Layout.fillWidth: true
           spacing: Style.space(8)
 
+          // A closed stack spends the slot the rule would have taken on when
+          // it closed, which is the thing you read a log for.
           Text {
             Layout.fillWidth: true
             text: {
-              if (!connectionRow.connection) return ""
+              if (!connectionRow.stack) return ""
+              var stack = connectionRow.stack
               var parts = []
-              var connection = connectionRow.connection
-              if (connection.network !== "") parts.push(connection.network)
-              if (connection.chain !== "") parts.push(connection.chain)
-              if (connection.rule !== "") parts.push(connection.rule)
-              if (connection.process !== "") parts.push(connection.process)
+              if (stack.network !== "") parts.push(stack.network)
+              if (stack.chain !== "") parts.push(stack.chain)
+              if (connectionRow.live) {
+                if (stack.rule !== "") parts.push(stack.rule)
+              } else {
+                parts.push("closed " + Model.relativeSince(stack.closedAtMs, root.nowMs))
+              }
               return parts.join(" · ")
             }
             color: root.dim
@@ -2039,11 +2076,15 @@ Panel {
           }
 
           Text {
-            text: connectionRow.connection
-              ? "↓ " + Model.formatBytes(connectionRow.connection.download)
-                + "  ↑ " + Model.formatBytes(connectionRow.connection.upload)
-                + " · " + Model.formatDuration(connectionRow.connection.durationMs)
-              : ""
+            text: {
+              if (!connectionRow.stack) return ""
+              var stack = connectionRow.stack
+              var transfer = "↓ " + Model.formatBytes(stack.download)
+                + "  ↑ " + Model.formatBytes(stack.upload)
+              return connectionRow.live
+                ? transfer + " · " + Model.formatDuration(root.nowMs - stack.startMs)
+                : transfer
+            }
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -2051,15 +2092,23 @@ Panel {
         }
       }
 
+      Text {
+        text: connectionRow.stack ? "×" + connectionRow.stack.count : ""
+        color: connectionRow.labelColor
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        Layout.alignment: Qt.AlignVCenter
+      }
+
       PanelActionButton {
-        iconText: "󰅙"
-        tooltipText: "Close connection"
+        iconText: connectionRow.live ? "󰅙" : "󰩹"
+        tooltipText: connectionRow.live ? "Close connections" : "Remove from log"
         foreground: root.foreground
         hoverColor: root.urgent
         fontFamily: root.fontFamily
         size: Style.space(18)
         Layout.alignment: Qt.AlignVCenter
-        onClicked: if (connectionRow.connection) omihomo.closeConnection(connectionRow.connection.id)
+        onClicked: root.activateConnectionAt(connectionRow.rowIndex)
       }
     }
   }
