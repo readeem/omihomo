@@ -19,8 +19,27 @@ ShellRoot {
   Omihomo.Service { id: tunService; cliPath: "/usr/bin/true" }
   Omihomo.Service { id: autostartService; cliPath: "/usr/bin/true" }
   Omihomo.Service { id: modeService; cliPath: "/usr/bin/true" }
+  // Opening the panel has to read the subscriptions itself. The panel's
+  // `panelOpen` binding updates after its own onOpenedChanged handler, so a
+  // read driven from there would miss the first open entirely.
+  Omihomo.Service { id: openService; cliPath: "omihomo-fake-cli" }
+
   Omihomo.Service { id: failingCoreService; cliPath: "/usr/bin/false" }
   Omihomo.Service { id: failingTunService; cliPath: "/usr/bin/false" }
+
+  Timer {
+    id: openCheck
+    interval: 10
+    repeat: true
+    property int ticks: 0
+    onTriggered: {
+      ticks += 1
+      if (openService.subscriptions.length === 0 && ticks < 100) return
+      stop()
+      check(openService.subscriptions.length, 1, "opening the panel loads subscriptions")
+      failureCheck.start()
+    }
+  }
 
   Timer {
     id: failureCheck
@@ -108,7 +127,10 @@ ShellRoot {
     failingTunService.applyStatus(status("on", false, false))
     failingTunService.toggleTun()
     check(failingTunService.tunActive, true, "failed TUN command starts optimistically")
-    failureCheck.start()
+
+    check(openService.subscriptions.length, 0, "subscriptions start empty")
+    openService.panelOpen = true
+    openCheck.start()
   }
 
   Component.onCompleted: Qt.callLater(run)

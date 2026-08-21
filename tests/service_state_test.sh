@@ -11,6 +11,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A fake CLI on PATH keeps the asynchronous Process boundary while answering
+# `sub list` with something the panel can render.
+cat >"$test_root/omihomo-fake-cli" <<'CLI'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-}" == "sub list" ]]; then
+  printf '[{"name":"work","url":"https://example.test/work","active":true}]\n'
+fi
+CLI
+chmod +x "$test_root/omihomo-fake-cli"
+export PATH="$test_root:$PATH"
+
 cp "$here/service_state_test.qml" "$test_root/shell.qml"
 cp "$project_root/Service.qml" "$project_root/Model.js" "$test_root/"
 cp -r /usr/share/omarchy/shell/Commons "$test_root/"

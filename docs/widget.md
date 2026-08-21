@@ -120,7 +120,9 @@ Every one of those is also reachable with the mouse. A focused text field owns `
 Polling is scoped to what is on screen. The bar only needs `omihomo status`, which runs on the
 shared refresh timer (`refreshIntervalSec`, 10s by default). Proxies, rules, subscriptions, and
 the `/traffic` stream run only while the panel is open; `/connections` polls at 2s only while
-the connections view is open.
+the connections view is open. Opening the panel reads them once immediately, from
+`Service.onPanelOpenChanged` rather than from the panel's own open handler, so the first open
+does not sit empty until the next timer tick.
 
 ## Installing it
 

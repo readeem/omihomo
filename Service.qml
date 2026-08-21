@@ -174,6 +174,18 @@ Item {
     if (!traceCmd.launch(args)) traceTesting = false
   }
 
+  // The panel's `panelOpen` binding lands after the panel's own
+  // `onOpenedChanged` handler has run, so an open-time `refresh()` called from
+  // there would still see a closed panel and skip the subscription and rule
+  // reads. Opening is therefore observed here, where `panelOpen` is already
+  // true, and the first open renders without waiting for a timer tick.
+  onPanelOpenChanged: {
+    if (!panelOpen) return
+    refresh()
+    refreshLive()
+    refreshTrace()
+  }
+
   function applyStatus(raw) {
     var status = Model.parseStatus(raw)
     var wasReady = apiReady

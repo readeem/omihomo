@@ -557,9 +557,8 @@ Panel {
       if (panelFlick) panelFlick.contentY = 0
       if (rulesFlick) rulesFlick.contentY = 0
       omihomo.clearMessages()
-      omihomo.refresh()
-      omihomo.refreshLive()
-      omihomo.refreshTrace()
+      // The reads that opening triggers live in Service.onPanelOpenChanged,
+      // which runs after this handler and after `panelOpen` is actually true.
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     } else {
       view = "main"
