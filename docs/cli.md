@@ -67,7 +67,7 @@ Exit codes are:
 | 11 | Operation conflicts with the current core state |
 | 12 | Unit is active but the mihomo API is unreachable |
 | 13 | No active subscription |
-| 14 | TUN capabilities are missing |
+| 14 | The core is missing the root permissions TUN needs |
 | 20 | Subscription content was rejected by Mihomo |
 | 21 | Subscription fetch failed |
 
@@ -75,7 +75,7 @@ Exit codes are:
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
 `download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
-`tun_enabled`, `autostart_enabled`, and `capabilities_ok`. The IP, latency, throughput, and config
+`tun_enabled`, `autostart_enabled`, and `permissions_ok`. The IP, latency, throughput, and config
 fields are nullable because those live API values remain panel-owned per ADR-0001.
 
 ## Files
@@ -122,7 +122,7 @@ not restarted. Every mutation of the state files holds the one shared `flock`.
 
 `set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.
-An active subscription and the capabilities installed with the core are required.
+An active subscription and the root permissions installed with the core are required.
 
 The generated runtime owns Mihomo's `GLOBAL` system group and points it at the resolved primary
 subscription group. This makes global mode follow the same selected config as rule mode without
@@ -133,19 +133,20 @@ active subscription has no groups, and `set group GLOBAL` is rejected.
 manage view toggles. Turning it on writes the unit first when it is missing, so autostart works on
 a core that has never been started.
 
-`core install` installs the AUR package and the required `go-yq`, `jq`, `libcap`, `curl`, and
-`nftables` tools, writes the user unit and default override, and prepares the capability hook in
-one privileged call. `yay --sudoloop` keeps that authorization alive while it installs the AUR
-package, and the pacman hook grants capabilities inside that package transaction. Installation is
-terminal-only because pacman's output and the one setup password prompt need somewhere to go.
-`core repair` is the explicit capability reapplication path.
+`core install` installs the AUR package and the required `go-yq`, `jq`, `curl`, and `nftables`
+tools, writes the user unit and default override, and prepares the permissions hook in one
+privileged call. `yay --sudoloop` keeps that authorization alive while it installs the AUR
+package, and the pacman hook makes the binary setuid root inside that package transaction (see
+ADR-0006). Installation is terminal-only because pacman's output and the one setup password
+prompt need somewhere to go. `core repair` is the explicit reapplication path, and it also clears
+the file capabilities left behind by installs that predate ADR-0006.
 
 The YAML tool has to be mikefarah's yq v4, packaged on Arch as `go-yq`. Arch's `yq` package is
 kislyuk's jq wrapper, which owns the same `/usr/bin/yq` and speaks a different language; `core
 install` replaces it, and every other command fails with an explicit message when the wrong one is
 on `PATH`.
 
-`core uninstall` reverses all of it: it stops and disables the unit, removes the capabilities and
-their pacman hook, drops the `~/.local/bin/omihomo` symlink and the unit file, removes the
+`core uninstall` reverses all of it: it stops and disables the unit, restores the binary's plain
+`755` mode and removes the pacman hook, drops the `~/.local/bin/omihomo` symlink and the unit file, removes the
 `mihomo-bin` package, and deletes the state directory. `--keep-data` keeps subscriptions, override,
 and cache. Removing the widget itself is `omarchy plugin remove omihomo`.

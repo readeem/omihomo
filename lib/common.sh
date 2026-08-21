@@ -17,7 +17,7 @@ OMIHOMO_UNIT_FILE=${OMIHOMO_UNIT_FILE:-${CONFIG_HOME}/systemd/user/${OMIHOMO_UNI
 OMIHOMO_YQ=${OMIHOMO_YQ:-yq}
 OMIHOMO_CURL=${OMIHOMO_CURL:-curl}
 OMIHOMO_SYSTEMCTL=${OMIHOMO_SYSTEMCTL:-systemctl}
-OMIHOMO_GETCAP=${OMIHOMO_GETCAP:-getcap}
+OMIHOMO_STAT=${OMIHOMO_STAT:-stat}
 # Subscription servers content-negotiate on User-Agent. A Clash-family agent
 # usually gets a full config, which Omihomo can preserve without wrapping it.
 OMIHOMO_USER_AGENT=${OMIHOMO_USER_AGENT:-clash.meta}
@@ -125,17 +125,17 @@ omi_require_core() {
   omi_core_installed || omi_error "mihomo is not installed" 10
 }
 
-omi_tun_capabilities_ok() {
-  local binary output value capabilities
+# TUN needs the core to run as root (ADR-0006): mihomo shells out to resolvectl
+# for systemd-resolved, and only a uid 0 caller skips polkit. That is true when
+# the binary is owned by root and carries both the setuid and setgid bits.
+omi_tun_permissions_ok() {
+  local binary owner group mode
   binary=$(omi_mihomo_bin)
   [[ -n $binary && -x $binary ]] || return 1
-  output=$("$OMIHOMO_GETCAP" "$binary" 2>/dev/null) || return 1
-  value=${output#* }
-  [[ $value == *=ep ]] || return 1
-  capabilities=${value%=ep}
-  [[ ,$capabilities, == *,cap_net_admin,* ]] &&
-    [[ ,$capabilities, == *,cap_net_raw,* ]] &&
-    [[ ,$capabilities, == *,cap_net_bind_service,* ]]
+  read -r owner group mode < <("$OMIHOMO_STAT" -c '%u %g %a' "$binary" 2>/dev/null) || return 1
+  [[ $owner == 0 && $group == 0 ]] || return 1
+  # stat's %a is octal, so a leading 6 is setuid (4) plus setgid (2).
+  [[ $mode == 6??? ]]
 }
 
 # Errors are machine-readable by default, because the panel parses stderr as

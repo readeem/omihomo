@@ -113,7 +113,7 @@ set_tun() {
   [[ $state == on || $state == off ]] || omi_error "tun expects on or off" 1
   if [[ $state == on ]]; then
     omi_require_core
-    omi_tun_capabilities_ok || omi_error "mihomo TUN capabilities are missing; run core repair" 14
+    omi_tun_permissions_ok || omi_error "mihomo is missing the root permissions TUN needs; run core repair" 14
     [[ -n $(omi_active_name) ]] || omi_error "no active subscription" 13
     if omi_unit_active; then
       omi_api_reachable || omi_error "mihomo controller is unreachable" 12

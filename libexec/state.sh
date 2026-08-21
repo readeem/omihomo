@@ -6,12 +6,12 @@ OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 source "$OMIHOMO_ROOT/lib/common.sh"
 
 status_json() {
-  local state=$1 detail=${2:-} active primary tun autostart capabilities uptime
+  local state=$1 detail=${2:-} active primary tun autostart permissions uptime
   active=$(omi_active_name)
   primary=
   tun=false
   autostart=false
-  capabilities=false
+  permissions=false
   uptime=
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     primary=$(omi_yq -r '.omihomo."primary-group" // ""' "$OMIHOMO_OVERRIDE_FILE")
@@ -20,14 +20,14 @@ status_json() {
   if [[ $state != not-installed ]] && omi_unit_enabled; then
     autostart=true
   fi
-  if [[ $state != not-installed ]] && omi_tun_capabilities_ok; then
-    capabilities=true
+  if [[ $state != not-installed ]] && omi_tun_permissions_ok; then
+    permissions=true
   fi
   if [[ $state != not-installed && $state != stopped ]]; then
     uptime=$("$OMIHOMO_SYSTEMCTL" --user show "$OMIHOMO_UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)
   fi
-  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson autostart "$autostart" --argjson capabilities "$capabilities" \
-    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, autostart_enabled: $autostart, capabilities_ok: $capabilities}'
+  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson autostart "$autostart" --argjson permissions "$permissions" \
+    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, autostart_enabled: $autostart, permissions_ok: $permissions}'
 }
 
 command_status() {
@@ -48,7 +48,13 @@ command_status() {
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
-  device=${OMIHOMO_TUN_DEVICE:-mihomo}
+  # mihomo names the interface `Meta` unless the config sets `tun.device`, and
+  # the merged runtime is the config it is actually running.
+  device=${OMIHOMO_TUN_DEVICE:-}
+  if [[ -z $device && -f $OMIHOMO_RUNTIME_FILE ]] && omi_yq_available; then
+    device=$(omi_yq -r '.tun.device // ""' "$OMIHOMO_RUNTIME_FILE")
+  fi
+  device=${device:-Meta}
   if [[ $tun == true && ! -e /sys/class/net/$device ]]; then
     status_json degraded "tun device is missing"
     return 0

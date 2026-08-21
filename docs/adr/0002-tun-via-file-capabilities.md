@@ -1,5 +1,9 @@
 # TUN via file capabilities on the mihomo binary, not a root service
 
+Superseded by [ADR-0006](0006-tun-via-setuid-root.md): capabilities do not survive the `execve`
+into `resolvectl`, so every TUN toggle cost three polkit password prompts. The core now runs
+setuid root, which is the fallback this ADR already named.
+
 System-wide transparent proxying needs privileges mihomo does not have as a user process.
 Koala Clash solves this with `pkexec bash -c 'chown root:root <core> && chmod +sx <core>'`
 (`src/main/core/manager.ts:467`) — setuid root on the whole binary, granted once, revocable

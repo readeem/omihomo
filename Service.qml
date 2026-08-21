@@ -28,7 +28,7 @@ Item {
   property string configuredPrimaryGroup: ""
   property bool tunEnabled: false
   property bool autostartEnabled: false
-  property bool capabilitiesOk: false
+  property bool permissionsOk: false
   property double startedMs: 0
 
   // Confirmed state keeps following status reads. While an action is settling,
@@ -184,7 +184,7 @@ Item {
     configuredPrimaryGroup = status.primaryGroup
     tunEnabled = status.tunEnabled
     autostartEnabled = status.autostartEnabled
-    capabilitiesOk = status.capabilitiesOk
+    permissionsOk = status.permissionsOk
     startedMs = status.startedMs
     if (_desiredCoreRunning !== -1 && confirmedCoreRunning === (_desiredCoreRunning === 1))
       _desiredCoreRunning = -1
@@ -234,8 +234,8 @@ Item {
   }
 
   function repairCore() {
-    if (capabilitiesOk) return
-    runCore(["core", "repair"], "Repairing capabilities…", "repair")
+    if (permissionsOk) return
+    runCore(["core", "repair"], "Repairing permissions…", "repair")
   }
 
   // Autostart is systemd's `enable`, so it goes through the CLI like the rest

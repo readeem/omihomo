@@ -109,7 +109,7 @@ Panel {
     }
     if (view === "manage") {
       rows.push({ s: "autostart" })
-      if (!omihomo.capabilitiesOk) rows.push({ s: "repair" })
+      if (!omihomo.permissionsOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       return rows
     }
@@ -378,8 +378,9 @@ Panel {
     close()
   }
 
-  // Uninstall removes packages and capabilities, so it takes the same terminal
-  // as the install: pacman's output and the sudo prompt need somewhere to go.
+  // Uninstall removes packages and the core's root permissions, so it takes the
+  // same terminal as the install: pacman's output and the sudo prompt need
+  // somewhere to go.
   // The first activation only arms the row.
   function uninstallCore() {
     if (!bar) return
@@ -420,7 +421,7 @@ Panel {
   }
 
   // The manage view holds the operations that outlive a session: autostart,
-  // capability repair, and uninstall.
+  // permission repair, and uninstall.
   function openManage() {
     view = "manage"
     cursor = 0
@@ -800,10 +801,10 @@ Panel {
 
           ActionRow {
             width: parent.width
-            visible: !omihomo.capabilitiesOk
+            visible: !omihomo.permissionsOk
             section: "repair"
-            title: "Repair capabilities"
-            subtitle: "The mihomo binary is missing the capabilities TUN needs."
+            title: "Repair permissions"
+            subtitle: "The mihomo binary is missing the root permissions TUN needs."
             trailing: "R"
             urgentTrailing: omihomo.coreState === "degraded"
             onActivated: omihomo.repairCore()
@@ -815,7 +816,7 @@ Panel {
             title: root.uninstallArmed ? "Confirm uninstall" : "Uninstall mihomo"
             subtitle: root.uninstallArmed
               ? "Activate again to remove it. Esc cancels."
-              : "Removes the core, its capabilities, the unit, and saved subscriptions."
+              : "Removes the core, its permissions, the unit, and saved subscriptions."
             urgentTrailing: root.uninstallArmed
             trailing: root.uninstallArmed ? "confirm" : ""
             onActivated: root.uninstallCore()
@@ -824,7 +825,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: omihomo.capabilitiesOk
+          text: omihomo.permissionsOk
             ? "enter activate · b autostart · esc back"
             : "enter activate · b autostart · R repair · esc back"
           color: root.dim

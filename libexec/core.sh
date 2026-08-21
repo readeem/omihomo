@@ -15,7 +15,7 @@ core_install() {
   local binary
   binary=$(omi_mihomo_bin)
   [[ -n $binary ]] || omi_error "mihomo was not installed" 10
-  omi_tun_capabilities_ok || omi_error "mihomo was installed without its TUN capabilities" 1
+  omi_tun_permissions_ok || omi_error "mihomo was installed without the root permissions TUN needs" 1
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$OMIHOMO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
   omi_write_unit
@@ -25,7 +25,7 @@ core_install() {
 
 # The root helper installs dependencies and the pacman hook in one authenticated
 # call. yay keeps that sudo timestamp alive while it installs mihomo; the hook
-# grants the capabilities inside yay's existing pacman transaction.
+# makes the binary setuid root inside yay's existing pacman transaction.
 omi_install_packages() {
   local prepare_args=(prepare) status=0
   # Arch's `yq` package is the jq wrapper and owns the same /usr/bin/yq as
@@ -52,9 +52,10 @@ omi_aur_hint() {
   printf ' (aur.archlinux.org is unreachable from this machine, so the AUR build cannot start)'
 }
 
-# Removes everything `core install` created: the unit, the capabilities and
-# their pacman hook, the ~/.local/bin symlink, the mihomo package, and the state
-# directory. `--keep-data` spares subscriptions, override, and cache.
+# Removes everything `core install` created: the unit, the core's root
+# permissions and their pacman hook, the ~/.local/bin symlink, the mihomo
+# package, and the state directory. `--keep-data` spares subscriptions,
+# override, and cache.
 core_uninstall() {
   local keep_data=0
   case ${1:-} in
@@ -72,7 +73,7 @@ core_uninstall() {
 
   if [[ -x $OMIHOMO_ROOT/libexec/root.sh ]]; then
     omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" uninstall ||
-      omi_error "removing mihomo capabilities failed" 1
+      omi_error "removing the mihomo root permissions failed" 1
   fi
 
   # The symlink is only ours if it still points into this checkout.
@@ -102,7 +103,7 @@ core_uninstall() {
 core_repair() {
   omi_require_core
   if ! omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" repair /usr/bin/mihomo; then
-    omi_error "repairing mihomo capabilities failed" 1
+    omi_error "repairing the mihomo root permissions failed" 1
   fi
 }
 

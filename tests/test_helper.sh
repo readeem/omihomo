@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_CAPABILITIES
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -154,14 +154,18 @@ printf '%s\n' "$*" >>"$TEST_ROOT/sudo.log"
 EOF
   chmod +x "$TEST_ROOT/bin/sudo"
 
-  cat >"$TEST_ROOT/bin/getcap" <<'EOF'
+  # A test cannot own a root:root setuid file, so the ownership and mode read
+  # is the seam: OMIHOMO_TEST_PERMISSIONS decides what the core looks like.
+  cat >"$TEST_ROOT/bin/stat" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ ${OMIHOMO_TEST_CAPABILITIES:-no} == yes ]]; then
-  printf '%s cap_net_bind_service,cap_net_admin,cap_net_raw=ep\n' "$1"
+if [[ ${OMIHOMO_TEST_PERMISSIONS:-no} == yes ]]; then
+  printf '0 0 6755\n'
+else
+  printf '1000 1000 755\n'
 fi
 EOF
-  chmod +x "$TEST_ROOT/bin/getcap"
+  chmod +x "$TEST_ROOT/bin/stat"
 }
 
 teardown_test() {

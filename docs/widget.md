@@ -70,7 +70,7 @@ none of them are read in a normal session. `n` still means "new rule": from the 
 opens the view with the form already up.
 
 The **manage view** holds the three
-operations that outlive a session: autostart, capability repair, and uninstall. Autostart is
+operations that outlive a session: autostart, permission repair, and uninstall. Autostart is
 `systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
 stays in-panel because it is one privileged call with no build, and from the panel that call is a
 `pkexec` dialog; a degraded core is surfaced on the manage cell in the controls rather than by
@@ -104,7 +104,7 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `p` | Make the selected group primary |
 | `d` / `D` | Latency test the config / the whole group |
 | `/` | Filter configs |
-| `R` | Repair capabilities |
+| `R` | Repair permissions |
 | `b` | Toggle autostart (manage view) |
 | `i` | Install the core (only when it is missing) |
 | `esc` | Close the form, filter, or view; otherwise close the panel |

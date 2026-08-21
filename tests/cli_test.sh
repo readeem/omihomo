@@ -13,7 +13,7 @@ test_status_reports_not_installed() {
   output=$(run_cli status)
   assert_json_field "$output" state not-installed
   assert_json_field "$output" active_subscription null
-  [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime") and has("capabilities_ok")' <<<"$output") == true ]] || fail "status shape is missing fields"
+  [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime") and has("permissions_ok")' <<<"$output") == true ]] || fail "status shape is missing fields"
 }
 
 test_subscription_add_and_list_are_flat_json() {
@@ -478,14 +478,14 @@ test_status_reports_stopped_for_installed_core() {
   assert_json_field "$output" state stopped
 }
 
-test_status_reports_whether_tun_capabilities_are_installed() {
+test_status_reports_whether_the_core_can_run_tun() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  assert_eq "$(run_cli status | jq -r '.capabilities_ok')" false
-  export OMIHOMO_TEST_CAPABILITIES=yes
-  assert_eq "$(run_cli status | jq -r '.capabilities_ok')" true
+  assert_eq "$(run_cli status | jq -r '.permissions_ok')" false
+  export OMIHOMO_TEST_PERMISSIONS=yes
+  assert_eq "$(run_cli status | jq -r '.permissions_ok')" true
 }
 
 test_status_reports_degraded_when_tun_device_is_missing() {
@@ -511,6 +511,37 @@ EOF
   local output
   output=$(run_cli status)
   assert_json_field "$output" state degraded
+}
+
+# mihomo names the interface after `tun.device`, defaulting to `Meta`, so the
+# device probe has to read the config rather than assume a name.
+test_status_reads_the_tun_device_name_from_the_runtime_config() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  mkdir -p "$XDG_DATA_HOME/omihomo"
+  cat >"$XDG_DATA_HOME/omihomo/override.yaml" <<'EOF'
+config:
+  external-controller: 127.0.0.1:9090
+  secret: test-secret
+  tun:
+    enable: true
+omihomo:
+  primary-group: Auto
+rules:
+  prepend: []
+  append: []
+  filter: []
+EOF
+  cat >"$XDG_DATA_HOME/omihomo/runtime.yaml" <<'EOF'
+tun:
+  enable: true
+  device: lo
+EOF
+  local output
+  output=$(run_cli status)
+  assert_json_field "$output" state on
 }
 
 test_status_reports_autostart_state() {
@@ -571,7 +602,7 @@ test_turning_tun_on_starts_an_inactive_unit_without_privilege() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  export OMIHOMO_TEST_CAPABILITIES=yes
+  export OMIHOMO_TEST_PERMISSIONS=yes
 
   run_cli sub add https://example.test/subscription/work
   run_cli sub activate work
@@ -587,7 +618,7 @@ test_turning_tun_on_reloads_an_active_unit_without_privilege() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  export OMIHOMO_TEST_CAPABILITIES=yes
+  export OMIHOMO_TEST_PERMISSIONS=yes
   run_cli sub add https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
@@ -603,7 +634,7 @@ test_turning_tun_on_requires_an_active_subscription() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  export OMIHOMO_TEST_CAPABILITIES=yes
+  export OMIHOMO_TEST_PERMISSIONS=yes
   local stderr status
   stderr=$(mktemp)
   set +e
@@ -614,7 +645,7 @@ test_turning_tun_on_requires_an_active_subscription() {
   assert_file_contains "$stderr" '"code":13'
 }
 
-test_turning_tun_on_with_missing_capabilities_does_not_prompt() {
+test_turning_tun_on_without_root_permissions_does_not_prompt() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
@@ -630,15 +661,15 @@ test_turning_tun_on_with_missing_capabilities_does_not_prompt() {
 
   assert_eq "$status" 14
   assert_file_contains "$stderr" '"code":14'
-  [[ ! -e $TEST_ROOT/pkexec.log ]] || fail "missing capabilities invoked pkexec"
-  [[ ! -e $TEST_ROOT/sudo.log ]] || fail "missing capabilities invoked sudo"
+  [[ ! -e $TEST_ROOT/pkexec.log ]] || fail "missing permissions invoked pkexec"
+  [[ ! -e $TEST_ROOT/sudo.log ]] || fail "missing permissions invoked sudo"
 }
 
 test_install_has_one_privileged_setup_boundary() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  export OMIHOMO_TEST_CAPABILITIES=yes
+  export OMIHOMO_TEST_PERMISSIONS=yes
 
   script -qec "$REPO_ROOT/bin/omihomo core install" /dev/null >/dev/null
 
@@ -680,7 +711,7 @@ test_pretty_errors_are_plain_text() {
   assert_file_contains "$stderr" 'omihomo: mihomo is not installed (exit 10)'
 }
 
-# Uninstall has to take every artifact with it: unit, capabilities, launcher
+# Uninstall has to take every artifact with it: unit, permissions, launcher
 # symlink, package, and state.
 test_uninstall_removes_every_artifact() {
   setup_test
@@ -745,8 +776,9 @@ tests=(
   test_pretty_is_applied_by_dispatcher
   test_status_exit_code_is_always_zero
   test_status_reports_stopped_for_installed_core
-  test_status_reports_whether_tun_capabilities_are_installed
+  test_status_reports_whether_the_core_can_run_tun
   test_status_reports_degraded_when_tun_device_is_missing
+  test_status_reads_the_tun_device_name_from_the_runtime_config
   test_status_reports_autostart_state
   test_autostart_writes_the_unit_before_enabling_it
   test_error_code_10_is_used_when_core_is_missing
@@ -757,7 +789,7 @@ tests=(
   test_turning_tun_on_starts_an_inactive_unit_without_privilege
   test_turning_tun_on_reloads_an_active_unit_without_privilege
   test_turning_tun_on_requires_an_active_subscription
-  test_turning_tun_on_with_missing_capabilities_does_not_prompt
+  test_turning_tun_on_without_root_permissions_does_not_prompt
   test_install_has_one_privileged_setup_boundary
   test_active_override_change_reports_unreachable_controller
 )
