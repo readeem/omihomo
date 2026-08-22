@@ -585,12 +585,13 @@ rules:
   filter: []
 EOF
 
-  # A second proxy client holding the device or the nftables chains.
+  # Something else holding the device itself, which the redirect switch cannot
+  # help with, so it is worded as its own thing.
   export OMIHOMO_TEST_JOURNAL='time="2026-08-22T07:40:59+03:00" level=error msg="Start TUN listening error: configure tun interface: device or resource busy"'
   local output
   output=$(run_cli status)
   assert_json_field "$output" state degraded
-  assert_json_field "$output" detail "another proxy client is already using TUN"
+  assert_json_field "$output" detail "the TUN device is held by another process"
 
   # Anything else is reported as mihomo worded it, minus the repeated tail.
   export OMIHOMO_TEST_JOURNAL='time="2026-08-22T07:40:59+03:00" level=error msg="Start TUN listening error: operation not permitted\noperation not permitted"'
@@ -767,6 +768,80 @@ test_tun_device_is_named_after_omihomo() {
   run_cli core start
   assert_eq "$(yq -r '.config.tun.device' "$override")" omihomo
   assert_eq "$(yq -r '.tun.device' "$XDG_DATA_HOME/omihomo/runtime.yaml")" omihomo
+}
+
+# `auto-redirect` off with the system TCP stack is the one pairing that reports
+# a healthy tunnel and carries no TCP, so the two fields have to move together.
+test_tun_redirect_moves_the_stack_with_it() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+
+  assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" true
+  assert_eq "$(yq -r '.config.tun.stack' "$override")" mixed
+
+  run_cli set tun-redirect off
+  assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" false
+  assert_eq "$(yq -r '.config.tun.stack' "$override")" gvisor
+  assert_eq "$(yq -r '.tun."auto-redirect"' "$runtime")" false
+  assert_eq "$(yq -r '.tun.stack' "$runtime")" gvisor
+
+  run_cli set tun-redirect on
+  assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" true
+  assert_eq "$(yq -r '.config.tun.stack' "$override")" mixed
+
+  local status
+  set +e
+  run_cli set tun-redirect sideways 2>/dev/null
+  status=$?
+  set -e
+  assert_eq "$status" 1
+}
+
+# `status` reads the flag off the override, where `false` is the value it exists
+# to report — so it cannot go through yq's `//`, which treats false as absent.
+test_status_reports_tun_redirect_state() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+
+  assert_json_field "$(run_cli status)" tun_redirect true
+  run_cli set tun-redirect off
+  assert_eq "$(run_cli status | jq -r '.tun_redirect')" false
+}
+
+# A redirect that cannot claim its nftables table is repairable from the panel,
+# so the detail names that switch instead of guessing at what holds the table.
+test_status_points_a_blocked_redirect_at_its_repair() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TUN_DEVICE=omihomo-test-device-that-does-not-exist
+  export OMIHOMO_TEST_INVOCATION=deadbeef
+  export OMIHOMO_TEST_JOURNAL='time="2026-08-22T12:13:46+03:00" level=error msg="Start TUN listening error: auto redirect: conn.Receive: netlink receive: file exists\nnetlink receive: file exists"'
+  mkdir -p "$XDG_DATA_HOME/omihomo"
+  cat >"$XDG_DATA_HOME/omihomo/override.yaml" <<'EOF'
+config:
+  external-controller: 127.0.0.1:9090
+  secret: test-secret
+  tun:
+    enable: true
+omihomo:
+  primary-group: Auto
+rules:
+  prepend: []
+  append: []
+  filter: []
+EOF
+  local output
+  output=$(run_cli status)
+  assert_json_field "$output" state degraded
+  assert_json_field "$output" detail "TUN acceleration cannot start on this machine"
 }
 
 # The exclusions landed after the first releases, so an override that predates
@@ -1020,6 +1095,9 @@ tests=(
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_tun_routing_excludes_local_networks_by_default
   test_tun_device_is_named_after_omihomo
+  test_tun_redirect_moves_the_stack_with_it
+  test_status_reports_tun_redirect_state
+  test_status_points_a_blocked_redirect_at_its_repair
   test_an_override_without_exclusions_gains_them
   test_an_emptied_exclusion_list_is_left_alone
   test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin

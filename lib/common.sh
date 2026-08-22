@@ -38,6 +38,19 @@ OMIHOMO_TAILSCALE_DOMAIN='+.ts.net'
 # device probe in `omihomo status` would read that as its own working tunnel,
 # so Omihomo names its adapter after itself instead.
 OMIHOMO_TUN_DEVICE_NAME=omihomo
+# TUN has two working shapes, and `auto-redirect` decides which. On it hands TCP
+# to the kernel through an nftables table sing-tun creates, which is the faster
+# path but needs that table to itself; anything else already holding one stops
+# the adapter from starting at all. Off, the gVisor stack tunnels entirely in
+# userspace and touches no firewall rules, so it works on any machine.
+#
+# The stack is not a free choice alongside it. `mixed` uses the system TCP
+# stack, which only ever sees TCP because the redirect puts it there, so the
+# pair `auto-redirect: false` with `mixed` is the one combination that comes up
+# looking healthy and silently carries no TCP at all. The two fields only ever
+# move together, which is what `set tun-redirect` exists to guarantee.
+OMIHOMO_TUN_REDIRECT_STACK=mixed
+OMIHOMO_TUN_COMPATIBLE_STACK=gvisor
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"
@@ -173,7 +186,7 @@ config:
     device: $OMIHOMO_TUN_DEVICE_NAME
     auto-route: true
     auto-redirect: true
-    stack: mixed
+    stack: $OMIHOMO_TUN_REDIRECT_STACK
     dns-hijack:
       - any:53
     route-exclude-address:

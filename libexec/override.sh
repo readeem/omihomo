@@ -131,6 +131,27 @@ set_tun() {
   fi
 }
 
+# `auto-redirect` and `stack` are one decision rather than two, because the
+# system TCP stack the fast pairing uses only sees TCP that the nftables
+# redirect puts in front of it. Turning the redirect off on its own is the one
+# combination that reports a healthy tunnel and carries no TCP, so both fields
+# move here together. Off is the pairing that needs no firewall rules and so
+# works on a machine where something else already owns sing-tun's table.
+set_tun_redirect() {
+  local state=${1:-} redirect stack
+  [[ $state == on || $state == off ]] || omi_error "tun-redirect expects on or off" 1
+  omi_init_layout
+  if [[ $state == on ]]; then
+    redirect=true
+    stack=$OMIHOMO_TUN_REDIRECT_STACK
+  else
+    redirect=false
+    stack=$OMIHOMO_TUN_COMPATIBLE_STACK
+  fi
+  OMIHOMO_TUN_STACK=$stack override_candidate \
+    ".config.tun.\"auto-redirect\" = $redirect | .config.tun.stack = strenv(OMIHOMO_TUN_STACK)"
+}
+
 # The toggle is two writes. The override opens Omihomo's own loopback listener
 # and pins Tailscale's control plane and DERP to the primary group; the drop-in
 # is what points tailscaled at that listener, and it is root-owned.
@@ -181,6 +202,7 @@ case ${1:-} in
     case ${2:-} in
       mode) omi_with_lock set_mode "${3:-}" ;;
       tun) omi_with_lock set_tun "${3:-}" ;;
+      tun-redirect) omi_with_lock set_tun_redirect "${3:-}" ;;
       tailscale) omi_with_lock set_tailscale "${3:-}" ;;
       group) omi_with_lock set_group "${3:-}" ;;
       *) omi_error "unknown set command" 1 ;;

@@ -6,10 +6,11 @@ OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 source "$OMIHOMO_ROOT/lib/common.sh"
 
 status_json() {
-  local state=$1 detail=${2:-} active primary tun autostart permissions uptime tailscale tailscale_present
+  local state=$1 detail=${2:-} active primary tun autostart permissions uptime tailscale tailscale_present redirect
   active=$(omi_active_name)
   primary=
   tun=false
+  redirect=true
   autostart=false
   permissions=false
   tailscale=false
@@ -18,6 +19,10 @@ status_json() {
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     primary=$(omi_yq -r '.omihomo."primary-group" // ""' "$OMIHOMO_OVERRIDE_FILE")
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
+    # Not `// true`: yq's alternative operator treats `false` as absent, which
+    # is exactly the value this key is read for.
+    redirect=$(omi_yq -r '.config.tun."auto-redirect"' "$OMIHOMO_OVERRIDE_FILE")
+    [[ $redirect == true || $redirect == false ]] || redirect=true
     tailscale=$(omi_yq -r '.omihomo.tailscale // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
   # Presence is the panel's cue to show the row at all, and it is the machine's
@@ -34,8 +39,8 @@ status_json() {
   if [[ $state != not-installed && $state != stopped ]]; then
     uptime=$("$OMIHOMO_SYSTEMCTL" --user show "$OMIHOMO_UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)
   fi
-  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson autostart "$autostart" --argjson permissions "$permissions" --argjson tailscale "$tailscale" --argjson tailscale_present "$tailscale_present" \
-    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, autostart_enabled: $autostart, permissions_ok: $permissions, tailscale_enabled: $tailscale, tailscale_present: $tailscale_present}'
+  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson redirect "$redirect" --argjson autostart "$autostart" --argjson permissions "$permissions" --argjson tailscale "$tailscale" --argjson tailscale_present "$tailscale_present" \
+    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, tun_redirect: $redirect, autostart_enabled: $autostart, permissions_ok: $permissions, tailscale_enabled: $tailscale, tailscale_present: $tailscale_present}'
 }
 
 # mihomo logs why the TUN adapter refused to come up and then keeps serving the
@@ -58,19 +63,19 @@ tun_failure_reason() {
   printf '%s\n' "${line:0:160}"
 }
 
-# `device or resource busy` and `file exists` both mean a second proxy client
-# already holds what mihomo is reaching for. Renaming the device settles the
-# first, but `auto-redirect` installs nftables chains called `mihomo_prerouting`
-# and friends, and those names are fixed inside the binary — so two mihomo cores
-# can never both have TUN. Nothing here can repair that, and saying so is worth
-# more to the user than the raw netlink error.
+# An `auto redirect:` failure is sing-tun refusing to create the nftables table
+# the fast pairing needs, because something on this machine already holds one.
+# What that is cannot be read from here without root, and it is not Omihomo's to
+# take away in any case — but it is also not needed: `set tun-redirect off`
+# switches to the gVisor stack, which tunnels without any firewall rules. So the
+# detail names the repair rather than guessing at the culprit.
 tun_failure_detail() {
   local reason
   reason=$(tun_failure_reason)
   case $reason in
     "") printf 'tun device is missing\n' ;;
-    *'resource busy'* | *'file exists'* | *'address already in use'*)
-      printf 'another proxy client is already using TUN\n' ;;
+    'auto redirect:'*) printf 'TUN acceleration cannot start on this machine\n' ;;
+    *'resource busy'*) printf 'the TUN device is held by another process\n' ;;
     *) printf 'tun failed to start: %s\n' "$reason" ;;
   esac
 }

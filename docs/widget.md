@@ -87,8 +87,11 @@ read-only. It is a view rather than a section because a subscription ships hundr
 none of them are read in a normal session. `n` still means "new rule": from the main panel it
 opens the view with the form already up.
 
-The **manage view** holds the three
-operations that outlive a session: autostart, permission repair, and uninstall. Autostart is
+The **manage view** holds the operations that outlive a session: autostart, TUN acceleration,
+permission repair, and uninstall. Acceleration is `omihomo set tun-redirect`, which moves
+`auto-redirect` and the TUN stack together; turning it off is the repair for a core that reports
+`TUN acceleration cannot start on this machine`, and its cell is coloured while that is the
+reason the core is degraded. Autostart is
 `systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
 stays in-panel because it is one privileged call with no build, and from the panel that call is a
 `pkexec` dialog; a degraded core is surfaced on the manage cell in the controls rather than by
@@ -122,7 +125,7 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `p` | Make the selected group primary |
 | `d` / `D` | Latency test the config / the whole group |
 | `/` | Filter configs |
-| `A` | Close every open connection (connections view) |
+| `A` | Close every open connection (connections view); toggle TUN acceleration (manage view) |
 | `L` | Clear the connection log (connections view) |
 | `R` | Repair permissions |
 | `b` | Toggle autostart (manage view) |

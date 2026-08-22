@@ -27,6 +27,7 @@ ShellRoot {
   Omihomo.Service { id: failingCoreService; cliPath: "/usr/bin/false" }
   Omihomo.Service { id: failingTunService; cliPath: "/usr/bin/false" }
   Omihomo.Service { id: staleApiService; cliPath: "/usr/bin/true" }
+  Omihomo.Service { id: redirectService; cliPath: "/usr/bin/true" }
 
   Timer {
     id: openCheck
@@ -57,13 +58,15 @@ ShellRoot {
     }
   }
 
-  function status(state, tun, autostart) {
+  function status(state, tun, autostart, redirect) {
     return JSON.stringify({
       state: state,
       detail: "",
       active_subscription: "",
       primary_group: "",
       tun_enabled: tun === true,
+      // Absent means the fast pairing, which is what most callers here want.
+      tun_redirect: redirect !== false,
       autostart_enabled: autostart === true,
       uptime: null
     })
@@ -147,6 +150,17 @@ ShellRoot {
     check(staleApiService.apiReady, false, "a rejected read drops the stale credentials")
     check(staleApiService.apiSecret, "", "a rejected read drops the stale secret")
     check(staleApiService.proxiesLoaded, false, "dropped credentials un-load the proxies")
+
+    // Turning the redirect off is the repair for a TUN that will not start, so
+    // it settles the same way every other optimistic toggle does.
+    redirectService.applyStatus(status("degraded", true, false, true))
+    check(redirectService.tunRedirectActive, true, "the fast pairing is the default")
+    redirectService.toggleTunRedirect()
+    check(redirectService.tunRedirectActive, false, "redirect changes immediately after click")
+    redirectService.applyStatus(status("degraded", true, false, true))
+    check(redirectService.tunRedirectActive, false, "stale status cannot undo pending redirect")
+    redirectService.applyStatus(status("on", true, false, false))
+    check(redirectService._desiredTunRedirect, -1, "redirect confirmation clears desired state")
 
     check(openService.subscriptions.length, 0, "subscriptions start empty")
     openService.panelOpen = true

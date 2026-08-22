@@ -41,6 +41,7 @@ function defaultStatus() {
     activeSubscription: "",
     primaryGroup: "",
     tunEnabled: false,
+    tunRedirect: true,
     autostartEnabled: false,
     permissionsOk: false,
     tailscaleEnabled: false,
@@ -60,6 +61,8 @@ function parseStatus(raw) {
     activeSubscription: text(data.active_subscription),
     primaryGroup: text(data.primary_group),
     tunEnabled: data.tun_enabled === true,
+    // Absent means the fast pairing, which is what a default override carries.
+    tunRedirect: data.tun_redirect !== false,
     autostartEnabled: data.autostart_enabled === true,
     permissionsOk: data.permissions_ok === true,
     tailscaleEnabled: data.tailscale_enabled === true,

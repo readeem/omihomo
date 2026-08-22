@@ -24,6 +24,7 @@ omihomo rule raw [prepend|append|filter] <rule>
 
 omihomo set mode <rule|global|direct>
 omihomo set tun <on|off>
+omihomo set tun-redirect <on|off>
 omihomo set tailscale <on|off>
 omihomo set group <name>
 
@@ -77,7 +78,7 @@ Exit codes are:
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
 `download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
-`tun_enabled`, `autostart_enabled`, `permissions_ok`, `tailscale_enabled`, and
+`tun_enabled`, `tun_redirect`, `autostart_enabled`, `permissions_ok`, `tailscale_enabled`, and
 `tailscale_present`. The IP, latency, throughput, and config
 fields are nullable because those live API values remain panel-owned per ADR-0001.
 
@@ -137,11 +138,22 @@ probe would read its `Meta` as Omihomo's own working tunnel. An override that pr
 gains it on the next command that writes state.
 
 When TUN is on and its device is absent, `status` reports `degraded` and reads the reason out of
-the unit's journal for the current invocation, so `detail` carries what mihomo actually said. A
-device or nftables chain already held by a second proxy client reports as `another proxy client is
-already using TUN`. That one is not repairable from Omihomo: `auto-redirect` installs chains named
-`mihomo_prerouting` and friends, and those names are fixed inside the binary, so two mihomo cores
-can never both hold TUN. The other client has to stop.
+the unit's journal for the current invocation, so `detail` carries what mihomo actually said.
+
+`set tun-redirect on|off` moves `config.tun.auto-redirect` and `config.tun.stack` together, and
+`status` reports the flag as `tun_redirect`. On is `auto-redirect: true` with the `mixed` stack:
+sing-tun creates an nftables table and hands TCP to the kernel through it, which is the faster
+path but needs that table to itself. Off is `auto-redirect: false` with the `gvisor` stack, which
+tunnels entirely in userspace and installs no firewall rules, so it works anywhere.
+
+The two are one setting because the pairing `auto-redirect: false` with `mixed` is the one
+combination that comes up looking healthy and carries no TCP at all — `mixed` uses the system TCP
+stack, which only ever sees TCP because the redirect puts it there.
+
+A machine where something else already holds an nftables table sing-tun wants reports
+`TUN acceleration cannot start on this machine`, and `set tun-redirect off` is the repair. What
+holds the table cannot be read without root and is not Omihomo's to take away, so the detail names
+the switch rather than guessing at the culprit.
 
 The default override excludes loopback, the private and CGNAT ranges, link-local, the
 documentation and multicast blocks, and their IPv6 equivalents from TUN's `auto-route`, through

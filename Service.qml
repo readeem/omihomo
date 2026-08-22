@@ -28,6 +28,10 @@ Item {
   property string activeSubscription: ""
   property string configuredPrimaryGroup: ""
   property bool tunEnabled: false
+  // Whether TUN uses the nftables-backed fast pairing. Off is the fallback that
+  // needs no firewall rules, which is the repair for a machine where sing-tun
+  // cannot claim its table.
+  property bool tunRedirect: true
   property bool autostartEnabled: false
   property bool permissionsOk: false
   property bool tailscaleEnabled: false
@@ -41,6 +45,7 @@ Item {
   // repaint over the user's click. -1 means there is no pending boolean.
   property int _desiredCoreRunning: -1
   property int _desiredTunEnabled: -1
+  property int _desiredTunRedirect: -1
   property int _desiredAutostartEnabled: -1
   property int _desiredTailscaleEnabled: -1
 
@@ -48,6 +53,8 @@ Item {
   readonly property bool coreRunning: coreState === "on" || coreState === "degraded"
   readonly property bool coreActive: _desiredCoreRunning === -1 ? coreRunning : _desiredCoreRunning === 1
   readonly property bool tunActive: _desiredTunEnabled === -1 ? tunEnabled : _desiredTunEnabled === 1
+  readonly property bool tunRedirectActive: _desiredTunRedirect === -1
+    ? tunRedirect : _desiredTunRedirect === 1
   readonly property bool autostartActive: _desiredAutostartEnabled === -1
     ? autostartEnabled : _desiredAutostartEnabled === 1
   readonly property bool tailscaleActive: _desiredTailscaleEnabled === -1
@@ -239,6 +246,7 @@ Item {
     activeSubscription = status.activeSubscription
     configuredPrimaryGroup = status.primaryGroup
     tunEnabled = status.tunEnabled
+    tunRedirect = status.tunRedirect
     autostartEnabled = status.autostartEnabled
     permissionsOk = status.permissionsOk
     tailscaleEnabled = status.tailscaleEnabled
@@ -248,6 +256,8 @@ Item {
       _desiredCoreRunning = -1
     if (_desiredTunEnabled !== -1 && tunEnabled === (_desiredTunEnabled === 1))
       _desiredTunEnabled = -1
+    if (_desiredTunRedirect !== -1 && tunRedirect === (_desiredTunRedirect === 1))
+      _desiredTunRedirect = -1
     if (_desiredAutostartEnabled !== -1 && autostartEnabled === (_desiredAutostartEnabled === 1))
       _desiredAutostartEnabled = -1
     if (_desiredTailscaleEnabled !== -1 && tailscaleEnabled === (_desiredTailscaleEnabled === 1))
@@ -329,6 +339,22 @@ Item {
     _overrideAction = "tun"
     if (!overrideCmd.launch(cli(["set", "tun", desired === 1 ? "on" : "off"]))) {
       _desiredTunEnabled = -1
+      _overrideAction = ""
+    }
+  }
+
+  // The repair for a TUN that will not start, or that starts and carries
+  // nothing: turning the redirect off drops to the stack that needs no firewall
+  // rules. The CLI moves `auto-redirect` and `stack` together, so this is one
+  // toggle rather than two.
+  function toggleTunRedirect() {
+    if (overrideCmd.running) return
+    var desired = tunRedirectActive ? 0 : 1
+    reportDone(desired === 1 ? "Enabling TUN acceleration…" : "Disabling TUN acceleration…")
+    _desiredTunRedirect = desired
+    _overrideAction = "tunRedirect"
+    if (!overrideCmd.launch(cli(["set", "tun-redirect", desired === 1 ? "on" : "off"]))) {
+      _desiredTunRedirect = -1
       _overrideAction = ""
     }
   }
@@ -698,6 +724,7 @@ Item {
       if (code !== 0) {
         if (action === "mode") root._desiredMode = ""
         else if (action === "tun") root._desiredTunEnabled = -1
+        else if (action === "tunRedirect") root._desiredTunRedirect = -1
         else if (action === "tailscale") root._desiredTailscaleEnabled = -1
         root.reportError(code, err)
       }

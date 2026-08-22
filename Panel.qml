@@ -69,6 +69,10 @@ Panel {
   readonly property string cliPath: pluginDir + "bin/omihomo"
 
   readonly property bool liveReady: omihomo.apiReady
+  // A degraded core with the redirect still on is the case the acceleration
+  // switch repairs, so that is when its cell is worth colouring.
+  readonly property bool tunRedirectBlocked: omihomo.coreState === "degraded"
+    && omihomo.tunRedirectActive
   readonly property var visibleGroups: Model.userGroups(omihomo.groups)
   readonly property string browsedGroup: Model.groupByName(visibleGroups, browseGroup)
     ? browseGroup : omihomo.primaryGroup
@@ -110,6 +114,7 @@ Panel {
     if (view === "manage") {
       rows.push({ s: "autostart" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" })
+      rows.push({ s: "tunRedirect" })
       if (!omihomo.permissionsOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       return rows
@@ -205,6 +210,8 @@ Panel {
       omihomo.toggleAutostart()
     } else if (cursorRow.s === "tailscale") {
       omihomo.toggleTailscale()
+    } else if (cursorRow.s === "tunRedirect") {
+      omihomo.toggleTunRedirect()
     } else if (cursorRow.s === "ruleType") {
       ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
     } else if (cursorRow.s === "ruleTarget") {
@@ -227,6 +234,7 @@ Panel {
     case "manage": openManage(); break
     case "autostart": omihomo.toggleAutostart(); break
     case "tailscale": omihomo.toggleTailscale(); break
+    case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "repair": omihomo.repairCore(); break
     case "sub": activateSubscriptionAt(cursorRow.i); break
     case "subAdd": openSubForm(); break
@@ -277,6 +285,7 @@ Panel {
       else if (key === "R") omihomo.repairCore()
       else if (lower === "b") omihomo.toggleAutostart()
       else if (key === "T") omihomo.toggleTailscale()
+      else if (key === "A") omihomo.toggleTunRedirect()
       return
     }
     if (!omihomo.installed) {
@@ -829,6 +838,20 @@ Panel {
             onActivated: omihomo.toggleTailscale()
           }
 
+          // The repair for a TUN that will not start on this machine. It is
+          // urgent only while the core is actually degraded by it; the rest of
+          // the time it is an ordinary speed-versus-compatibility switch.
+          ActionRow {
+            width: parent.width
+            section: "tunRedirect"
+            title: "TUN acceleration"
+            subtitle: "Routes TCP through an nftables table, which is faster but has to be the only one. Turn off if TUN will not start or carries no traffic."
+            trailing: omihomo.tunRedirectActive ? "on" : "off"
+            current: omihomo.tunRedirectActive
+            urgentTrailing: root.tunRedirectBlocked
+            onActivated: omihomo.toggleTunRedirect()
+          }
+
           ActionRow {
             width: parent.width
             visible: !omihomo.permissionsOk
@@ -857,6 +880,7 @@ Panel {
           width: parent.width
           text: "enter activate · b autostart"
             + (omihomo.tailscalePresent ? " · T tailscale" : "")
+            + " · A acceleration"
             + (omihomo.permissionsOk ? "" : " · R repair")
             + " · esc back"
           color: root.dim
