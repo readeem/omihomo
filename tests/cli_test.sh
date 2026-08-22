@@ -665,6 +665,61 @@ test_turning_tun_on_without_root_permissions_does_not_prompt() {
   [[ ! -e $TEST_ROOT/sudo.log ]] || fail "missing permissions invoked sudo"
 }
 
+test_tun_routing_excludes_local_networks_by_default() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_PERMISSIONS=yes
+  # A subscription that routes everything through the tunnel must not win.
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ntun:\n  route-exclude-address:\n    - 8.8.8.8/32'
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  run_cli set tun on
+
+  local excluded range
+  excluded=$(yq -o=json -I=0 '.tun."route-exclude-address"' "$XDG_DATA_HOME/omihomo/runtime.yaml")
+  for range in 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 fc00::/7 fe80::/10; do
+    grep -Fq "\"$range\"" <<<"$excluded" || fail "$range is routed into the tunnel"
+  done
+  if grep -Fq '8.8.8.8/32' <<<"$excluded"; then
+    fail "subscription exclusions replaced the Omihomo defaults"
+  fi
+}
+
+# The exclusions landed after the first releases, so an override that predates
+# them gains them on the next command, runtime included.
+test_an_override_without_exclusions_gains_them() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  yq -i 'del(.config.tun."route-exclude-address")' "$override"
+  yq -i 'del(.tun."route-exclude-address")' "$runtime"
+
+  run_cli core start
+
+  assert_file_contains "$override" '192.168.0.0/16'
+  assert_file_contains "$runtime" '192.168.0.0/16'
+}
+
+# A user who empties the list means it, so the backfill leaves it alone.
+test_an_emptied_exclusion_list_is_left_alone() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  yq -i '.config.tun."route-exclude-address" = []' "$override"
+
+  run_cli rule raw 'DOMAIN-SUFFIX,keep.example,DIRECT'
+
+  assert_eq "$(yq -o=json -I=0 '.config.tun."route-exclude-address"' "$override")" '[]'
+}
+
 test_install_has_one_privileged_setup_boundary() {
   setup_test
   trap teardown_test RETURN
@@ -790,6 +845,9 @@ tests=(
   test_turning_tun_on_reloads_an_active_unit_without_privilege
   test_turning_tun_on_requires_an_active_subscription
   test_turning_tun_on_without_root_permissions_does_not_prompt
+  test_tun_routing_excludes_local_networks_by_default
+  test_an_override_without_exclusions_gains_them
+  test_an_emptied_exclusion_list_is_left_alone
   test_install_has_one_privileged_setup_boundary
   test_active_override_change_reports_unreachable_controller
 )

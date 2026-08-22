@@ -29,6 +29,81 @@ omi_init_layout() {
   fi
   if [[ ! -f $OMIHOMO_OVERRIDE_FILE ]]; then
     omi_write_default_override "$OMIHOMO_OVERRIDE_FILE"
+  else
+    omi_backfill_tun_route_exclude "$OMIHOMO_OVERRIDE_FILE"
+  fi
+}
+
+# Ranges that must never leave through the tunnel: loopback, the RFC 1918 and
+# CGNAT private space, link-local, the documentation and multicast blocks, and
+# their IPv6 equivalents. Without them `auto-route` swallows the LAN, so the
+# router's web UI, printers, and local DNS stop answering the moment TUN comes
+# up. Same set Koala Clash ships.
+OMIHOMO_TUN_ROUTE_EXCLUDE=(
+  0.0.0.0/8
+  10.0.0.0/8
+  100.64.0.0/10
+  127.0.0.0/8
+  169.254.0.0/16
+  172.16.0.0/12
+  192.0.0.0/24
+  192.0.2.0/24
+  192.88.99.0/24
+  192.168.0.0/16
+  198.51.100.0/24
+  203.0.113.0/24
+  224.0.0.0/3
+  ::/127
+  fc00::/7
+  fe80::/10
+  ff00::/8
+)
+
+# The list as a YAML block sequence, indented by the given number of spaces.
+# yq's `env()` parses the same text, so the default override and the backfill
+# below share one source for it.
+omi_tun_route_exclude_yaml() {
+  local indent entry
+  printf -v indent '%*s' "${1:-0}" ''
+  for entry in "${OMIHOMO_TUN_ROUTE_EXCLUDE[@]}"; do
+    printf '%s- %s\n' "$indent" "$entry"
+  done
+}
+
+# An override written before the exclusions existed keeps routing the LAN
+# through the tunnel, because the default block above is only written once. So
+# it is backfilled in place. Absence of the key is the trigger, which leaves a
+# list the user deliberately emptied alone.
+#
+# Every step after the override write is best effort and silent: this runs from
+# omi_init_layout, ahead of whatever command the user actually asked for, and
+# must not fail it. The rebuilt runtime stays correct on disk even when a live
+# core refuses the reload, so a later restart picks the exclusions up anyway.
+omi_backfill_tun_route_exclude() {
+  local file=$1 candidate active cache runtime
+  omi_yq_available || return 0
+  if [[ $(omi_yq -r '.config.tun | has("route-exclude-address")' "$file" 2>/dev/null) == true ]]; then
+    return 0
+  fi
+  candidate=$(mktemp "${OMIHOMO_DATA_DIR}/.override.XXXXXX")
+  if ! OMIHOMO_TUN_ROUTE_EXCLUDE_YAML=$(omi_tun_route_exclude_yaml) \
+    omi_yq eval '.config.tun."route-exclude-address" = env(OMIHOMO_TUN_ROUTE_EXCLUDE_YAML)' "$file" >"$candidate" 2>/dev/null; then
+    rm -f "$candidate"
+    return 0
+  fi
+  omi_atomic_move "$candidate" "$file"
+
+  active=$(omi_active_name)
+  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
+  [[ -n $active && -f $cache ]] || return 0
+  runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
+  # A subshell keeps a failure in here from claiming the one error message the
+  # real command still owes the caller (see omi_error).
+  if (omi_prepare_runtime "$cache" "$file" "$runtime") >/dev/null 2>&1; then
+    omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
+    (omi_reload_runtime "$OMIHOMO_RUNTIME_FILE") >/dev/null 2>&1 || true
+  else
+    rm -f "$runtime"
   fi
 }
 
@@ -53,6 +128,8 @@ config:
     stack: mixed
     dns-hijack:
       - any:53
+    route-exclude-address:
+$(omi_tun_route_exclude_yaml 6)
 omihomo:
   primary-group: ""
 rules:

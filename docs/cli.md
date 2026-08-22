@@ -124,6 +124,14 @@ not restarted. Every mutation of the state files holds the one shared `flock`.
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.
 An active subscription and the root permissions installed with the core are required.
 
+The default override excludes loopback, the private and CGNAT ranges, link-local, the
+documentation and multicast blocks, and their IPv6 equivalents from TUN's `auto-route`, through
+`config.tun.route-exclude-address`. Without them the LAN goes into the tunnel and the router's web
+UI, printers, and local DNS stop answering while TUN is on. The list is the same set Koala Clash
+ships, and it replaces any `route-exclude-address` the subscription carries. Edit it in
+`override.yaml`; an override that predates the list gains it on the next command that writes state,
+which rebuilds `runtime.yaml` too. An emptied list is left as the user left it.
+
 The generated runtime owns Mihomo's `GLOBAL` system group and points it at the resolved primary
 subscription group. This makes global mode follow the same selected config as rule mode without
 showing `GLOBAL`, `DIRECT`, or `REJECT` as manual config choices. `set mode global` fails when the
