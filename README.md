@@ -4,6 +4,8 @@ Manage a [mihomo](https://wiki.metacubex.one) proxy core from the Omarchy 4 bar:
 groups, configs, latency, and live connection state — with a small bash CLI underneath that owns
 the core's install, its systemd unit, and everything that touches disk.
 
+![Omihomo panel screenshot](./docs/omihomo-panel.png)
+
 ## Install
 
 ```sh
