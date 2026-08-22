@@ -41,8 +41,7 @@ rm ~/.config/omarchy/plugins/omihomo
 
 Left click opens the panel, right click starts or stops the core. Inside the panel `j`/`k`
 moves, `enter` activates, and single letters do the rest — `s` core, `t` TUN, `m` mode, `c`
-connections, `a` add subscription, `n` new rule, `d` latency. The full key table is in
-[docs/widget.md](./docs/widget.md).
+connections, `a` add subscription, `n` new rule, `d` latency.
 
 Subscription URLs may return a full Mihomo YAML config or a raw share-link format supported by
 the installed Mihomo version. Raw subscriptions get one generated `Proxy` selector and a final
@@ -55,13 +54,3 @@ Panel.qml, Service.qml, Model.js, OmihomoIcon.qml   the bar widget
 bin/omihomo, libexec/, lib/                          the CLI
 tests/run                                            both test suites
 ```
-
-## Docs
-
-Status: **charted.** The design was worked out as a
-[wayfinder map](../../issues?q=label%3Awayfinder%3Amap).
-
-- [CONTEXT.md](./CONTEXT.md) — vocabulary
-- [docs/adr/](./docs/adr/) — decisions
-- [docs/cli.md](./docs/cli.md) — the CLI contract
-- [docs/widget.md](./docs/widget.md) — the widget's structure, keys, and how to verify a change
