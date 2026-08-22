@@ -518,7 +518,11 @@ omi_commit_override() {
   active=$(omi_active_name)
   if [[ -n $active ]]; then
     cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
-    [[ -f $cache ]] || { rm -f "$candidate"; omi_error "active subscription cache is missing" 13; }
+    if [[ ! -f $cache ]]; then
+      rm -f "$candidate"
+      omi_error "active subscription cache is missing" 13
+      return 13
+    fi
     runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
     omi_prepare_runtime "$cache" "$candidate" "$runtime" || {
       local status=$?
