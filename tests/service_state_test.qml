@@ -26,6 +26,7 @@ ShellRoot {
 
   Omihomo.Service { id: failingCoreService; cliPath: "/usr/bin/false" }
   Omihomo.Service { id: failingTunService; cliPath: "/usr/bin/false" }
+  Omihomo.Service { id: staleApiService; cliPath: "/usr/bin/true" }
 
   Timer {
     id: openCheck
@@ -127,6 +128,25 @@ ShellRoot {
     failingTunService.applyStatus(status("on", false, false))
     failingTunService.toggleTun()
     check(failingTunService.tunActive, true, "failed TUN command starts optimistically")
+
+    // A rotated controller secret leaves the panel authenticated with the old
+    // one, and every read comes back 401 while `omihomo status` — which reads
+    // the secret off disk — still says the core is healthy. Curl calls that
+    // exit 22, and only that: a timeout or a refused connection must not throw
+    // away credentials that are still good.
+    staleApiService.applyStatus(status("on", false, false))
+    staleApiService.apiAddress = "127.0.0.1:9090"
+    staleApiService.apiSecret = "stale"
+    staleApiService.proxiesLoaded = true
+    check(staleApiService.apiReady, true, "a running core with an address is ready")
+
+    staleApiService.noteApiFailure(7)
+    check(staleApiService.apiReady, true, "a refused connection keeps the credentials")
+
+    staleApiService.noteApiFailure(22)
+    check(staleApiService.apiReady, false, "a rejected read drops the stale credentials")
+    check(staleApiService.apiSecret, "", "a rejected read drops the stale secret")
+    check(staleApiService.proxiesLoaded, false, "dropped credentials un-load the proxies")
 
     check(openService.subscriptions.length, 0, "subscriptions start empty")
     openService.panelOpen = true

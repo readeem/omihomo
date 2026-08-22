@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -113,11 +113,25 @@ while [[ ${1:-} == --user ]]; do shift; done
 case ${1:-} in
   is-active) [[ ${OMIHOMO_TEST_UNIT_ACTIVE:-no} == yes ]] ;;
   is-enabled) [[ ${OMIHOMO_TEST_UNIT_ENABLED:-no} == yes ]] ;;
-  show) printf '%s\n' "${OMIHOMO_TEST_ACTIVE_ENTER:-}" ;;
+  show)
+    case " $* " in
+      *--property=InvocationID*) printf '%s\n' "${OMIHOMO_TEST_INVOCATION:-}" ;;
+      *) printf '%s\n' "${OMIHOMO_TEST_ACTIVE_ENTER:-}" ;;
+    esac
+    ;;
   *) printf '%s\n' "$*" >>"$TEST_ROOT/systemctl.log" ;;
 esac
 EOF
   chmod +x "$TEST_ROOT/bin/systemctl"
+
+  # The unit's log, as `omihomo status` reads it to explain a TUN failure.
+  # OMIHOMO_TEST_JOURNAL is the whole of what the invocation logged.
+  cat >"$TEST_ROOT/bin/journalctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${OMIHOMO_TEST_JOURNAL:-}"
+EOF
+  chmod +x "$TEST_ROOT/bin/journalctl"
 
   # Package and privilege stubs, so uninstall can be exercised without touching
   # the machine. OMIHOMO_TEST_PKGS lists what pacman should report as installed.

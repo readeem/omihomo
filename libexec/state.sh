@@ -38,6 +38,43 @@ status_json() {
     '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, autostart_enabled: $autostart, permissions_ok: $permissions, tailscale_enabled: $tailscale, tailscale_present: $tailscale_present}'
 }
 
+# mihomo logs why the TUN adapter refused to come up and then keeps serving the
+# proxy, so a missing device is all the panel would otherwise know. The reason
+# is one line in the unit's journal, scoped to the current invocation so a run
+# that has since been fixed never reports the failure before it.
+tun_failure_reason() {
+  local invocation line
+  command -v journalctl >/dev/null 2>&1 || return 0
+  invocation=$("$OMIHOMO_SYSTEMCTL" --user show "$OMIHOMO_UNIT" --property=InvocationID --value 2>/dev/null) || return 0
+  [[ -n $invocation ]] || return 0
+  line=$(journalctl --user "_SYSTEMD_INVOCATION_ID=$invocation" --output cat --no-pager 2>/dev/null |
+    grep -F 'Start TUN listening error' | tail -n 1) || return 0
+  [[ -n $line ]] || return 0
+  line=${line#*'Start TUN listening error: '}
+  line=${line%\"}
+  # mihomo wraps the whole cause chain into one message and often repeats its
+  # tail after an escaped newline. The first segment is the readable one.
+  line=${line%%\\n*}
+  printf '%s\n' "${line:0:160}"
+}
+
+# `device or resource busy` and `file exists` both mean a second proxy client
+# already holds what mihomo is reaching for. Renaming the device settles the
+# first, but `auto-redirect` installs nftables chains called `mihomo_prerouting`
+# and friends, and those names are fixed inside the binary — so two mihomo cores
+# can never both have TUN. Nothing here can repair that, and saying so is worth
+# more to the user than the raw netlink error.
+tun_failure_detail() {
+  local reason
+  reason=$(tun_failure_reason)
+  case $reason in
+    "") printf 'tun device is missing\n' ;;
+    *'resource busy'* | *'file exists'* | *'address already in use'*)
+      printf 'another proxy client is already using TUN\n' ;;
+    *) printf 'tun failed to start: %s\n' "$reason" ;;
+  esac
+}
+
 command_status() {
   if ! omi_core_installed; then
     status_json not-installed "mihomo is not installed"
@@ -56,15 +93,16 @@ command_status() {
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
-  # mihomo names the interface `Meta` unless the config sets `tun.device`, and
-  # the merged runtime is the config it is actually running.
+  # Omihomo names its adapter after itself, but the merged runtime is the config
+  # mihomo is actually running, and an override from before that default still
+  # leaves the name to mihomo — which calls it `Meta`.
   device=${OMIHOMO_TUN_DEVICE:-}
   if [[ -z $device && -f $OMIHOMO_RUNTIME_FILE ]] && omi_yq_available; then
     device=$(omi_yq -r '.tun.device // ""' "$OMIHOMO_RUNTIME_FILE")
   fi
   device=${device:-Meta}
   if [[ $tun == true && ! -e /sys/class/net/$device ]]; then
-    status_json degraded "tun device is missing"
+    status_json degraded "$(tun_failure_detail)"
     return 0
   fi
   status_json on

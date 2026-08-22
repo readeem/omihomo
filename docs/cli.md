@@ -118,6 +118,10 @@ For accepted raw content, the cached YAML is a generated config with one HTTP pr
 `providers/<sha256-of-url>.yaml`, so subscriptions with the same display name remain independent.
 Mihomo owns provider refreshes after activation.
 
+`sub add` activates the subscription it just added when nothing is active yet, because `core start`
+refuses to run without one. A later `sub add` never takes the slot from the active subscription;
+`sub activate` is the way to switch.
+
 Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
 An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed
 conversion, merge, or reload keeps the previous cache, metadata, and runtime. The systemd unit is
@@ -126,6 +130,18 @@ not restarted. Every mutation of the state files holds the one shared `flock`.
 `set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.
 An active subscription and the root permissions installed with the core are required.
+
+The TUN adapter is named `omihomo` through `config.tun.device`, not the `Meta` mihomo defaults to.
+Every mihomo-based client uses that default, so on a machine that runs another one the status
+probe would read its `Meta` as Omihomo's own working tunnel. An override that predates the name
+gains it on the next command that writes state.
+
+When TUN is on and its device is absent, `status` reports `degraded` and reads the reason out of
+the unit's journal for the current invocation, so `detail` carries what mihomo actually said. A
+device or nftables chain already held by a second proxy client reports as `another proxy client is
+already using TUN`. That one is not repairable from Omihomo: `auto-redirect` installs chains named
+`mihomo_prerouting` and friends, and those names are fixed inside the binary, so two mihomo cores
+can never both hold TUN. The other client has to stop.
 
 The default override excludes loopback, the private and CGNAT ranges, link-local, the
 documentation and multicast blocks, and their IPv6 equivalents from TUN's `auto-route`, through

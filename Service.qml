@@ -68,6 +68,10 @@ Item {
   property var subscriptionRules: []   // the subscription's, read-only
   property var groups: []
   property var configEntries: ({})     // config name -> `GET /proxies` entry
+  // Whether `/proxies` has answered for this run of the core. An empty `groups`
+  // means "not read yet" until it has, and "this subscription declares none"
+  // after — two states the panel has to word differently.
+  property bool proxiesLoaded: false
   // `/connections` is a snapshot of what is open right now, so the panel keeps
   // its own log of it: `connectionLog` holds every connection seen since the
   // core started, open or closed, and `connectionStacks` is what the view
@@ -133,6 +137,25 @@ Item {
     if (body !== undefined && body !== "") args.push("-H", "Content-Type: application/json", "--data", body)
     args.push("http://" + apiAddress + path)
     return args
+  }
+
+  // The controller's address and secret are read once and then cached for the
+  // life of the panel, so anything that rotates them — reinstalling, or any
+  // fresh data directory, which writes a new random secret — leaves the panel
+  // holding credentials the core rejects. Every API read is a 401 after that,
+  // and since `omihomo status` authenticates with the secret on disk the core
+  // still reports itself healthy: groups, configs, and traffic just stay empty.
+  //
+  // curl reports an HTTP error as exit 22, which no transient hiccup produces —
+  // the core answered and turned us away. Dropping the cached address is enough
+  // to recover: the next status read fetches `api-info` again, and until it
+  // lands the panel says the controller is unreachable instead of showing
+  // nothing.
+  function noteApiFailure(code) {
+    if (code !== 22 || apiAddress === "") return
+    apiAddress = ""
+    apiSecret = ""
+    proxiesLoaded = false
   }
 
   function reportError(code, stderr) {
@@ -235,6 +258,7 @@ Item {
       groups = []
       configEntries = ({})
       connectionLog = []
+      proxiesLoaded = false
     }
     if (installed && apiAddress === "" && !apiInfoCmd.running) apiInfoCmd.launch(cli(["api-info"]))
     if (panelOpen && apiReady) {
@@ -560,16 +584,18 @@ Item {
     id: apiRulesCmd
     onFinished: function(code, out) {
       root.subscriptionRules = code === 0 ? Model.stripOwnRules(Model.parseApiRules(out), root.rules) : []
+      if (code !== 0) root.noteApiFailure(code)
     }
   }
 
   Cmd {
     id: proxiesCmd
     onFinished: function(code, out) {
-      if (code !== 0) return
+      if (code !== 0) return root.noteApiFailure(code)
       var parsed = Model.parseProxies(out)
       root.groups = parsed.groups
       root.configEntries = parsed.configs
+      root.proxiesLoaded = true
       root.pendingConfig = ""
     }
   }
@@ -577,7 +603,7 @@ Item {
   Cmd {
     id: configsCmd
     onFinished: function(code, out) {
-      if (code !== 0) return
+      if (code !== 0) return root.noteApiFailure(code)
       root.applyConfigs(out)
     }
   }
@@ -585,7 +611,7 @@ Item {
   Cmd {
     id: connectionsCmd
     onFinished: function(code, out) {
-      if (code !== 0) return
+      if (code !== 0) return root.noteApiFailure(code)
       var now = Date.now()
       var parsed = Model.parseConnections(out, now)
       root.connectionLog = Model.mergeConnectionLog(root.connectionLog, parsed.items, now,
@@ -687,7 +713,10 @@ Item {
       // allowed to spend the panel's one event-driven trace call.
       var wasSelection = root.pendingConfig !== ""
       root.pendingConfig = ""
-      if (code !== 0) root.reportError(12, err)
+      if (code !== 0) {
+        root.reportError(12, err)
+        root.noteApiFailure(code)
+      }
       else {
         root.reportDone("")
         if (wasSelection) root.configChanged()

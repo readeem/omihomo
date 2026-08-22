@@ -1102,11 +1102,16 @@ Panel {
                 fontFamily: root.fontFamily
               }
 
+              // An empty list is never left to speak for itself: without this
+              // the section is a bare header, which reads as a panel that has
+              // lost its data rather than one that has none to show.
               Text {
-                visible: !root.liveReady
+                visible: !root.liveReady || (omihomo.proxiesLoaded && root.visibleGroups.length === 0)
                 width: parent.width
-                text: omihomo.activeSubscription === "" ? "Activate a subscription to browse groups."
-                  : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse groups.")
+                text: !root.liveReady
+                  ? (omihomo.activeSubscription === "" ? "Activate a subscription to browse groups."
+                    : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse groups."))
+                  : "This subscription declares no groups."
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body

@@ -20,7 +20,11 @@ Per [ADR-0001](adr/0001-panel-talks-to-mihomo-directly.md) the widget has two ca
   plugin's own directory, never from `PATH`.
 - **mihomo's external controller** for live state: `/proxies`, `/configs`, `/rules`,
   `/connections`, `/traffic`, delay tests, and config selection. The address and secret come
-  from `omihomo api-info`, so the panel never parses YAML.
+  from `omihomo api-info`, so the panel never parses YAML. They are cached, and a read the core
+  rejects outright — curl's exit 22, which a timeout or a refused connection never produces —
+  throws that cache away so the next status read fetches them again. Without that, a rotated
+  secret leaves the panel authenticated with the old one while `status` keeps reporting a healthy
+  core, and every live section silently renders empty.
 
 Errors are whatever the CLI put on stderr; the panel shows the message and falls back to the
 exit-code table in [cli.md](cli.md) when a command dies without one.
@@ -45,7 +49,9 @@ Every view is 420px wide. The main popup carries, top to bottom:
    the primary group is the one thing done every session, so it sits directly under the readout.
 4. **Groups** — subscription groups, with the primary one marked. Mihomo's `GLOBAL` system
    group stays hidden because Omihomo generates and manages it. Selecting a group browses it,
-   which is what the config list above shows.
+   which is what the config list above shows. An empty list always says why — no active
+   subscription, a stopped core, an unreachable controller, or a subscription that declares no
+   groups — because a bare header reads as a panel that lost its data rather than one with none.
 5. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
    URL, since the subscription names itself. With no subscriptions the URL field is the section;
    once there is one, it hides behind an add row.

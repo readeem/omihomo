@@ -32,6 +32,12 @@ OMIHOMO_TAILSCALE_LISTENER=omihomo-tailscale
 OMIHOMO_TAILSCALE_INTERFACE=tailscale0
 OMIHOMO_TAILSCALE_DNS=100.100.100.100
 OMIHOMO_TAILSCALE_DOMAIN='+.ts.net'
+# The TUN adapter's interface name. mihomo defaults it to `Meta`, which every
+# other mihomo-based client also defaults to, so a machine that runs one of
+# those alongside Omihomo has a `Meta` that belongs to somebody else. The
+# device probe in `omihomo status` would read that as its own working tunnel,
+# so Omihomo names its adapter after itself instead.
+OMIHOMO_TUN_DEVICE_NAME=omihomo
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"
@@ -114,6 +120,8 @@ omi_override_has() {
 omi_backfill_override() {
   local file=$1 candidate active cache runtime expression=""
   omi_yq_available || return 0
+  omi_override_has "$file" .config.tun device ||
+    expression+='.config.tun.device = strenv(OMIHOMO_TUN_DEVICE_NAME) | '
   omi_override_has "$file" .config.tun route-exclude-address ||
     expression+='.config.tun."route-exclude-address" = env(OMIHOMO_TUN_ROUTE_EXCLUDE_YAML) | '
   omi_override_has "$file" .config.tun exclude-interface ||
@@ -125,6 +133,7 @@ omi_backfill_override() {
   if ! OMIHOMO_TUN_ROUTE_EXCLUDE_YAML=$(omi_tun_route_exclude_yaml) \
     OMIHOMO_TAILSCALE_EXCLUDE_INTERFACE_YAML=$(omi_tailscale_exclude_interface_yaml) \
     OMIHOMO_TAILSCALE_NAMESERVER_POLICY_YAML=$(omi_tailscale_nameserver_policy_yaml) \
+    OMIHOMO_TUN_DEVICE_NAME=$OMIHOMO_TUN_DEVICE_NAME \
     omi_yq eval "${expression%' | '}" "$file" >"$candidate" 2>/dev/null; then
     rm -f "$candidate"
     return 0
@@ -161,6 +170,7 @@ config:
     store-selected: true
   tun:
     enable: false
+    device: $OMIHOMO_TUN_DEVICE_NAME
     auto-route: true
     auto-redirect: true
     stack: mixed

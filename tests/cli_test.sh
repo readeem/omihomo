@@ -30,6 +30,23 @@ test_subscription_add_and_list_are_flat_json() {
   [[ $(jq -e '.[0] | has("userinfo") | not' <<<"$output") == true ]] || fail "list must stay flat"
 }
 
+# Nothing works without an active subscription, so the first one added becomes
+# it. A later add is not allowed to steal the slot from a running core.
+test_first_subscription_added_becomes_active() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  run_cli sub add https://example.test/subscription/work
+  assert_json_field "$(run_cli sub list | jq '.[0]')" active true
+  [[ -f "$XDG_DATA_HOME/omihomo/runtime.yaml" ]] || fail "activating must write the runtime"
+
+  run_cli sub add https://example.test/subscription/backup
+  local output
+  output=$(run_cli sub list)
+  assert_eq "$(jq -r '[.[] | select(.active) | .name] | join(",")' <<<"$output")" work
+}
+
 # The subscription server picks the format from the User-Agent: an unrecognised
 # client is answered with a base64 share-link list that `mihomo -t` rejects.
 test_subscription_fetch_asks_as_a_clash_client() {
@@ -544,6 +561,48 @@ EOF
   assert_json_field "$output" state on
 }
 
+# A missing device is the symptom; the reason is in mihomo's own log, and it is
+# the difference between a dead end and something the user can act on.
+test_status_explains_why_tun_failed() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TUN_DEVICE=omihomo-test-device-that-does-not-exist
+  export OMIHOMO_TEST_INVOCATION=deadbeef
+  mkdir -p "$XDG_DATA_HOME/omihomo"
+  cat >"$XDG_DATA_HOME/omihomo/override.yaml" <<'EOF'
+config:
+  external-controller: 127.0.0.1:9090
+  secret: test-secret
+  tun:
+    enable: true
+omihomo:
+  primary-group: Auto
+rules:
+  prepend: []
+  append: []
+  filter: []
+EOF
+
+  # A second proxy client holding the device or the nftables chains.
+  export OMIHOMO_TEST_JOURNAL='time="2026-08-22T07:40:59+03:00" level=error msg="Start TUN listening error: configure tun interface: device or resource busy"'
+  local output
+  output=$(run_cli status)
+  assert_json_field "$output" state degraded
+  assert_json_field "$output" detail "another proxy client is already using TUN"
+
+  # Anything else is reported as mihomo worded it, minus the repeated tail.
+  export OMIHOMO_TEST_JOURNAL='time="2026-08-22T07:40:59+03:00" level=error msg="Start TUN listening error: operation not permitted\noperation not permitted"'
+  output=$(run_cli status)
+  assert_json_field "$output" detail "tun failed to start: operation not permitted"
+
+  # Without a logged reason the device probe is still all there is to say.
+  export OMIHOMO_TEST_JOURNAL=''
+  output=$(run_cli status)
+  assert_json_field "$output" detail "tun device is missing"
+}
+
 test_status_reports_autostart_state() {
   setup_test
   trap teardown_test RETURN
@@ -685,6 +744,29 @@ test_tun_routing_excludes_local_networks_by_default() {
   if grep -Fq '8.8.8.8/32' <<<"$excluded"; then
     fail "subscription exclusions replaced the Omihomo defaults"
   fi
+}
+
+# Every mihomo-based client defaults its adapter to `Meta`, so Omihomo would
+# otherwise read another client's tunnel as its own working one. It names the
+# adapter after itself, and a subscription cannot rename it.
+test_tun_device_is_named_after_omihomo() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ntun:\n  device: Meta'
+
+  run_cli sub add https://example.test/subscription/work
+
+  assert_eq "$(yq -r '.config.tun.device' "$XDG_DATA_HOME/omihomo/override.yaml")" omihomo
+  assert_eq "$(yq -r '.tun.device' "$XDG_DATA_HOME/omihomo/runtime.yaml")" omihomo
+
+  # An override written before the name existed gains it on the next command.
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  yq -i 'del(.config.tun.device)' "$override"
+  yq -i 'del(.tun.device)' "$XDG_DATA_HOME/omihomo/runtime.yaml"
+  run_cli core start
+  assert_eq "$(yq -r '.config.tun.device' "$override")" omihomo
+  assert_eq "$(yq -r '.tun.device' "$XDG_DATA_HOME/omihomo/runtime.yaml")" omihomo
 }
 
 # The exclusions landed after the first releases, so an override that predates
@@ -894,6 +976,7 @@ test_uninstall_can_keep_state() {
 tests=(
   test_status_reports_not_installed
   test_subscription_add_and_list_are_flat_json
+  test_first_subscription_added_becomes_active
   test_subscription_fetch_asks_as_a_clash_client
   test_subscription_takes_its_name_from_the_server
   test_unsafe_and_missing_titles_still_produce_a_usable_name
@@ -923,6 +1006,7 @@ tests=(
   test_status_reports_whether_the_core_can_run_tun
   test_status_reports_degraded_when_tun_device_is_missing
   test_status_reads_the_tun_device_name_from_the_runtime_config
+  test_status_explains_why_tun_failed
   test_status_reports_autostart_state
   test_autostart_writes_the_unit_before_enabling_it
   test_error_code_10_is_used_when_core_is_missing
@@ -935,6 +1019,7 @@ tests=(
   test_turning_tun_on_requires_an_active_subscription
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_tun_routing_excludes_local_networks_by_default
+  test_tun_device_is_named_after_omihomo
   test_an_override_without_exclusions_gains_them
   test_an_emptied_exclusion_list_is_left_alone
   test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin

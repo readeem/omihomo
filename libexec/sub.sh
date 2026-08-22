@@ -265,6 +265,11 @@ subscription_add() {
   omi_atomic_move "$body" "$OMIHOMO_CACHE_DIR/${name}.yaml"
   omi_atomic_move "$temporary" "$OMIHOMO_SUBSCRIPTIONS_FILE"
   rm -f "$headers"
+  # Nothing active means nothing works: `core start` refuses without an active
+  # subscription, and the panel has no groups to show. Adding the first one is
+  # the user asking to use it, so it becomes active here. A later add does not
+  # steal the slot — switching is what `sub activate` is for.
+  [[ -n $(omi_active_name) ]] || activate_cached_subscription "$name"
 }
 
 subscription_list() {
@@ -334,28 +339,38 @@ subscription_remove() {
   fi
 }
 
-subscription_activate() {
-  local name=${1:-}
-  omi_init_layout
-  omi_require_core
-  subscription_exists "$name" || omi_error "subscription not found: $name" 1
-  local cache runtime
+# Point the runtime and the active marker at a subscription that is already
+# cached. `subscription_add` reuses this for the first subscription, so it takes
+# the name on trust: its caller has established that the subscription exists.
+activate_cached_subscription() {
+  local name=$1 cache runtime active_tmp status
   cache="$OMIHOMO_CACHE_DIR/${name}.yaml"
   [[ -f $cache ]] || omi_error "subscription cache is missing: $name" 1
   runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
-  omi_prepare_runtime "$cache" "$OMIHOMO_OVERRIDE_FILE" "$runtime"
-  local active_tmp
+  omi_prepare_runtime "$cache" "$OMIHOMO_OVERRIDE_FILE" "$runtime" || {
+    status=$?
+    rm -f "$runtime"
+    return "$status"
+  }
   active_tmp=$(mktemp "${OMIHOMO_DATA_DIR}/.active.XXXXXX")
   printf '%s\n' "$name" >"$active_tmp"
   if omi_unit_active; then
     omi_reload_runtime "$runtime" || {
-      local status=$?
+      status=$?
       rm -f "$runtime" "$active_tmp"
       return "$status"
     }
   fi
   omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
   omi_atomic_move "$active_tmp" "$OMIHOMO_ACTIVE_FILE"
+}
+
+subscription_activate() {
+  local name=${1:-}
+  omi_init_layout
+  omi_require_core
+  subscription_exists "$name" || omi_error "subscription not found: $name" 1
+  activate_cached_subscription "$name"
 }
 
 case ${1:-} in
