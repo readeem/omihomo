@@ -43,6 +43,8 @@ function defaultStatus() {
     tunEnabled: false,
     autostartEnabled: false,
     permissionsOk: false,
+    tailscaleEnabled: false,
+    tailscalePresent: false,
     startedMs: 0
   }
 }
@@ -60,6 +62,8 @@ function parseStatus(raw) {
     tunEnabled: data.tun_enabled === true,
     autostartEnabled: data.autostart_enabled === true,
     permissionsOk: data.permissions_ok === true,
+    tailscaleEnabled: data.tailscale_enabled === true,
+    tailscalePresent: data.tailscale_present === true,
     startedMs: parseUnitTimestamp(data.uptime)
   }
 }

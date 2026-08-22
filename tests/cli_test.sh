@@ -13,7 +13,7 @@ test_status_reports_not_installed() {
   output=$(run_cli status)
   assert_json_field "$output" state not-installed
   assert_json_field "$output" active_subscription null
-  [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime") and has("permissions_ok")' <<<"$output") == true ]] || fail "status shape is missing fields"
+  [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime") and has("permissions_ok") and has("tailscale_enabled") and has("tailscale_present")' <<<"$output") == true ]] || fail "status shape is missing fields"
 }
 
 test_subscription_add_and_list_are_flat_json() {
@@ -706,6 +706,95 @@ test_an_override_without_exclusions_gains_them() {
   assert_file_contains "$runtime" '192.168.0.0/16'
 }
 
+# Turning the integration on has to produce both halves: the loopback listener
+# and rules mihomo needs, and the drop-in that points tailscaled at them.
+test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TAILSCALED_BIN="$TEST_ROOT/bin/mihomo"
+  # The rules target GLOBAL, which only exists once a group can be primary.
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies:\n  - name: Tokyo\n    type: direct\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [Tokyo]'
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+
+  run_cli rule add DOMAIN-SUFFIX mine.example DIRECT
+  run_cli set tailscale on
+  assert_eq "$(yq -r '.listeners[0].name' "$runtime")" omihomo-tailscale
+  assert_eq "$(yq -r '.listeners[0].port' "$runtime")" 7899
+  assert_file_contains "$runtime" 'DOMAIN-SUFFIX,tailscale.com,GLOBAL'
+  # The panel finds its own rules by matching the head of the merged list, so
+  # the generated ones have to sit behind the user's prepended ones.
+  assert_eq "$(yq -r '.rules[0]' "$runtime")" 'DOMAIN-SUFFIX,mine.example,DIRECT'
+  assert_eq "$(yq -r '.rules[1]' "$runtime")" 'IP-CIDR,100.64.0.0/10,DIRECT,no-resolve'
+  assert_file_contains "$TEST_ROOT/privileged.log" 'tailscale on 7899'
+
+  run_cli set tailscale off
+  assert_eq "$(yq -r '.listeners // "absent"' "$runtime")" absent
+  if grep -q 'tailscale.com' "$runtime"; then
+    fail "turning the integration off must remove its rules"
+  fi
+  assert_file_contains "$TEST_ROOT/privileged.log" 'tailscale off 7899'
+}
+
+# The toggle only makes sense against a tailscaled that exists, so it says so
+# instead of writing a drop-in for a unit that is not there.
+test_tailscale_requires_tailscaled() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TAILSCALED_BIN=/nonexistent
+  local stderr status
+  stderr=$(mktemp)
+  set +e
+  run_cli set tailscale on 2>"$stderr"
+  status=$?
+  set -e
+  assert_eq "$status" 15
+  assert_file_contains "$stderr" '"code":15'
+}
+
+test_status_reports_tailscale_presence_and_state() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TAILSCALED_BIN=/nonexistent
+
+  local output
+  output=$(run_cli status)
+  assert_eq "$(jq -r '.tailscale_present' <<<"$output")" false
+  assert_eq "$(jq -r '.tailscale_enabled' <<<"$output")" false
+
+  export OMIHOMO_TAILSCALED_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  run_cli set tailscale on
+  output=$(run_cli status)
+  assert_eq "$(jq -r '.tailscale_present' <<<"$output")" true
+  assert_eq "$(jq -r '.tailscale_enabled' <<<"$output")" true
+}
+
+# The Tailscale coexistence settings reach an override written before they
+# existed on the same terms as the routing exclusions.
+test_an_override_without_tailscale_coexistence_gains_it() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  yq -i 'del(.config.tun."exclude-interface") | del(.config.dns)' "$override"
+  yq -i 'del(.tun."exclude-interface") | del(.dns)' "$runtime"
+
+  run_cli core start
+
+  assert_eq "$(yq -r '.config.tun."exclude-interface"[0]' "$override")" tailscale0
+  assert_eq "$(yq -r '.config.dns."nameserver-policy"."+.ts.net"' "$override")" 100.100.100.100
+  assert_eq "$(yq -r '.tun."exclude-interface"[0]' "$runtime")" tailscale0
+}
+
 # A user who empties the list means it, so the backfill leaves it alone.
 test_an_emptied_exclusion_list_is_left_alone() {
   setup_test
@@ -848,6 +937,10 @@ tests=(
   test_tun_routing_excludes_local_networks_by_default
   test_an_override_without_exclusions_gains_them
   test_an_emptied_exclusion_list_is_left_alone
+  test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin
+  test_tailscale_requires_tailscaled
+  test_status_reports_tailscale_presence_and_state
+  test_an_override_without_tailscale_coexistence_gains_it
   test_install_has_one_privileged_setup_boundary
   test_active_override_change_reports_unreachable_controller
 )

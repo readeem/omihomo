@@ -109,6 +109,7 @@ Panel {
     }
     if (view === "manage") {
       rows.push({ s: "autostart" })
+      if (omihomo.tailscalePresent) rows.push({ s: "tailscale" })
       if (!omihomo.permissionsOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       return rows
@@ -202,6 +203,8 @@ Panel {
       omihomo.toggleTun()
     } else if (cursorRow.s === "autostart") {
       omihomo.toggleAutostart()
+    } else if (cursorRow.s === "tailscale") {
+      omihomo.toggleTailscale()
     } else if (cursorRow.s === "ruleType") {
       ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
     } else if (cursorRow.s === "ruleTarget") {
@@ -223,6 +226,7 @@ Panel {
     case "conn": activateConnectionAt(cursorRow.i); break
     case "manage": openManage(); break
     case "autostart": omihomo.toggleAutostart(); break
+    case "tailscale": omihomo.toggleTailscale(); break
     case "repair": omihomo.repairCore(); break
     case "sub": activateSubscriptionAt(cursorRow.i); break
     case "subAdd": openSubForm(); break
@@ -272,6 +276,7 @@ Panel {
       if (key === "M") closeManage()
       else if (key === "R") omihomo.repairCore()
       else if (lower === "b") omihomo.toggleAutostart()
+      else if (key === "T") omihomo.toggleTailscale()
       return
     }
     if (!omihomo.installed) {
@@ -815,6 +820,17 @@ Panel {
 
           ActionRow {
             width: parent.width
+            visible: omihomo.tailscalePresent
+            section: "tailscale"
+            title: "Tailscale"
+            subtitle: "Reach the tailnet's control plane and relays through mihomo. Needs the core running."
+            trailing: omihomo.tailscaleActive ? "on" : "off"
+            current: omihomo.tailscaleActive
+            onActivated: omihomo.toggleTailscale()
+          }
+
+          ActionRow {
+            width: parent.width
             visible: !omihomo.permissionsOk
             section: "repair"
             title: "Repair permissions"
@@ -839,9 +855,10 @@ Panel {
 
         Text {
           width: parent.width
-          text: omihomo.permissionsOk
-            ? "enter activate · b autostart · esc back"
-            : "enter activate · b autostart · R repair · esc back"
+          text: "enter activate · b autostart"
+            + (omihomo.tailscalePresent ? " · T tailscale" : "")
+            + (omihomo.permissionsOk ? "" : " · R repair")
+            + " · esc back"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

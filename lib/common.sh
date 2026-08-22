@@ -21,6 +21,17 @@ OMIHOMO_STAT=${OMIHOMO_STAT:-stat}
 # Subscription servers content-negotiate on User-Agent. A Clash-family agent
 # usually gets a full config, which Omihomo can preserve without wrapping it.
 OMIHOMO_USER_AGENT=${OMIHOMO_USER_AGENT:-clash.meta}
+# The loopback proxy tailscaled dials when the Tailscale integration is on. It
+# is Omihomo's own listener rather than the subscription's `mixed-port`, so the
+# drop-in written for tailscaled never depends on which subscription is active.
+OMIHOMO_TAILSCALE_PORT=${OMIHOMO_TAILSCALE_PORT:-7899}
+OMIHOMO_TAILSCALE_LISTENER=omihomo-tailscale
+# Tailscale's interface and MagicDNS resolver. Without the first, TUN routes
+# what Tailscale already handles; without the second, `dns-hijack: any:53`
+# swallows the `*.ts.net` lookups only Tailscale's resolver can answer.
+OMIHOMO_TAILSCALE_INTERFACE=tailscale0
+OMIHOMO_TAILSCALE_DNS=100.100.100.100
+OMIHOMO_TAILSCALE_DOMAIN='+.ts.net'
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"
@@ -30,7 +41,7 @@ omi_init_layout() {
   if [[ ! -f $OMIHOMO_OVERRIDE_FILE ]]; then
     omi_write_default_override "$OMIHOMO_OVERRIDE_FILE"
   else
-    omi_backfill_tun_route_exclude "$OMIHOMO_OVERRIDE_FILE"
+    omi_backfill_override "$OMIHOMO_OVERRIDE_FILE"
   fi
 }
 
@@ -70,24 +81,51 @@ omi_tun_route_exclude_yaml() {
   done
 }
 
-# An override written before the exclusions existed keeps routing the LAN
-# through the tunnel, because the default block above is only written once. So
-# it is backfilled in place. Absence of the key is the trigger, which leaves a
-# list the user deliberately emptied alone.
+# The Tailscale coexistence defaults, in the same shape the default override
+# writes them. Both are block YAML so `env()` and the heredoc read one source.
+omi_tailscale_exclude_interface_yaml() {
+  local indent
+  printf -v indent '%*s' "${1:-0}" ''
+  printf '%s- %s\n' "$indent" "$OMIHOMO_TAILSCALE_INTERFACE"
+}
+
+omi_tailscale_nameserver_policy_yaml() {
+  local indent
+  printf -v indent '%*s' "${1:-0}" ''
+  printf '%s"%s": %s\n' "$indent" "$OMIHOMO_TAILSCALE_DOMAIN" "$OMIHOMO_TAILSCALE_DNS"
+}
+
+# True when the override already carries a key, so a default is only ever
+# written once. This is what leaves a list the user deliberately emptied alone.
+omi_override_has() {
+  local file=$1 parent=$2 key=$3
+  [[ $(omi_yq -r "($parent // {}) | has(\"$key\")" "$file" 2>/dev/null) == true ]]
+}
+
+# A default added after the first override was written would otherwise never
+# reach an existing install, because the default block above is only written
+# once. So the missing ones are backfilled in place, in a single pass, and the
+# runtime is rebuilt once at the end.
 #
 # Every step after the override write is best effort and silent: this runs from
 # omi_init_layout, ahead of whatever command the user actually asked for, and
 # must not fail it. The rebuilt runtime stays correct on disk even when a live
-# core refuses the reload, so a later restart picks the exclusions up anyway.
-omi_backfill_tun_route_exclude() {
-  local file=$1 candidate active cache runtime
+# core refuses the reload, so a later restart picks the additions up anyway.
+omi_backfill_override() {
+  local file=$1 candidate active cache runtime expression=""
   omi_yq_available || return 0
-  if [[ $(omi_yq -r '.config.tun | has("route-exclude-address")' "$file" 2>/dev/null) == true ]]; then
-    return 0
-  fi
+  omi_override_has "$file" .config.tun route-exclude-address ||
+    expression+='.config.tun."route-exclude-address" = env(OMIHOMO_TUN_ROUTE_EXCLUDE_YAML) | '
+  omi_override_has "$file" .config.tun exclude-interface ||
+    expression+='.config.tun."exclude-interface" = env(OMIHOMO_TAILSCALE_EXCLUDE_INTERFACE_YAML) | '
+  omi_override_has "$file" .config.dns nameserver-policy ||
+    expression+='.config.dns."nameserver-policy" = env(OMIHOMO_TAILSCALE_NAMESERVER_POLICY_YAML) | '
+  [[ -n $expression ]] || return 0
   candidate=$(mktemp "${OMIHOMO_DATA_DIR}/.override.XXXXXX")
   if ! OMIHOMO_TUN_ROUTE_EXCLUDE_YAML=$(omi_tun_route_exclude_yaml) \
-    omi_yq eval '.config.tun."route-exclude-address" = env(OMIHOMO_TUN_ROUTE_EXCLUDE_YAML)' "$file" >"$candidate" 2>/dev/null; then
+    OMIHOMO_TAILSCALE_EXCLUDE_INTERFACE_YAML=$(omi_tailscale_exclude_interface_yaml) \
+    OMIHOMO_TAILSCALE_NAMESERVER_POLICY_YAML=$(omi_tailscale_nameserver_policy_yaml) \
+    omi_yq eval "${expression%' | '}" "$file" >"$candidate" 2>/dev/null; then
     rm -f "$candidate"
     return 0
   fi
@@ -130,8 +168,14 @@ config:
       - any:53
     route-exclude-address:
 $(omi_tun_route_exclude_yaml 6)
+    exclude-interface:
+$(omi_tailscale_exclude_interface_yaml 6)
+  dns:
+    nameserver-policy:
+$(omi_tailscale_nameserver_policy_yaml 6)
 omihomo:
   primary-group: ""
+  tailscale: false
 rules:
   prepend: []
   append: []
@@ -200,6 +244,28 @@ omi_core_installed() {
 
 omi_require_core() {
   omi_core_installed || omi_error "mihomo is not installed" 10
+}
+
+omi_tailscaled_bin() {
+  if [[ -n ${OMIHOMO_TAILSCALED_BIN:-} ]]; then
+    printf '%s\n' "$OMIHOMO_TAILSCALED_BIN"
+    return 0
+  fi
+  command -v tailscaled 2>/dev/null || true
+}
+
+omi_tailscale_present() {
+  local binary
+  binary=$(omi_tailscaled_bin)
+  [[ -n $binary && -x $binary ]]
+}
+
+# tailscaled is a system unit, so its environment is root-owned: the drop-in
+# goes in through the same privileged helper that installs the core.
+omi_apply_tailscale_dropin() {
+  local state=$1
+  omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" tailscale "$state" "$OMIHOMO_TAILSCALE_PORT" ||
+    omi_error "updating the tailscaled proxy configuration failed" 1
 }
 
 # TUN needs the core to run as root (ADR-0006): mihomo shells out to resolvectl
@@ -349,22 +415,50 @@ omi_resolve_primary_group() {
   ' "$source"
 }
 
+# The Tailscale listener and its rules are generated here rather than stored in
+# the override, so the toggle in `.omihomo.tailscale` is the only state: turning
+# it off removes both. The rules target GLOBAL, which Omihomo points at the
+# primary group just below, because a group's own name may contain a comma and
+# mihomo splits rules on commas.
+#
+# They go after the user's own prepended rules, not before: an explicit rule
+# about Tailscale is the user's to win, and the panel identifies its own rules by
+# matching them against the head of the merged list (Model.stripOwnRules).
 omi_merge_runtime() {
   local source=$1 override=$2 destination=$3 primary
   primary=$(omi_resolve_primary_group "$source" "$override")
-  OMIHOMO_PRIMARY_GROUP=$primary omi_yq eval-all -P '
+  OMIHOMO_PRIMARY_GROUP=$primary \
+  OMIHOMO_TAILSCALE_LISTENER=$OMIHOMO_TAILSCALE_LISTENER \
+  OMIHOMO_TAILSCALE_PORT=$OMIHOMO_TAILSCALE_PORT \
+    omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
     select(fileIndex == 1) as $override |
     ($override.config // {}) as $config |
     ($override.rules.prepend // []) as $prepend |
     ($override.rules.append // []) as $append |
     ($override.rules.filter // []) as $filter |
+    ($override.omihomo.tailscale) as $tailscale |
     ($base * $config) as $merged |
     (($merged.rules // []) | map(select(. as $rule | ($filter | contains([$rule]) | not)))) as $base_rules |
-    ($prepend + $base_rules + $append) as $rules |
+    ($base_rules + $append) as $rest |
     (($merged."proxy-groups" // []) | map(select(.name != "GLOBAL"))) as $groups |
     $merged |
-    .rules = $rules |
+    .rules = ($prepend + ([
+        "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+        "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
+        "DOMAIN-SUFFIX,tailscale.com,GLOBAL",
+        "DOMAIN-SUFFIX,tailscale.io,GLOBAL"
+      ] | map(select(($tailscale == true) and (strenv(OMIHOMO_PRIMARY_GROUP) != "")))
+      ) + $rest) |
+    .listeners = (((.listeners // []) | map(select(.name != strenv(OMIHOMO_TAILSCALE_LISTENER)))) + ([{
+        "name": strenv(OMIHOMO_TAILSCALE_LISTENER),
+        "type": "mixed",
+        "listen": "127.0.0.1",
+        "port": (strenv(OMIHOMO_TAILSCALE_PORT) | to_number),
+        "udp": false,
+        "users": []
+      }] | map(select($tailscale == true)))) |
+    del(.listeners | select(length == 0)) |
     ."proxy-groups" = ((
       [{"name": "GLOBAL", "type": "select", "proxies": [strenv(OMIHOMO_PRIMARY_GROUP)]}] |
         map(select(strenv(OMIHOMO_PRIMARY_GROUP) != ""))

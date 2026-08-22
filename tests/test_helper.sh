@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -140,10 +140,13 @@ printf '%s\n' "$*" >>"$TEST_ROOT/yay.log"
 EOF
   chmod +x "$TEST_ROOT/bin/yay"
 
+  # Which of the two the CLI reaches for depends on whether stdin is a terminal,
+  # so both also append to one log a test can assert on without caring.
   cat >"$TEST_ROOT/bin/pkexec" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_ROOT/pkexec.log"
+printf '%s\n' "$*" >>"$TEST_ROOT/privileged.log"
 EOF
   chmod +x "$TEST_ROOT/bin/pkexec"
 
@@ -151,6 +154,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_ROOT/sudo.log"
+printf '%s\n' "$*" >>"$TEST_ROOT/privileged.log"
 EOF
   chmod +x "$TEST_ROOT/bin/sudo"
 

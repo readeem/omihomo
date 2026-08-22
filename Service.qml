@@ -30,6 +30,10 @@ Item {
   property bool tunEnabled: false
   property bool autostartEnabled: false
   property bool permissionsOk: false
+  property bool tailscaleEnabled: false
+  // Whether tailscaled is on this machine at all. The panel hides the row
+  // rather than offering a toggle that can only fail.
+  property bool tailscalePresent: false
   property double startedMs: 0
 
   // Confirmed state keeps following status reads. While an action is settling,
@@ -38,6 +42,7 @@ Item {
   property int _desiredCoreRunning: -1
   property int _desiredTunEnabled: -1
   property int _desiredAutostartEnabled: -1
+  property int _desiredTailscaleEnabled: -1
 
   readonly property bool installed: coreState !== "not-installed" && coreState !== "unknown"
   readonly property bool coreRunning: coreState === "on" || coreState === "degraded"
@@ -45,6 +50,8 @@ Item {
   readonly property bool tunActive: _desiredTunEnabled === -1 ? tunEnabled : _desiredTunEnabled === 1
   readonly property bool autostartActive: _desiredAutostartEnabled === -1
     ? autostartEnabled : _desiredAutostartEnabled === 1
+  readonly property bool tailscaleActive: _desiredTailscaleEnabled === -1
+    ? tailscaleEnabled : _desiredTailscaleEnabled === 1
   readonly property bool apiReady: coreRunning && apiAddress !== ""
 
   // ---- controller ---------------------------------------------------------
@@ -211,6 +218,8 @@ Item {
     tunEnabled = status.tunEnabled
     autostartEnabled = status.autostartEnabled
     permissionsOk = status.permissionsOk
+    tailscaleEnabled = status.tailscaleEnabled
+    tailscalePresent = status.tailscalePresent
     startedMs = status.startedMs
     if (_desiredCoreRunning !== -1 && confirmedCoreRunning === (_desiredCoreRunning === 1))
       _desiredCoreRunning = -1
@@ -218,6 +227,8 @@ Item {
       _desiredTunEnabled = -1
     if (_desiredAutostartEnabled !== -1 && autostartEnabled === (_desiredAutostartEnabled === 1))
       _desiredAutostartEnabled = -1
+    if (_desiredTailscaleEnabled !== -1 && tailscaleEnabled === (_desiredTailscaleEnabled === 1))
+      _desiredTailscaleEnabled = -1
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
@@ -294,6 +305,20 @@ Item {
     _overrideAction = "tun"
     if (!overrideCmd.launch(cli(["set", "tun", desired === 1 ? "on" : "off"]))) {
       _desiredTunEnabled = -1
+      _overrideAction = ""
+    }
+  }
+
+  // Turning this on asks for a root password, because tailscaled's environment
+  // is root-owned, so the message says so before the prompt appears.
+  function toggleTailscale() {
+    if (overrideCmd.running || !tailscalePresent) return
+    var desired = tailscaleActive ? 0 : 1
+    reportDone(desired === 1 ? "Enabling Tailscale…" : "Disabling Tailscale…")
+    _desiredTailscaleEnabled = desired
+    _overrideAction = "tailscale"
+    if (!overrideCmd.launch(cli(["set", "tailscale", desired === 1 ? "on" : "off"]))) {
+      _desiredTailscaleEnabled = -1
       _overrideAction = ""
     }
   }
@@ -647,6 +672,7 @@ Item {
       if (code !== 0) {
         if (action === "mode") root._desiredMode = ""
         else if (action === "tun") root._desiredTunEnabled = -1
+        else if (action === "tailscale") root._desiredTailscaleEnabled = -1
         root.reportError(code, err)
       }
       else root.reportDone("")

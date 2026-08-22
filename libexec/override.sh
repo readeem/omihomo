@@ -131,6 +131,34 @@ set_tun() {
   fi
 }
 
+# The toggle is two writes. The override opens Omihomo's own loopback listener
+# and pins Tailscale's control plane and DERP to the primary group; the drop-in
+# is what points tailscaled at that listener, and it is root-owned.
+#
+# Turning it on writes the override first, so a failed drop-in leaves a listener
+# nothing is using rather than a tailscaled aimed at a port nobody opened.
+# Turning it off reverses the order for the same reason.
+#
+# Nothing here follows the core's lifecycle: with the integration on and the
+# core stopped, Tailscale cannot reach its control plane. A system unit cannot
+# depend on a user unit, so that is accepted rather than papered over.
+set_tailscale() {
+  local state=${1:-}
+  [[ $state == on || $state == off ]] || omi_error "tailscale expects on or off" 1
+  omi_init_layout
+  if [[ $state == on ]]; then
+    # Only turning it on needs tailscaled: turning it off has to stay reachable
+    # for someone who uninstalled Tailscale while the integration was on.
+    omi_tailscale_present || omi_error "tailscaled is not installed" 15
+    [[ -n $(omi_active_name) ]] || omi_error "no active subscription" 13
+    override_candidate '.omihomo.tailscale = true'
+    omi_apply_tailscale_dropin on
+  else
+    omi_apply_tailscale_dropin off
+    override_candidate '.omihomo.tailscale = false'
+  fi
+}
+
 set_group() {
   local group=${1:-}
   [[ -n $group ]] || omi_error "group name is required" 1
@@ -153,6 +181,7 @@ case ${1:-} in
     case ${2:-} in
       mode) omi_with_lock set_mode "${3:-}" ;;
       tun) omi_with_lock set_tun "${3:-}" ;;
+      tailscale) omi_with_lock set_tailscale "${3:-}" ;;
       group) omi_with_lock set_group "${3:-}" ;;
       *) omi_error "unknown set command" 1 ;;
     esac

@@ -120,6 +120,7 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `L` | Clear the connection log (connections view) |
 | `R` | Repair permissions |
 | `b` | Toggle autostart (manage view) |
+| `T` | Toggle the Tailscale integration (manage view, when tailscaled is installed) |
 | `i` | Install the core (only when it is missing) |
 | `esc` | Close the form, filter, or view; otherwise close the panel |
 

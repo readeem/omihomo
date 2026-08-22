@@ -24,6 +24,7 @@ omihomo rule raw [prepend|append|filter] <rule>
 
 omihomo set mode <rule|global|direct>
 omihomo set tun <on|off>
+omihomo set tailscale <on|off>
 omihomo set group <name>
 
 omihomo status
@@ -68,6 +69,7 @@ Exit codes are:
 | 12 | Unit is active but the mihomo API is unreachable |
 | 13 | No active subscription |
 | 14 | The core is missing the root permissions TUN needs |
+| 15 | tailscaled is not installed |
 | 20 | Subscription content was rejected by Mihomo |
 | 21 | Subscription fetch failed |
 
@@ -75,7 +77,8 @@ Exit codes are:
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
 `download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
-`tun_enabled`, `autostart_enabled`, and `permissions_ok`. The IP, latency, throughput, and config
+`tun_enabled`, `autostart_enabled`, `permissions_ok`, `tailscale_enabled`, and
+`tailscale_present`. The IP, latency, throughput, and config
 fields are nullable because those live API values remain panel-owned per ADR-0001.
 
 ## Files
@@ -132,6 +135,32 @@ ships, and it replaces any `route-exclude-address` the subscription carries. Edi
 `override.yaml`; an override that predates the list gains it on the next command that writes state,
 which rebuilds `runtime.yaml` too. An emptied list is left as the user left it.
 
+Two more defaults let TUN and Tailscale coexist regardless of the integration below:
+`config.tun.exclude-interface` holds `tailscale0`, and `config.dns.nameserver-policy` sends
+`+.ts.net` to `100.100.100.100`, without which `dns-hijack: any:53` swallows the MagicDNS lookups
+only Tailscale's resolver can answer. They are backfilled and left alone on the same terms.
+
+`set tailscale on` points the machine's tailscaled at a proxy Omihomo opens, so that Tailscale
+still reaches its coordination server and DERP relays on a network that blocks them. It needs
+tailscaled installed and an active subscription. The runtime gains one `mixed` listener on
+`127.0.0.1:7899`, named `omihomo-tailscale`, and four rules: the tailnet's own IPv4 and IPv6
+ranges go `DIRECT`, and `tailscale.com` and `tailscale.io` go to `GLOBAL`, which Omihomo already
+points at the primary group. They sit behind the user's own prepended rules, so an explicit rule
+about Tailscale still wins. Both the listener and the rules are generated during the merge from
+the one flag in `override.yaml`, so `set tailscale off` removes them.
+
+The environment tailscaled reads is root-owned, so the toggle also writes
+`/etc/systemd/system/tailscaled.service.d/omihomo.conf` through the privileged helper and
+`try-restart`s the unit; `off` removes that file. A tailscaled the user has stopped stays stopped.
+`core uninstall` removes the drop-in too.
+
+Only TCP goes through it: tailscaled honours `HTTP_PROXY` and `HTTPS_PROXY` for its control plane,
+its DERP relays, and its logs, while peer-to-peer WireGuard is UDP and ignores them. On a network
+that needs this toggle, peers therefore connect relayed rather than directly. Nothing follows the
+core's lifecycle either: with the integration on and the core stopped, Tailscale cannot reach its
+control plane. A system unit cannot depend on a user unit, so that is accepted rather than worked
+around.
+
 The generated runtime owns Mihomo's `GLOBAL` system group and points it at the resolved primary
 subscription group. This makes global mode follow the same selected config as rule mode without
 showing `GLOBAL`, `DIRECT`, or `REJECT` as manual config choices. `set mode global` fails when the
@@ -155,6 +184,7 @@ install` replaces it, and every other command fails with an explicit message whe
 on `PATH`.
 
 `core uninstall` reverses all of it: it stops and disables the unit, restores the binary's plain
-`755` mode and removes the pacman hook, drops the `~/.local/bin/omihomo` symlink and the unit file, removes the
-`mihomo-bin` package, and deletes the state directory. `--keep-data` keeps subscriptions, override,
+`755` mode and removes the pacman hook and the tailscaled drop-in, drops the
+`~/.local/bin/omihomo` symlink and the unit file, removes the `mihomo-bin` package, and deletes
+the state directory. `--keep-data` keeps subscriptions, override,
 and cache. Removing the widget itself is `omarchy plugin remove omihomo`.
