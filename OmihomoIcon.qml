@@ -1,38 +1,87 @@
 import QtQuick
+import QtQuick.Shapes
 import qs.Commons
-import qs.Ui
 
-// Omihomo's mark, drawn natively rather than shipped as an SVG: three routing
-// lanes, the middle one shifted to read as traffic taking a different path.
-// Tiny SVGs render unevenly in a bar slot; rectangles do not.
+// Omihomo's mark, drawn natively rather than shipped as an SVG: a globe, built
+// from a circle for the sphere, two mirrored curves for the meridian, and a bar
+// for the equator. Tiny SVGs render unevenly in a bar slot; these do not.
 Item {
   id: root
 
   property real iconSize: Style.font.icon
   property color color: Color.foreground
-  property color badgeColor: Color.urgent
   // The core is installed but not running.
   property bool crossed: false
-  // Something needs attention — a degraded core, or a missing TUN device.
-  property bool warning: false
-  // TUN is carrying the traffic.
-  property bool tunnelled: false
 
   width: iconSize
   height: iconSize
   implicitWidth: iconSize
   implicitHeight: iconSize
 
-  readonly property real laneHeight: Math.max(2, Math.round(iconSize * 0.16))
-  readonly property real laneGap: Math.max(2, Math.round(iconSize * 0.14))
+  readonly property real stroke: Math.max(1, Math.round(iconSize * 0.1))
+  // Everything is laid out against the sphere's stroke centreline, so the
+  // meridian's tips and the equator's ends land inside the ring rather than
+  // crossing it.
+  readonly property real centre: iconSize / 2
+  readonly property real sphereRadius: (iconSize - stroke) / 2
 
-  Column {
+  Rectangle {
+    anchors.fill: parent
+    radius: width / 2
+    color: "transparent"
+    border.width: root.stroke
+    border.color: root.color
+  }
+
+  // The meridian: one curve down the left of the sphere and its mirror down the
+  // right, both running pole to pole. Control points are fractions of the
+  // sphere's radius, so the shape holds at every icon size.
+  Shape {
+    anchors.fill: parent
+    preferredRendererType: Shape.CurveRenderer
+
+    ShapePath {
+      strokeWidth: root.stroke
+      strokeColor: root.color
+      fillColor: "transparent"
+      capStyle: ShapePath.RoundCap
+      startX: root.centre
+      startY: root.centre + root.sphereRadius
+
+      PathCubic {
+        control1X: root.centre - root.sphereRadius * 0.805
+        control1Y: root.centre + root.sphereRadius * 0.12
+        control2X: root.centre - root.sphereRadius * 0.335
+        control2Y: root.centre - root.sphereRadius * 0.7
+        x: root.centre
+        y: root.centre - root.sphereRadius
+      }
+    }
+
+    ShapePath {
+      strokeWidth: root.stroke
+      strokeColor: root.color
+      fillColor: "transparent"
+      capStyle: ShapePath.RoundCap
+      startX: root.centre
+      startY: root.centre + root.sphereRadius
+
+      PathCubic {
+        control1X: root.centre + root.sphereRadius * 0.805
+        control1Y: root.centre + root.sphereRadius * 0.12
+        control2X: root.centre + root.sphereRadius * 0.335
+        control2Y: root.centre - root.sphereRadius * 0.7
+        x: root.centre
+        y: root.centre - root.sphereRadius
+      }
+    }
+  }
+
+  Rectangle {
     anchors.centerIn: parent
-    spacing: root.laneGap
-
-    Lane { laneWidth: root.iconSize; offset: 0 }
-    Lane { laneWidth: root.iconSize * 0.6; offset: root.iconSize * 0.4 }
-    Lane { laneWidth: root.iconSize; offset: 0 }
+    width: root.iconSize - root.stroke
+    height: root.stroke
+    color: root.color
   }
 
   Rectangle {
@@ -43,26 +92,5 @@ Item {
     radius: height / 2
     color: root.color
     rotation: -45
-  }
-
-  BorderSurface {
-    visible: root.warning || root.tunnelled
-    width: Math.max(6, parent.width * 0.36)
-    height: width
-    radius: width / 2
-    color: root.warning ? root.badgeColor : root.color
-    anchors.right: parent.right
-    anchors.bottom: parent.bottom
-    borderSpec: Border.flat(Color.popups.background, 1)
-  }
-
-  component Lane: Rectangle {
-    property real laneWidth: 0
-    property real offset: 0
-    x: offset
-    width: laneWidth
-    height: root.laneHeight
-    radius: height / 2
-    color: root.color
   }
 }

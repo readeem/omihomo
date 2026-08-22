@@ -640,10 +640,7 @@ Panel {
           anchors.centerIn: parent
           iconSize: Style.space(11)
           color: root.barIconColor
-          badgeColor: root.urgent
           crossed: omihomo.installed && !omihomo.coreActive
-          warning: omihomo.coreState === "degraded" || !omihomo.installed
-          tunnelled: omihomo.tunActive && omihomo.coreActive
         }
       }
     }
@@ -941,10 +938,7 @@ Panel {
                   OmihomoIcon {
                     iconSize: Style.font.display
                     color: omihomo.coreActive ? root.foreground : root.dim
-                    badgeColor: root.urgent
                     crossed: omihomo.installed && !omihomo.coreActive
-                    warning: omihomo.coreState === "degraded" || !omihomo.installed
-                    tunnelled: omihomo.tunActive && omihomo.coreActive
                   }
                 }
 
