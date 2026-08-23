@@ -17,8 +17,8 @@ import "Model.js" as Model
 Panel {
   id: root
 
-  moduleName: "omihomo"
-  ipcTarget: "omihomo"
+  moduleName: "dev.readeem.omihomo"
+  ipcTarget: "dev.readeem.omihomo"
   manageIpc: false
 
   // "main", "connections", "rules", or "manage". Every secondary view is the
