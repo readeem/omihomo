@@ -161,8 +161,8 @@ costs nothing when it is not on screen.
 omarchy plugin add https://github.com/readeem/omihomo.git --enable
 ```
 
-Then place it with `omarchy bar move omihomo`. Installing the mihomo core itself is the panel's
-install action, or `omihomo core install` in a terminal.
+Then place it with `omarchy bar move dev.readeem.omihomo`. Installing the mihomo core itself is
+the panel's install action, or `omihomo core install` in a terminal.
 
 ## Verifying a change
 
