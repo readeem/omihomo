@@ -28,9 +28,13 @@ subscription_userinfo_json() {
     '{upload: (if $upload == "" then null else ($upload | tonumber) end), download: (if $download == "" then null else ($download | tonumber) end), total: (if $total == "" then null else ($total | tonumber) end), expire: (if $expire == "" then null else ($expire | tonumber) end)}'
 }
 
+# `--compressed` is not an optimisation here. Some subscription servers answer
+# with `content-encoding: gzip` whether or not the client asked for it, and
+# without this curl writes the compressed bytes out verbatim, so every step
+# downstream sees binary instead of a subscription.
 fetch_subscription() {
   local url=$1 body=$2 headers=$3
-  if ! "$OMIHOMO_CURL" -fsSL -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" "$url"; then
+  if ! "$OMIHOMO_CURL" -fsSL --compressed -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" "$url"; then
     omi_error "subscription fetch failed" 21
   fi
 }

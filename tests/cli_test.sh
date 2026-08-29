@@ -141,6 +141,24 @@ test_base64_subscription_is_cached_as_a_provider_wrapper() {
   assert_eq "$(yq -r '."proxy-groups"[0].use[0]' "$cache")" subscription
 }
 
+# A subscription server is free to gzip a response the client never asked to
+# have compressed, and then every step downstream reads binary instead of
+# configs. The fetch has to undo that before anything else looks at the body.
+test_gzip_only_subscription_server_is_decoded() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_TITLE=gzipped
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
+  export OMIHOMO_TEST_GZIP_ALWAYS=yes
+
+  run_cli sub add https://example.test/subscription/gzipped
+
+  local cache="$XDG_DATA_HOME/omihomo/cache/gzipped.yaml"
+  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
+  assert_eq "$(yq -r '."proxy-groups"[0].use[0]' "$cache")" subscription
+}
+
 test_full_config_subscription_is_not_wrapped() {
   setup_test
   trap teardown_test RETURN
@@ -1058,6 +1076,7 @@ tests=(
   test_repeated_titles_are_suffixed_and_repeated_urls_are_refused
   test_raw_subscription_is_cached_as_a_provider_wrapper
   test_base64_subscription_is_cached_as_a_provider_wrapper
+  test_gzip_only_subscription_server_is_decoded
   test_full_config_subscription_is_not_wrapped
   test_provider_yaml_subscription_is_not_wrapped
   test_garbage_subscription_leaves_no_partial_state
