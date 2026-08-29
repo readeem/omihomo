@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -28,7 +28,9 @@ if [[ ${1:-} == -d ]]; then
   cp "$file" "$TEST_ROOT/mihomo-preflight.yaml"
   provider=$(yq -r '."proxy-providers".subscription.path' "$file")
   cp "$provider" "$TEST_ROOT/mihomo-preflight-body"
-  if grep -Eq 'INVALID|this is not a subscription' "$provider"; then
+  if [[ $(head -c 2 "$provider" | od -An -tx1 | tr -d ' \n') == 1f8b ]]; then
+    printf 'level=error msg="initial proxy provider subscription error: yaml: control characters are not allowed, convert v2ray subscribe error: format invalid"\n' >&2
+  elif grep -Eq 'INVALID|this is not a subscription' "$provider"; then
     printf 'level=error msg="convert v2ray subscribe error: format invalid near trojan://password@example.test:443"\n' >&2
   fi
   trap 'exit 0' TERM
@@ -50,12 +52,14 @@ headers=
 url=
 agent=
 method=GET
+compressed=no
 while (($#)); do
   case $1 in
     -o) output=$2; shift 2 ;;
     -A) agent=$2; shift 2 ;;
     -D) headers=$2; shift 2 ;;
     -X) method=$2; shift 2 ;;
+    --compressed) compressed=yes; shift ;;
     --unix-socket|--max-time) shift 2 ;;
     --data|--data-raw|--data-binary|--json) shift 2 ;;
     -w) shift 2 ;;
@@ -70,7 +74,8 @@ if [[ $method == PUT ]]; then
 fi
 if [[ $url == http://localhost/providers/proxies/subscription ]]; then
   [[ -f $TEST_ROOT/mihomo-preflight-body ]] || exit 1
-  if grep -Eq 'INVALID|this is not a subscription' "$TEST_ROOT/mihomo-preflight-body"; then
+  if [[ $(head -c 2 "$TEST_ROOT/mihomo-preflight-body" | od -An -tx1 | tr -d ' \n') == 1f8b ]] ||
+    grep -Eq 'INVALID|this is not a subscription' "$TEST_ROOT/mihomo-preflight-body"; then
     printf '{"proxies":[]}\n'
   else
     printf '{"proxies":[{"name":"Tokyo"},{"name":"Berlin"}]}\n'
@@ -87,6 +92,12 @@ if [[ $url == *subscription* ]]; then
     cp "$OMIHOMO_TEST_SUBSCRIPTION_FIXTURE" "$output"
   else
     printf '%s\n' "${OMIHOMO_TEST_SUBSCRIPTION_BODY:-proxies: []}" >"$output"
+  fi
+  # Some subscription servers answer with `content-encoding: gzip` no matter
+  # what the client asked for, so only a curl that opted in gets plain text.
+  if [[ ${OMIHOMO_TEST_GZIP_ALWAYS:-no} == yes && $compressed == no ]]; then
+    gzip -c "$output" >"$output.gz"
+    mv "$output.gz" "$output"
   fi
   if [[ -n ${headers:-} ]]; then
     # The subscription names itself, so the stub titles it after the last path
