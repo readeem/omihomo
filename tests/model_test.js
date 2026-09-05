@@ -108,6 +108,12 @@ test("proxies split into groups and configs", () => {
   assert.equal(parsed.configs["Proxy"], undefined)
 })
 
+test("provider configs resolve through their owning group", () => {
+  const groups = [{ name: "Proxy", all: ["Poland", "France"] }]
+  assert.equal(Model.groupForConfig(groups, "Poland"), "Proxy")
+  assert.equal(Model.groupForConfig(groups, "Missing"), "")
+})
+
 test("the primary group fallback skips mihomo's GLOBAL group", () => {
   const groups = [
     { name: "GLOBAL", selectable: true },

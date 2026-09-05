@@ -221,8 +221,9 @@ function parseConfigs(raw) {
   }
 }
 
-// `GET /proxies` is a flat namespace of configs and groups keyed by name.
-// Groups are the entries carrying an `all` list; everything else is a config.
+// `GET /proxies` exposes groups and direct proxy entries. Provider-backed
+// configs may only appear in a group's `all` list, so callers must not assume
+// every visible config also has a top-level API entry.
 function parseProxies(raw) {
   var data = parseJson(raw, null)
   var proxies = data && typeof data === "object" ? data.proxies : null
@@ -277,6 +278,18 @@ function primaryGroupName(groups, configured) {
 function groupByName(groups, name) {
   for (var i = 0; i < groups.length; i++) if (groups[i].name === text(name)) return groups[i]
   return null
+}
+
+function groupForConfig(groups, name) {
+  var wanted = text(name)
+  for (var i = 0; i < groups.length; i++) {
+    var all = groups[i] && groups[i].all
+    if (!all || typeof all.length !== "number") continue
+    for (var j = 0; j < all.length; j++) {
+      if (text(all[j]) === wanted) return text(groups[i].name)
+    }
+  }
+  return ""
 }
 
 // Last delay mihomo recorded for a config, 0 when it has never been tested.
@@ -673,6 +686,7 @@ if (typeof module !== "undefined") {
     userGroups: userGroups,
     primaryGroupName: primaryGroupName,
     groupByName: groupByName,
+    groupForConfig: groupForConfig,
     historyDelay: historyDelay,
     parseDelay: parseDelay,
     parseGroupDelay: parseGroupDelay,

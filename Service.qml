@@ -479,9 +479,13 @@ Item {
 
   function testConfig(name) {
     if (!apiReady || pingTestsRunning || name === "") return
+    // Provider-backed configs are listed inside a group's `all` array rather
+    // than exposed as top-level `/proxies/<name>` resources.
+    var group = Model.groupForConfig(groups, name)
+    if (group === "") return
     _singleTestName = name
     startConfigTests([name])
-    if (!delayCmd.launch(apiArgs("GET", "/proxies/" + encodeURIComponent(name)
+    if (!delayCmd.launch(apiArgs("GET", "/group/" + encodeURIComponent(group)
       + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))) {
       finishConfigTests([name], {})
       _singleTestName = ""
@@ -674,9 +678,9 @@ Item {
       var name = root._singleTestName
       root._singleTestName = ""
       if (name === "") return
-      var delay = code === 0 ? Model.parseDelay(out) : null
+      var delays = code === 0 ? Model.parseGroupDelay(out) : {}
       var result = {}
-      if (delay !== null) result[name] = delay
+      if (delays[name] !== undefined) result[name] = delays[name]
       root.finishConfigTests([name], result)
     }
   }
