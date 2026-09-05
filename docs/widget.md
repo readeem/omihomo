@@ -61,10 +61,12 @@ Every view is 420px wide. The main popup carries, top to bottom:
    above it scrolls; the footer does not, so the controls are reachable from anywhere in a long
    panel.
 
-Configuration parameters are deliberately thin. `GET /proxies/<name>` states a config's type,
-UDP support, liveness, and last delay; it does not expose address, port, or credentials, and
-[the provider research](research/2026-08-18-mihomo-proxy-provider-configs.md) ruled out mapping
-a runtime name back to its provider entry. The panel renders what mihomo states and nothing else.
+Configuration parameters are deliberately thin. Direct configs expose their type, UDP support,
+liveness, and last delay through `GET /proxies/<name>`. Provider-backed configs are listed inside
+their group's `all` array, so the panel tests them through `GET /group/<name>/delay` and does not
+assume a top-level resource exists. Neither endpoint exposes address, port, or credentials, and
+[the provider research](research/2026-08-18-mihomo-proxy-provider-configs.md) ruled out mapping a
+runtime name back to its provider entry. The panel renders what mihomo states and nothing else.
 
 The **connections view** is the same popup, over a log rather than a live list. `GET /connections`
 only states what is open right now, so `Service.qml` keeps its own record: every poll is diffed
