@@ -123,10 +123,23 @@ Mihomo owns provider refreshes after activation.
 refuses to run without one. A later `sub add` never takes the slot from the active subscription;
 `sub activate` is the way to switch.
 
+The merge sits on a floor of `mixed-port: 7890` and a DNS block enabling `1.1.1.1` and `8.8.8.8`,
+applied under the subscription rather than over it. A subscription that names its own inbound
+ports or resolvers keeps them, and `override.yaml` still wins over both. Neither default is
+cosmetic: TUN answers the machine's DNS through `dns-hijack`, so a runtime with no `nameserver`
+cannot resolve even its own proxy servers, and a subscription carrying no inbound is unreachable
+with TUN off. Raw subscriptions carry neither, so they get both.
+
 Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
 An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed
 conversion, merge, or reload keeps the previous cache, metadata, and runtime. The systemd unit is
 not restarted. Every mutation of the state files holds the one shared `flock`.
+
+A reload of a TUN-enabled runtime is two loads, not one. Mihomo answers a reload that rebuilds a
+live TUN adapter with `200` and then logs `configure tun interface: device or resource busy`,
+leaving the machine with no tunnel until TUN is switched off and on. So Omihomo loads the same
+config once with `tun.enable: false`, waits for the kernel to release the adapter, and then loads
+it for real.
 
 `set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.

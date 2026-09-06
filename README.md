@@ -37,6 +37,10 @@ Subscription URLs may return a full Mihomo YAML config or a raw share-link forma
 installed Mihomo version understands. Raw subscriptions get one generated `Proxy` selector and a
 final `MATCH,Proxy` rule.
 
+A subscription that brings no DNS settings or no inbound of its own gets Omihomo's: `1.1.1.1` and
+`8.8.8.8` as resolvers, and a mixed HTTP and SOCKS proxy on `127.0.0.1:7890`. Anything the
+subscription does state it keeps, and `override.yaml` beats both.
+
 Everything the panel does is also a CLI verb. See [docs/cli.md](docs/cli.md) for the full list and
 [docs/widget.md](docs/widget.md) for how the panel is put together.
 

@@ -743,6 +743,72 @@ test_turning_tun_on_without_root_permissions_does_not_prompt() {
   [[ ! -e $TEST_ROOT/sudo.log ]] || fail "missing permissions invoked sudo"
 }
 
+# A raw subscription is proxies and nothing else. With TUN on, mihomo answers
+# the machine's DNS, so a runtime with no resolver cannot even look up its own
+# proxy servers, and with TUN off there is no inbound to reach the proxy through.
+test_a_subscription_without_dns_or_an_inbound_gains_both() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+
+  run_cli sub add https://example.test/subscription/work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -r '.dns.enable' "$runtime")" true
+  assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 1.1.1.1
+  assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7890
+  # The Tailscale policy the override carries has to survive landing on them.
+  assert_eq "$(yq -r '.dns."nameserver-policy"."+.ts.net"' "$runtime")" 100.100.100.100
+}
+
+# The floor is under the subscription, not over it: a config that resolves and
+# listens the way its author meant keeps doing that.
+test_a_subscription_keeps_its_own_dns_and_inbound() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\nmixed-port: 7891\ndns:\n  enable: true\n  enhanced-mode: fake-ip\n  nameserver:\n    - 223.5.5.5'
+
+  run_cli sub add https://example.test/subscription/work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7891
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" fake-ip
+  assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["223.5.5.5"]'
+}
+
+# mihomo answers a reload that rebuilds a live TUN adapter with 200 and then
+# logs "device or resource busy", leaving the machine with no tunnel. Loading
+# the config once with TUN off first is what makes the second load a fresh one.
+test_a_reload_tears_the_old_tun_adapter_down_first() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_PERMISSIONS=yes
+  run_cli sub add https://example.test/subscription/work
+  run_cli set tun on
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+
+  run_cli sub activate work
+
+  assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-1.yaml")" false
+  assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-2.yaml")" true
+  [[ ! -e $TEST_ROOT/curl-put-3.yaml ]] || fail "a reload cost more than two config loads"
+}
+
+# Nothing is torn down when there is no adapter to tear down.
+test_a_reload_without_tun_is_a_single_config_load() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+
+  run_cli sub activate work
+
+  assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-1.yaml")" false
+  [[ ! -e $TEST_ROOT/curl-put-2.yaml ]] || fail "a reload with TUN off loaded the config twice"
+}
+
 test_tun_routing_excludes_local_networks_by_default() {
   setup_test
   trap teardown_test RETURN
@@ -1112,6 +1178,10 @@ tests=(
   test_turning_tun_on_reloads_an_active_unit_without_privilege
   test_turning_tun_on_requires_an_active_subscription
   test_turning_tun_on_without_root_permissions_does_not_prompt
+  test_a_subscription_without_dns_or_an_inbound_gains_both
+  test_a_subscription_keeps_its_own_dns_and_inbound
+  test_a_reload_tears_the_old_tun_adapter_down_first
+  test_a_reload_without_tun_is_a_single_config_load
   test_tun_routing_excludes_local_networks_by_default
   test_tun_device_is_named_after_omihomo
   test_tun_redirect_moves_the_stack_with_it

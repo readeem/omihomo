@@ -51,6 +51,13 @@ OMIHOMO_TUN_DEVICE_NAME=omihomo
 # move together, which is what `set tun-redirect` exists to guarantee.
 OMIHOMO_TUN_REDIRECT_STACK=mixed
 OMIHOMO_TUN_COMPATIBLE_STACK=gvisor
+# The floor `omi_merge_runtime` puts under every subscription. mihomo's own
+# default for both is nothing at all, and nothing is unusable: no resolver means
+# no proxy server address resolves, no inbound means TUN is the only way in.
+# 7890 is the port the whole Clash family has used for its mixed inbound since
+# the beginning, so it is the one a browser or shell is already pointed at.
+OMIHOMO_MIXED_PORT=${OMIHOMO_MIXED_PORT:-7890}
+OMIHOMO_DEFAULT_NAMESERVERS=(1.1.1.1 8.8.8.8)
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"
@@ -106,6 +113,13 @@ omi_tailscale_exclude_interface_yaml() {
   local indent
   printf -v indent '%*s' "${1:-0}" ''
   printf '%s- %s\n' "$indent" "$OMIHOMO_TAILSCALE_INTERFACE"
+}
+
+omi_default_nameservers_yaml() {
+  local entry
+  for entry in "${OMIHOMO_DEFAULT_NAMESERVERS[@]}"; do
+    printf -- '- %s\n' "$entry"
+  done
 }
 
 omi_tailscale_nameserver_policy_yaml() {
@@ -406,19 +420,58 @@ omi_api_reachable() {
   "$OMIHOMO_CURL" -fsS --max-time 2 -H "Authorization: Bearer $secret" "http://${address}/version" >/dev/null
 }
 
+# Omihomo names its adapter after itself, but the runtime is the config mihomo
+# is actually running, and an override from before that default still leaves the
+# name to mihomo, which calls it `Meta`.
+omi_tun_device_name() {
+  local runtime=${1:-$OMIHOMO_RUNTIME_FILE} device=${OMIHOMO_TUN_DEVICE:-}
+  if [[ -z $device && -f $runtime ]] && omi_yq_available; then
+    device=$(omi_yq -r '.tun.device // ""' "$runtime")
+  fi
+  printf '%s\n' "${device:-Meta}"
+}
+
+# The kernel takes the adapter down a moment after mihomo closes it, and mihomo
+# does not wait for that: a rebuild started inside the window fails outright.
+omi_await_tun_release() {
+  local device=$1 attempt
+  for attempt in {1..40}; do
+    [[ -e /sys/class/net/$device ]] || return 0
+    sleep 0.05
+  done
+}
+
+omi_put_runtime() {
+  local path=$1 address secret payload
+  address=$(omi_api_address)
+  secret=$(omi_api_secret)
+  payload=$(jq -cn --arg path "$path" '{path: $path, payload: ""}')
+  "$OMIHOMO_CURL" -fsS -X PUT -H "Authorization: Bearer $secret" -H 'Content-Type: application/json' \
+    --data "$payload" "http://${address}/configs?force=true" >/dev/null
+}
+
+# mihomo cannot rebuild a TUN adapter over one that is still up. A reload that
+# changes the `tun` block answers 200, logs "configure tun interface: device or
+# resource busy", and leaves the machine with no tunnel, which is the panel's
+# degraded state, and why switching TUN off and on by hand fixes it.
+#
+# So the same load happens twice, and the first pass has TUN disabled. That is
+# the manual repair, done in the order that never leaves a device behind.
 omi_reload_runtime() {
-  local runtime_path=${1:-$OMIHOMO_RUNTIME_FILE}
+  local runtime_path=${1:-$OMIHOMO_RUNTIME_FILE} staged
   omi_unit_active || return 0
   if ! omi_api_reachable; then
     omi_error "mihomo controller is unreachable" 12
     return 12
   fi
-  local address secret payload
-  address=$(omi_api_address)
-  secret=$(omi_api_secret)
-  payload=$(jq -cn --arg path "$runtime_path" '{path: $path, payload: ""}')
-  if ! "$OMIHOMO_CURL" -fsS -X PUT -H "Authorization: Bearer $secret" -H 'Content-Type: application/json' \
-    --data "$payload" "http://${address}/configs?force=true" >/dev/null; then
+  if [[ $(omi_yq -r '.tun.enable // false' "$runtime_path") == true ]]; then
+    staged=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
+    if omi_yq '.tun.enable = false' "$runtime_path" >"$staged"; then
+      omi_put_runtime "$staged" && omi_await_tun_release "$(omi_tun_device_name "$runtime_path")"
+    fi
+    rm -f "$staged"
+  fi
+  if ! omi_put_runtime "$runtime_path"; then
     omi_error "mihomo rejected the runtime config" 12
     return 12
   fi
@@ -438,6 +491,17 @@ omi_resolve_primary_group() {
   ' "$source"
 }
 
+# A raw subscription carries proxies and nothing else, and a full one is free to
+# leave out DNS and every inbound too. Neither gap is survivable. TUN makes
+# mihomo answer the machine's DNS through `dns-hijack`, so a runtime with no
+# `nameserver` resolves nothing, not even the addresses of its own proxy
+# servers, and every config in the panel reads as failed. With TUN off and no
+# inbound there is no way to reach the proxy at all.
+#
+# So the merge sits on a floor of both, under the subscription rather than over
+# it. A subscription that names its own resolvers or ports keeps them, and the
+# override still wins over everything.
+#
 # The Tailscale listener and its rules are generated here rather than stored in
 # the override, so the toggle in `.omihomo.tailscale` is the only state: turning
 # it off removes both. The rules target GLOBAL, which Omihomo points at the
@@ -453,6 +517,8 @@ omi_merge_runtime() {
   OMIHOMO_PRIMARY_GROUP=$primary \
   OMIHOMO_TAILSCALE_LISTENER=$OMIHOMO_TAILSCALE_LISTENER \
   OMIHOMO_TAILSCALE_PORT=$OMIHOMO_TAILSCALE_PORT \
+  OMIHOMO_MIXED_PORT=$OMIHOMO_MIXED_PORT \
+  OMIHOMO_DEFAULT_NAMESERVERS_YAML=$(omi_default_nameservers_yaml) \
     omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
     select(fileIndex == 1) as $override |
@@ -461,7 +527,15 @@ omi_merge_runtime() {
     ($override.rules.append // []) as $append |
     ($override.rules.filter // []) as $filter |
     ($override.omihomo.tailscale) as $tailscale |
-    ($base * $config) as $merged |
+    ($base | {
+      "mixed-port": (strenv(OMIHOMO_MIXED_PORT) | to_number),
+      "dns": {
+        "enable": true,
+        "default-nameserver": env(OMIHOMO_DEFAULT_NAMESERVERS_YAML),
+        "nameserver": env(OMIHOMO_DEFAULT_NAMESERVERS_YAML)
+      }
+    }) as $defaults |
+    ($defaults * $base * $config) as $merged |
     (($merged.rules // []) | map(select(. as $rule | ($filter | contains([$rule]) | not)))) as $base_rules |
     ($base_rules + $append) as $rest |
     (($merged."proxy-groups" // []) | map(select(.name != "GLOBAL"))) as $groups |
