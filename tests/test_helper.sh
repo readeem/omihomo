@@ -51,6 +51,7 @@ output=
 headers=
 url=
 agent=
+data=
 method=GET
 compressed=no
 while (($#)); do
@@ -61,7 +62,7 @@ while (($#)); do
     -X) method=$2; shift 2 ;;
     --compressed) compressed=yes; shift ;;
     --unix-socket|--max-time) shift 2 ;;
-    --data|--data-raw|--data-binary|--json) shift 2 ;;
+    --data|--data-raw|--data-binary|--json) data=$2; shift 2 ;;
     -w) shift 2 ;;
     -s|-S|-f|-L|-N|-k|-H) shift; [[ $1 == *:* ]] && shift || true ;;
     http*) url=$1; shift ;;
@@ -70,6 +71,12 @@ while (($#)); do
 done
 if [[ $method == PUT ]]; then
   printf '%s\n' "$url" >>"$TEST_ROOT/curl-put.log"
+  # A config load names a file the CLI deletes straight after, so the stub keeps
+  # a numbered copy: curl-put-1.yaml is what the first load carried.
+  path=$(jq -r '.path // empty' <<<"$data" 2>/dev/null || true)
+  if [[ -n $path && -f $path ]]; then
+    cp "$path" "$TEST_ROOT/curl-put-$(wc -l <"$TEST_ROOT/curl-put.log").yaml"
+  fi
   exit 0
 fi
 if [[ $url == http://localhost/providers/proxies/subscription ]]; then

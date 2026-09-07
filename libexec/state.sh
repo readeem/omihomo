@@ -98,14 +98,7 @@ command_status() {
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
-  # Omihomo names its adapter after itself, but the merged runtime is the config
-  # mihomo is actually running, and an override from before that default still
-  # leaves the name to mihomo — which calls it `Meta`.
-  device=${OMIHOMO_TUN_DEVICE:-}
-  if [[ -z $device && -f $OMIHOMO_RUNTIME_FILE ]] && omi_yq_available; then
-    device=$(omi_yq -r '.tun.device // ""' "$OMIHOMO_RUNTIME_FILE")
-  fi
-  device=${device:-Meta}
+  device=$(omi_tun_device_name)
   if [[ $tun == true && ! -e /sys/class/net/$device ]]; then
     status_json degraded "$(tun_failure_detail)"
     return 0
