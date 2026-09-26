@@ -139,16 +139,15 @@ preflight_raw_provider() {
 }
 
 write_raw_wrapper() {
-  local url=$1 destination=$2 digest provider_path
-  digest=$(printf '%s' "$url" | sha256sum)
-  digest=${digest%% *}
-  provider_path="./providers/${digest}.yaml"
-  OMIHOMO_SUBSCRIPTION_URL=$url OMIHOMO_PROVIDER_PATH=$provider_path omi_yq -n -P '
+  local url=$1 provider_path=$2 destination=$3
+  OMIHOMO_SUBSCRIPTION_URL=$url OMIHOMO_PROVIDER_PATH=$provider_path \
+  OMIHOMO_USER_AGENT=$OMIHOMO_USER_AGENT omi_yq -n -P '
     ."proxy-providers".subscription = {
       "type": "http",
       "url": strenv(OMIHOMO_SUBSCRIPTION_URL),
       "path": strenv(OMIHOMO_PROVIDER_PATH),
-      "interval": 3600
+      "interval": 3600,
+      "header": {"User-Agent": [strenv(OMIHOMO_USER_AGENT)]}
     } |
     ."proxy-groups" = [{
       "name": "Proxy",
@@ -160,7 +159,8 @@ write_raw_wrapper() {
 }
 
 prepare_subscription_cache() {
-  local url=$1 body=$2 prepared status
+  local url=$1 body=$2 prepared status digest
+  PREPARED_PROVIDER=
   if [[ $(classify_subscription_body "$body") == full ]]; then
     omi_validate_yaml "$body" || return $?
     PREPARED_BODY=$body
@@ -168,8 +168,15 @@ prepare_subscription_cache() {
   fi
 
   preflight_raw_provider "$body" || return $?
+  digest=$(printf '%s' "$url" | sha256sum)
+  mkdir -p "$OMIHOMO_DATA_DIR/providers" &&
+    PREPARED_PROVIDER=$(mktemp "${OMIHOMO_DATA_DIR}/providers/${digest%% *}.XXXXXX.yaml") &&
+    cp -- "$body" "$PREPARED_PROVIDER" || {
+      omi_error "failed to cache the raw subscription" 20
+      return 20
+    }
   prepared=$(mktemp "${OMIHOMO_DATA_DIR}/.subscription.XXXXXX")
-  if ! write_raw_wrapper "$url" "$prepared"; then
+  if ! write_raw_wrapper "$url" "./providers/${PREPARED_PROVIDER##*/}" "$prepared"; then
     rm -f "$prepared"
     omi_error "failed to prepare the raw subscription" 20
     return 20
@@ -181,6 +188,16 @@ prepare_subscription_cache() {
   }
   rm -f "$body"
   PREPARED_BODY=$prepared
+}
+
+cached_raw_provider() {
+  local cache=$1 url=$2 path digest
+  [[ -f $cache ]] || return 0
+  path=$(omi_yq -r '."proxy-providers".subscription.path // ""' "$cache")
+  digest=$(printf '%s' "$url" | sha256sum)
+  if [[ $path =~ ^\./providers/${digest%% *}(\.[[:alnum:]]{6})?\.yaml$ ]]; then
+    printf '%s/%s\n' "$OMIHOMO_DATA_DIR" "$path"
+  fi
 }
 
 subscription_header() {
@@ -245,7 +262,7 @@ fetch_validated_subscription() {
   }
   prepare_subscription_cache "$url" "$body" || {
     status=$?
-    rm -f "$body" "$headers"
+    rm -f "$body" "$headers" "${PREPARED_PROVIDER:-}"
     return "$status"
   }
   FETCH_BODY=$PREPARED_BODY
@@ -291,8 +308,10 @@ subscription_update() {
   omi_init_layout
   omi_require_core
   subscription_exists "$name" || omi_error "subscription not found: $name" 1
-  local url body headers record temporary active cache runtime= status
+  local url body headers record temporary active cache runtime= status previous_provider
   url=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .url' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  cache="$OMIHOMO_CACHE_DIR/${name}.yaml"
+  previous_provider=$(cached_raw_provider "$cache" "$url")
   fetch_validated_subscription "$url" || return $?
   body=$FETCH_BODY
   headers=$FETCH_HEADERS
@@ -305,24 +324,23 @@ subscription_update() {
     runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
     omi_prepare_runtime "$body" "$OMIHOMO_OVERRIDE_FILE" "$runtime" || {
       status=$?
-      rm -f "$body" "$headers" "$temporary" "$runtime"
+      rm -f "$body" "$headers" "$temporary" "$runtime" "${PREPARED_PROVIDER:-}"
       return "$status"
     }
     if omi_unit_active; then
       omi_reload_runtime "$runtime" || {
         status=$?
-        rm -f "$body" "$headers" "$temporary" "$runtime"
+        rm -f "$body" "$headers" "$temporary" "$runtime" "${PREPARED_PROVIDER:-}"
         return "$status"
       }
     fi
   fi
-  cache="$OMIHOMO_CACHE_DIR/${name}.yaml"
   omi_atomic_move "$body" "$cache"
   omi_atomic_move "$temporary" "$OMIHOMO_SUBSCRIPTIONS_FILE"
   if [[ -n $runtime ]]; then
     omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
   fi
-  rm -f "$headers"
+  rm -f "$headers" "$previous_provider"
 }
 
 subscription_remove() {

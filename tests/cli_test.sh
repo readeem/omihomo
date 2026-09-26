@@ -120,7 +120,11 @@ test_raw_subscription_is_cached_as_a_provider_wrapper() {
   local cache="$XDG_DATA_HOME/omihomo/cache/raw.yaml"
   assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
   assert_eq "$(yq -r '."proxy-providers".subscription.url' "$cache")" "$url"
-  assert_eq "$(yq -r '."proxy-providers".subscription.path' "$cache")" './providers/d314e84c465c28453ac705094c504c6004c0bfc32741962e9939760a7f3484ec.yaml'
+  local provider
+  provider=$(yq -r '."proxy-providers".subscription.path' "$cache")
+  [[ $provider =~ ^\./providers/d314e84c465c28453ac705094c504c6004c0bfc32741962e9939760a7f3484ec\.[[:alnum:]]{6}\.yaml$ ]] ||
+    fail "provider cache is not scoped to the subscription URL"
+  assert_eq "$(yq -r '."proxy-providers".subscription.header.User-Agent[0]' "$cache")" clash.meta
   assert_eq "$(yq -r '."proxy-groups"[0].name' "$cache")" Proxy
   assert_eq "$(yq -r '.rules[0]' "$cache")" MATCH,Proxy
   assert_json_field "$(run_cli sub list | jq '.[0]')" upload 10
@@ -139,6 +143,41 @@ test_base64_subscription_is_cached_as_a_provider_wrapper() {
   local cache="$XDG_DATA_HOME/omihomo/cache/encoded.yaml"
   assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
   assert_eq "$(yq -r '."proxy-groups"[0].use[0]' "$cache")" subscription
+}
+
+test_raw_update_replaces_the_provider_payload() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/active
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+  run_cli sub add https://example.test/subscription/raw
+
+  local cache="$XDG_DATA_HOME/omihomo/cache/raw.yaml" previous current
+  previous=$(yq -r '."proxy-providers".subscription.path' "$cache")
+  cmp -s "$OMIHOMO_TEST_SUBSCRIPTION_FIXTURE" "$XDG_DATA_HOME/omihomo/$previous" ||
+    fail "import discarded the validated provider payload"
+
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
+  run_cli sub update raw
+
+  current=$(yq -r '."proxy-providers".subscription.path' "$cache")
+  [[ $current != "$previous" ]] || fail "update reused the stale provider path"
+  cmp -s "$OMIHOMO_TEST_SUBSCRIPTION_FIXTURE" "$XDG_DATA_HOME/omihomo/$current" ||
+    fail "update discarded the validated provider payload"
+  [[ ! -f $XDG_DATA_HOME/omihomo/$previous ]] || fail "obsolete provider cache survived update"
+  run_cli sub activate raw
+  assert_eq "$(yq -r '."proxy-providers".subscription.path' "$XDG_DATA_HOME/omihomo/runtime.yaml")" "$current"
+
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+  run_cli sub update raw
+  previous=$current
+  current=$(yq -r '."proxy-providers".subscription.path' "$TEST_ROOT/live.yaml")
+  [[ $current != "$previous" ]] || fail "active update reused the stale provider path"
+  cmp -s "$OMIHOMO_TEST_SUBSCRIPTION_FIXTURE" "$XDG_DATA_HOME/omihomo/$current" ||
+    fail "active reload did not receive the new provider payload"
+  [[ ! -f $XDG_DATA_HOME/omihomo/$previous ]] || fail "obsolete active provider cache survived update"
 }
 
 # A subscription server is free to gzip a response the client never asked to
@@ -379,6 +418,7 @@ test_failed_active_raw_update_keeps_previous_cache_and_runtime() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
 
   run_cli sub add https://example.test/subscription/work
   run_cli sub activate work
@@ -389,8 +429,8 @@ test_failed_active_raw_update_keeps_previous_cache_and_runtime() {
   runtime_before=$(<"$runtime")
   subscriptions_before=$(<"$XDG_DATA_HOME/omihomo/subscriptions.json")
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
-  export OMIHOMO_TEST_API_UNREACHABLE=yes
-  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+  export OMIHOMO_TEST_PUT_FAIL=1
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
   stderr=$(mktemp)
 
   set +e
@@ -402,6 +442,12 @@ test_failed_active_raw_update_keeps_previous_cache_and_runtime() {
   assert_eq "$(<"$cache")" "$cache_before"
   assert_eq "$(<"$runtime")" "$runtime_before"
   assert_eq "$(<"$XDG_DATA_HOME/omihomo/subscriptions.json")" "$subscriptions_before"
+  local provider
+  provider=$(yq -r '."proxy-providers".subscription.path' "$cache")
+  cmp -s "$REPO_ROOT/tests/fixtures/raw-plain.txt" "$XDG_DATA_HOME/omihomo/$provider" ||
+    fail "failed update replaced the previous provider payload"
+  assert_eq "$(find "$XDG_DATA_HOME/omihomo/providers" -type f | wc -l)" 1
+  assert_eq "$(yq -r '."proxy-providers".subscription.path' "$TEST_ROOT/live.yaml")" "$provider"
 }
 
 test_failed_active_activation_keeps_previous_subscription() {
@@ -1192,6 +1238,7 @@ tests=(
   test_repeated_titles_are_suffixed_and_repeated_urls_are_refused
   test_raw_subscription_is_cached_as_a_provider_wrapper
   test_base64_subscription_is_cached_as_a_provider_wrapper
+  test_raw_update_replaces_the_provider_payload
   test_gzip_only_subscription_server_is_decoded
   test_full_config_subscription_is_not_wrapped
   test_provider_yaml_subscription_is_not_wrapped

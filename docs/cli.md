@@ -115,9 +115,11 @@ URL twice or touching the running service. Rejected content exits with code `20`
 subscription record or cache.
 
 For accepted raw content, the cached YAML is a generated config with one HTTP provider named
-`subscription`, one `Proxy` selector, and a final `MATCH,Proxy` rule. The provider cache path is
-`providers/<sha256-of-url>.yaml`, so subscriptions with the same display name remain independent.
-Mihomo owns provider refreshes after activation.
+`subscription`, one `Proxy` selector, and a final `MATCH,Proxy` rule. The validated response is
+saved at `providers/<sha256-of-url>.<generation>.yaml`. Each import gets a new path so Mihomo
+loads the fetched links immediately instead of reusing an older provider cache. A successful
+update removes the previous cache; a failed reload preserves it. Mihomo still refreshes the
+provider hourly after activation, using the same User-Agent as Omihomo.
 
 `sub add` activates the subscription it just added when nothing is active yet, because `core start`
 refuses to run without one. A later `sub add` never takes the slot from the active subscription;
