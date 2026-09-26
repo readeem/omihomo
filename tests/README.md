@@ -5,10 +5,13 @@ Four suites, one runner:
 - `model_test.js` exercises `Model.js`, the widget's parsing and formatting seam, under
   `node --test`. Everything the panel renders passes through it, and none of it needs QML.
 - `service_state_test.sh` runs `Service.qml` in an isolated Quickshell config and verifies that
-  a stale status response cannot repaint over a pending toggle. Its fake CLI is `/usr/bin/true`,
-  so it cannot touch the real core, systemd unit, files, or controller.
-- `ping_state_test.sh` holds fake controller requests open to verify the in-progress, success,
-  and persistent failure states for single, bulk, and egress latency checks.
+  a stale status response cannot repaint over a pending toggle, that an unconfirmed toggle gives
+  up after its deadline, and that a controller outage keeps the last snapshot. Its fake CLI is
+  `/usr/bin/true`, so it cannot touch the real core, systemd unit, files, or controller.
+- `fake_controller_test.sh` runs `ping_state_test.qml` and `live_state_test.qml` against a fake
+  controller. The first holds requests open to verify the in-progress, success, and persistent
+  failure states for single, bulk, and egress latency checks. The second verifies that a read
+  already in flight cannot undo a selection and that a traffic stream which ends reconnects.
 - `cli_test.sh` runs the public `bin/omihomo` interface with isolated XDG directories and
   command stubs for mihomo, curl, and systemd.
 

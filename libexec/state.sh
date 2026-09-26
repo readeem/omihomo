@@ -99,7 +99,7 @@ command_status() {
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
   device=$(omi_tun_device_name)
-  if [[ $tun == true && ! -e /sys/class/net/$device ]]; then
+  if [[ $tun == true ]] && ! omi_tun_device_present "$device"; then
     status_json degraded "$(tun_failure_detail)"
     return 0
   fi

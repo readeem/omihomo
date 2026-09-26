@@ -82,7 +82,7 @@ ShellRoot {
         return
       }
       check(service.configTestState("Pass"), "success", "single success is recorded")
-      check(service.configDelay("Pass"), 87, "single success records its delay")
+      check(service.configDelay("Pass"), 91, "single success records its delay")
       service.testGroup("Proxy")
       check(service.configTestState("Pass"), "testing", "bulk test marks first config immediately")
       check(service.configTestState("Fail"), "testing", "bulk test marks every config immediately")
@@ -100,6 +100,9 @@ ShellRoot {
       check(service.configTestState("Fail"), "failed", "missing bulk result is an explicit failure")
       service.refreshTrace()
       check(service.traceTesting, true, "egress test starts immediately")
+      check(service._traceQueued, true, "egress test waits for the proxy port")
+      service.applyConfigs('{"mode":"rule","mixed-port":7890}')
+      check(service._traceQueued, false, "egress test runs once the proxy port is known")
       stage = 4
       return
     }

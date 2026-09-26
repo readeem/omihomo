@@ -32,7 +32,16 @@ exit-code table in [cli.md](cli.md) when a command dies without one.
 Core power, TUN, autostart, and mode keep confirmed and desired values separate. A click updates
 the desired value immediately, stale reads continue updating only the confirmed value, and the
 desired value disappears once a read agrees. A failed command clears it and rolls the control
-back. This is the same optimistic-state pattern used by Omarchy's Tailscale panel.
+back, and so does a successful one that no read confirms within `settleTimeoutMs`, with an error
+saying so. This is the same optimistic-state pattern used by Omarchy's Tailscale panel.
+
+Reads that confirm a write replace any copy of themselves already in flight, since that copy began
+before the write landed. A config selection stays pending until such a read agrees, and an egress
+check waits for it and for the proxy port, so it never measures the route being replaced.
+
+Everything read from the controller belongs to one runtime: the active subscription and the unit's
+start time. A controller that stops answering leaves both alone, so the panel keeps its last groups,
+configs, connections, and latency results; a stop, restart, or subscription switch drops them.
 
 ## Panel
 
@@ -42,7 +51,8 @@ Every view is 420px wide. The main popup carries, top to bottom:
 2. **Status readout** — the six fields settled in ticket #5: one status indicator with its
    detail on the hero, then `Group › Config`, throughput, uptime, and egress IP with latency.
    Egress is the only field that costs a network call, so it is fetched on panel open, on a
-   config or group change, and on a click — never on a timer.
+   config or group change, and on a click — never on a timer. It always goes through the
+   core's mixed port.
 3. **Configs** — the browsed group's configs in a capped list, with a filter, per-config and
    whole-group latency tests, and best-effort parameters. Only a `Selector` group can be
    chosen from; the rest are read-only because they pick for themselves. Picking a config in
@@ -149,7 +159,8 @@ Polling is scoped to what is on screen. The bar only needs `omihomo status`, whi
 shared refresh timer (`refreshIntervalSec`, 10s by default). Proxies, rules, subscriptions, and
 the `/traffic` stream run only while the panel is open. Opening the panel reads them once
 immediately, from `Service.onPanelOpenChanged` rather than from the panel's own open handler, so
-the first open does not sit empty until the next timer tick.
+the first open does not sit empty until the next timer tick. A `/traffic` stream that ends while
+the panel is open zeroes its rates and reconnects with a backoff from 1s to 30s.
 
 `/connections` is the one read gated by two things: it runs whenever the panel is open, at 2s in
 the connections view and on the shared refresh interval elsewhere in the panel, which is enough to
@@ -168,9 +179,9 @@ the panel's install action, or `omihomo core install` in a terminal.
 
 ## Verifying a change
 
-`tests/run` includes a Quickshell-native service test that injects stale status and config reads
-between a click and its confirmation. It uses `/usr/bin/true` and `/usr/bin/false` as fake CLIs,
-so it does not touch the real service or configuration.
+`tests/run` includes Quickshell-native service tests that inject stale status, config, and proxy
+reads between a click and its confirmation. They use fake CLIs and a fake `curl`, so they do not
+touch the real service or configuration.
 
 `qmllint` catches syntax and binding mistakes without a compositor:
 

@@ -28,6 +28,9 @@ ShellRoot {
   Omihomo.Service { id: failingTunService; cliPath: "/usr/bin/false" }
   Omihomo.Service { id: staleApiService; cliPath: "/usr/bin/true" }
   Omihomo.Service { id: redirectService; cliPath: "/usr/bin/true" }
+  Omihomo.Service { id: snapshotService; cliPath: "/usr/bin/true" }
+  // Status from `true` is empty, so a started core never confirms.
+  Omihomo.Service { id: settleService; cliPath: "/usr/bin/true"; settleTimeoutMs: 100 }
 
   Timer {
     id: openCheck
@@ -54,11 +57,26 @@ ShellRoot {
       check(failingCoreService._desiredCoreRunning, -1, "failed core command clears desired state")
       check(failingTunService.tunActive, false, "failed TUN command rolls back")
       check(failingTunService._desiredTunEnabled, -1, "failed TUN command clears desired state")
+      settleCheck.start()
+    }
+  }
+
+  Timer {
+    id: settleCheck
+    interval: 10
+    repeat: true
+    property int ticks: 0
+    onTriggered: {
+      ticks += 1
+      if (settleService.coreActive && ticks < 200) return
+      stop()
+      check(settleService.coreActive, false, "an unconfirmed start gives up after its deadline")
+      check(settleService.lastError, "mihomo did not reach the requested state", "an unconfirmed start is reported")
       finish()
     }
   }
 
-  function status(state, tun, autostart, redirect) {
+  function status(state, tun, autostart, redirect, uptime) {
     return JSON.stringify({
       state: state,
       detail: "",
@@ -68,7 +86,7 @@ ShellRoot {
       // Absent means the fast pairing, which is what most callers here want.
       tun_redirect: redirect !== false,
       autostart_enabled: autostart === true,
-      uptime: null
+      uptime: uptime || null
     })
   }
 
@@ -161,6 +179,20 @@ ShellRoot {
     check(redirectService.tunRedirectActive, false, "stale status cannot undo pending redirect")
     redirectService.applyStatus(status("on", true, false, false))
     check(redirectService._desiredTunRedirect, -1, "redirect confirmation clears desired state")
+
+    // A controller that stops answering is the same runtime; a restart is not.
+    snapshotService.applyStatus(status("on", false, false, true, "2026-09-24 10:00:00"))
+    snapshotService.groups = [{ name: "Proxy", type: "Selector", now: "A", all: ["A"], selectable: true, system: false }]
+    snapshotService.configTestResults = ({ A: { state: "success", delay: 40 } })
+    snapshotService.applyStatus(status("starting", false, false, true, "2026-09-24 10:00:00"))
+    check(snapshotService.groups.length, 1, "a controller outage keeps the groups")
+    check(snapshotService.configTestState("A"), "success", "a controller outage keeps latency results")
+    snapshotService.applyStatus(status("on", false, false, true, "2026-09-24 10:05:00"))
+    check(snapshotService.groups.length, 0, "a restarted core drops the old groups")
+    check(snapshotService.configTestState("A"), "", "a restarted core drops old latency results")
+
+    settleService.applyStatus(status("stopped", false, false))
+    settleService.toggleCore()
 
     check(openService.subscriptions.length, 0, "subscriptions start empty")
     openService.panelOpen = true

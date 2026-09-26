@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case "${1:-} ${2:-}" in
+  "status "*)
+    printf '{"state":"on","active_subscription":"Test","primary_group":"Proxy","tun_enabled":false,"uptime":"Thu 2026-09-24 10:00:00 UTC"}\n'
+    ;;
+  "api-info "*) printf '{"address":"controller.test:9090","secret":""}\n' ;;
+  "sub list" | "rule list") printf '[]\n' ;;
+esac

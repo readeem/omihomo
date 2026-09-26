@@ -18,6 +18,8 @@ OMIHOMO_YQ=${OMIHOMO_YQ:-yq}
 OMIHOMO_CURL=${OMIHOMO_CURL:-curl}
 OMIHOMO_SYSTEMCTL=${OMIHOMO_SYSTEMCTL:-systemctl}
 OMIHOMO_STAT=${OMIHOMO_STAT:-stat}
+OMIHOMO_NET_DIR=${OMIHOMO_NET_DIR:-/sys/class/net}
+OMIHOMO_RELOAD_TIMEOUT=${OMIHOMO_RELOAD_TIMEOUT:-20}
 # Subscription servers content-negotiate on User-Agent. A Clash-family agent
 # usually gets a full config, which Omihomo can preserve without wrapping it.
 OMIHOMO_USER_AGENT=${OMIHOMO_USER_AGENT:-clash.meta}
@@ -174,8 +176,8 @@ omi_backfill_override() {
   # A subshell keeps a failure in here from claiming the one error message the
   # real command still owes the caller (see omi_error).
   if (omi_prepare_runtime "$cache" "$file" "$runtime") >/dev/null 2>&1; then
+    (omi_reload_runtime "$runtime") >/dev/null 2>&1 || true
     omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
-    (omi_reload_runtime "$OMIHOMO_RUNTIME_FILE") >/dev/null 2>&1 || true
   else
     rm -f "$runtime"
   fi
@@ -431,14 +433,28 @@ omi_tun_device_name() {
   printf '%s\n' "${device:-Meta}"
 }
 
+omi_tun_device_present() {
+  [[ -e $OMIHOMO_NET_DIR/$1 ]]
+}
+
 # The kernel takes the adapter down a moment after mihomo closes it, and mihomo
 # does not wait for that: a rebuild started inside the window fails outright.
 omi_await_tun_release() {
   local device=$1 attempt
   for attempt in {1..40}; do
-    [[ -e /sys/class/net/$device ]] || return 0
+    omi_tun_device_present "$device" || return 0
     sleep 0.05
   done
+  return 1
+}
+
+omi_await_tun_device() {
+  local device=$1 attempt
+  for attempt in {1..40}; do
+    omi_tun_device_present "$device" && return 0
+    sleep 0.05
+  done
+  return 1
 }
 
 omi_put_runtime() {
@@ -446,8 +462,8 @@ omi_put_runtime() {
   address=$(omi_api_address)
   secret=$(omi_api_secret)
   payload=$(jq -cn --arg path "$path" '{path: $path, payload: ""}')
-  "$OMIHOMO_CURL" -fsS -X PUT -H "Authorization: Bearer $secret" -H 'Content-Type: application/json' \
-    --data "$payload" "http://${address}/configs?force=true" >/dev/null
+  "$OMIHOMO_CURL" -fsS --max-time "$OMIHOMO_RELOAD_TIMEOUT" -X PUT -H "Authorization: Bearer $secret" \
+    -H 'Content-Type: application/json' --data "$payload" "http://${address}/configs?force=true" >/dev/null
 }
 
 # mihomo cannot rebuild a TUN adapter over one that is still up. A reload that
@@ -456,25 +472,45 @@ omi_put_runtime() {
 # degraded state, and why switching TUN off and on by hand fixes it.
 #
 # So the same load happens twice, and the first pass has TUN disabled. That is
-# the manual repair, done in the order that never leaves a device behind.
+# the manual repair, done in the order that never leaves a device behind. Only a
+# load that ends with a reachable controller and, when asked for, a live adapter
+# counts as done.
+omi_load_runtime() {
+  local path=$1 live_device staged status=0
+  if [[ $(omi_yq -r '.tun.enable // false' "$path") == true ]]; then
+    live_device=$(omi_tun_device_name)
+    staged=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
+    omi_yq '.tun.enable = false' "$path" >"$staged" &&
+      omi_put_runtime "$staged" &&
+      omi_await_tun_release "$live_device" || status=1
+    rm -f "$staged"
+    ((status == 0)) || return 1
+    omi_put_runtime "$path" &&
+      omi_api_reachable &&
+      omi_await_tun_device "$(omi_tun_device_name "$path")"
+  else
+    omi_put_runtime "$path" && omi_api_reachable
+  fi
+}
+
+# A load that fails halfway can leave the core on a config nobody asked for,
+# typically the TUN-less first pass. The runtime on disk is still the last one
+# that worked, so a failed load puts that back before reporting the failure.
 omi_reload_runtime() {
-  local runtime_path=${1:-$OMIHOMO_RUNTIME_FILE} staged
+  local runtime_path=${1:-$OMIHOMO_RUNTIME_FILE}
   omi_unit_active || return 0
   if ! omi_api_reachable; then
     omi_error "mihomo controller is unreachable" 12
     return 12
   fi
-  if [[ $(omi_yq -r '.tun.enable // false' "$runtime_path") == true ]]; then
-    staged=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
-    if omi_yq '.tun.enable = false' "$runtime_path" >"$staged"; then
-      omi_put_runtime "$staged" && omi_await_tun_release "$(omi_tun_device_name "$runtime_path")"
-    fi
-    rm -f "$staged"
-  fi
-  if ! omi_put_runtime "$runtime_path"; then
+  omi_load_runtime "$runtime_path" && return 0
+  if [[ $runtime_path != "$OMIHOMO_RUNTIME_FILE" && -f $OMIHOMO_RUNTIME_FILE ]] &&
+    omi_load_runtime "$OMIHOMO_RUNTIME_FILE"; then
     omi_error "mihomo rejected the runtime config" 12
     return 12
   fi
+  omi_error "mihomo failed to reload and the previous config could not be restored" 12
+  return 12
 }
 
 # Resolve the same primary group the panel shows. GLOBAL is mihomo's system

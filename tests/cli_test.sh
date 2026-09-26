@@ -574,6 +574,7 @@ tun:
   enable: true
   device: lo
 EOF
+  touch "$OMIHOMO_NET_DIR/lo"
   local output
   output=$(run_cli status)
   assert_json_field "$output" state on
@@ -807,6 +808,55 @@ test_a_reload_without_tun_is_a_single_config_load() {
 
   assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-1.yaml")" false
   [[ ! -e $TEST_ROOT/curl-put-2.yaml ]] || fail "a reload with TUN off loaded the config twice"
+}
+
+# A running core with TUN up, and a mode change for it to reload.
+start_tun_core() {
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_PERMISSIONS=yes
+  run_cli sub add https://example.test/subscription/work
+  run_cli set tun on
+  touch "$OMIHOMO_NET_DIR/omihomo"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+}
+
+# A failed load must not leave the core on its TUN-less first pass: the runtime
+# on disk is the last one that worked, and it goes back in.
+test_a_failed_reload_restores_the_previous_runtime() {
+  local failed_load status
+  for failed_load in 1 2; do
+    setup_test
+    start_tun_core
+    export OMIHOMO_TEST_PUT_FAIL=$failed_load
+
+    set +e
+    run_cli set mode direct 2>/dev/null
+    status=$?
+    set -e
+
+    assert_eq "$status" 12
+    assert_eq "$(yq -r '.mode' "$XDG_DATA_HOME/omihomo/runtime.yaml")" rule
+    cmp -s "$TEST_ROOT/live.yaml" "$XDG_DATA_HOME/omihomo/runtime.yaml" || fail "load $failed_load failing left the core on another config"
+    [[ -e $OMIHOMO_NET_DIR/omihomo ]] || fail "load $failed_load failing left TUN down"
+    teardown_test
+  done
+}
+
+test_a_tun_adapter_that_never_goes_away_fails_the_reload() {
+  setup_test
+  trap teardown_test RETURN
+  start_tun_core
+  export OMIHOMO_TEST_TUN_STUCK=yes
+  local stderr="$TEST_ROOT/stderr" status
+
+  set +e
+  run_cli set mode direct 2>"$stderr"
+  status=$?
+  set -e
+
+  assert_eq "$status" 12
+  assert_file_contains "$stderr" "could not be restored"
+  assert_eq "$(yq -r '.mode' "$XDG_DATA_HOME/omihomo/runtime.yaml")" rule
 }
 
 test_tun_routing_excludes_local_networks_by_default() {
@@ -1182,6 +1232,8 @@ tests=(
   test_a_subscription_keeps_its_own_dns_and_inbound
   test_a_reload_tears_the_old_tun_adapter_down_first
   test_a_reload_without_tun_is_a_single_config_load
+  test_a_failed_reload_restores_the_previous_runtime
+  test_a_tun_adapter_that_never_goes_away_fails_the_reload
   test_tun_routing_excludes_local_networks_by_default
   test_tun_device_is_named_after_omihomo
   test_tun_redirect_moves_the_stack_with_it

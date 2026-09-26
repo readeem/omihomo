@@ -382,7 +382,6 @@ Panel {
     if (!name) return
     if (browsedGroupEntry && browsedGroupEntry.selectable) {
       omihomo.selectConfig(browsedGroup, name)
-      if (browsedGroup === omihomo.primaryGroup) omihomo.refreshTrace()
     } else {
       expandedConfig = expandedConfig === name ? "" : name
     }

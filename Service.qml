@@ -48,6 +48,10 @@ Item {
   property int _desiredTunRedirect: -1
   property int _desiredAutostartEnabled: -1
   property int _desiredTailscaleEnabled: -1
+  // How long a command that succeeded may wait for status to agree with it.
+  // After that the observed state wins and the panel says the change did not
+  // take.
+  property int settleTimeoutMs: 15000
 
   readonly property bool installed: coreState !== "not-installed" && coreState !== "unknown"
   readonly property bool coreRunning: coreState === "on" || coreState === "degraded"
@@ -60,6 +64,9 @@ Item {
   readonly property bool tailscaleActive: _desiredTailscaleEnabled === -1
     ? tailscaleEnabled : _desiredTailscaleEnabled === 1
   readonly property bool apiReady: coreRunning && apiAddress !== ""
+  // One run of one subscription. Anything read from the controller belongs to
+  // the runtime it was read from, and is dropped when this changes.
+  readonly property string runtimeKey: activeSubscription + "|" + startedMs
 
   // ---- controller ---------------------------------------------------------
   property string apiAddress: ""
@@ -96,6 +103,7 @@ Item {
   property int egressLatency: 0
   property bool traceTesting: false
   property bool traceFailed: false
+  property bool _traceQueued: false
 
   // Manual results sit above `/proxies` snapshots. A slow snapshot may have
   // started before the click, so it must not repaint an old latency over the
@@ -188,19 +196,24 @@ Item {
 
   // ---- reads --------------------------------------------------------------
 
-  function refresh() {
+  // A poll leaves a read already in flight alone. `afterWrite` is for the read
+  // that confirms a write: an in-flight read began before the write landed, so
+  // its answer is dropped and the read runs again.
+  function refresh(afterWrite) {
     if (cliPath === "") return
-    statusCmd.launch(cli(["status"]))
+    var read = afterWrite === true ? "relaunch" : "launch"
+    statusCmd[read](cli(["status"]))
     if (!panelOpen) return
-    subsCmd.launch(cli(["sub", "list"]))
-    rulesCmd.launch(cli(["rule", "list"]))
+    subsCmd[read](cli(["sub", "list"]))
+    rulesCmd[read](cli(["rule", "list"]))
   }
 
-  function refreshLive() {
+  function refreshLive(afterWrite) {
     if (!apiReady) return
-    proxiesCmd.launch(apiArgs("GET", "/proxies"))
-    configsCmd.launch(apiArgs("GET", "/configs"))
-    apiRulesCmd.launch(apiArgs("GET", "/rules"))
+    var read = afterWrite === true ? "relaunch" : "launch"
+    proxiesCmd[read](apiArgs("GET", "/proxies"))
+    configsCmd[read](apiArgs("GET", "/configs"))
+    apiRulesCmd[read](apiArgs("GET", "/rules"))
   }
 
   // The log only fills while the panel is on screen: every 2s in the
@@ -215,14 +228,25 @@ Item {
   }
 
   // IP and latency are the only fields that cost a network round trip, so they
-  // are event-driven: panel open, config or group change, or a click.
+  // are event-driven: panel open, config or group change, or a click. A check
+  // only measures the route once it is known: it waits for the proxy port and
+  // for a pending selection to be confirmed, and a newer check replaces one
+  // already running.
   function refreshTrace() {
-    if (!coreRunning || traceCmd.running) return
-    var args = ["curl", "-fsS", "--max-time", "8", "-w", "\n%{time_total}"]
-    if (mixedPort > 0) args.push("-x", "http://127.0.0.1:" + mixedPort)
-    args.push("https://cloudflare.com/cdn-cgi/trace")
+    if (!coreRunning) return
     traceTesting = true
-    if (!traceCmd.launch(args)) traceTesting = false
+    if (mixedPort <= 0 || pendingConfig !== "") {
+      _traceQueued = true
+      return
+    }
+    _traceQueued = false
+    if (!traceCmd.relaunch(["curl", "-fsS", "--max-time", "8", "-w", "\n%{time_total}",
+      "-x", "http://127.0.0.1:" + mixedPort, "https://cloudflare.com/cdn-cgi/trace"]))
+      traceTesting = false
+  }
+
+  function runQueuedTrace() {
+    if (_traceQueued) refreshTrace()
   }
 
   // The panel's `panelOpen` binding lands after the panel's own
@@ -240,6 +264,7 @@ Item {
   function applyStatus(raw) {
     var status = Model.parseStatus(raw)
     var wasReady = apiReady
+    var previousRuntime = runtimeKey
     var confirmedCoreRunning = status.state === "on" || status.state === "degraded"
     coreState = status.state
     coreDetail = status.detail
@@ -262,13 +287,15 @@ Item {
       _desiredAutostartEnabled = -1
     if (_desiredTailscaleEnabled !== -1 && tailscaleEnabled === (_desiredTailscaleEnabled === 1))
       _desiredTailscaleEnabled = -1
+    // A controller that stops answering keeps the unit's start time, so a
+    // transient outage keeps the last snapshot on screen. A stop, restart, or
+    // another subscription is a different runtime and starts from nothing.
+    if (runtimeKey !== previousRuntime) forgetRuntime()
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
-      groups = []
-      configEntries = ({})
-      connectionLog = []
-      proxiesLoaded = false
+      traceTesting = false
+      _traceQueued = false
     }
     if (installed && apiAddress === "" && !apiInfoCmd.running) apiInfoCmd.launch(cli(["api-info"]))
     if (panelOpen && apiReady) {
@@ -277,11 +304,40 @@ Item {
     }
   }
 
+  function forgetRuntime() {
+    groups = []
+    configEntries = ({})
+    connectionLog = []
+    proxiesLoaded = false
+    mixedPort = 0
+    configTestResults = ({})
+    _singleTestName = ""
+    _groupTestNames = []
+  }
+
   function applyConfigs(raw) {
     var parsed = Model.parseConfigs(raw)
     mode = parsed.mode
     mixedPort = parsed.mixedPort > 0 ? parsed.mixedPort : parsed.port
     if (_desiredMode !== "" && mode === _desiredMode) _desiredMode = ""
+    runQueuedTrace()
+  }
+
+  function pendingDesired() {
+    return _desiredCoreRunning !== -1 || _desiredTunEnabled !== -1 || _desiredTunRedirect !== -1
+      || _desiredAutostartEnabled !== -1 || _desiredTailscaleEnabled !== -1 || _desiredMode !== ""
+  }
+
+  // Called when the settle deadline passes with a change still unconfirmed.
+  function abandonDesired() {
+    if (!pendingDesired()) return
+    _desiredCoreRunning = -1
+    _desiredTunEnabled = -1
+    _desiredTunRedirect = -1
+    _desiredAutostartEnabled = -1
+    _desiredTailscaleEnabled = -1
+    _desiredMode = ""
+    reportError(1, "mihomo did not reach the requested state")
   }
 
   // ---- writes -------------------------------------------------------------
@@ -557,18 +613,26 @@ Item {
 
   // Every read and write is one short-lived process; `launch` refuses to
   // overlap a call with itself, which is what keeps a slow curl from queueing
-  // a second copy behind it on the next tick.
+  // a second copy behind it on the next tick. `relaunch` is for a call whose
+  // in-flight copy is already obsolete: that copy's answer is dropped and one
+  // fresh call runs after it.
   component Cmd: Process {
     id: cmd
     property string outText: ""
     property string errText: ""
+    property var queued: null
     signal finished(int code, string out, string err)
 
     running: false
     command: []
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: cmd.outText = text }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: cmd.errText = text }
-    onExited: function(exitCode) { cmd.finished(exitCode, cmd.outText, cmd.errText) }
+    onExited: function(exitCode) {
+      if (cmd.queued === null) return cmd.finished(exitCode, cmd.outText, cmd.errText)
+      var next = cmd.queued
+      cmd.queued = null
+      Qt.callLater(function() { if (!cmd.launch(next)) cmd.finished(-1, "", "") })
+    }
 
     function launch(args) {
       if (running || !args || args.length === 0 || args[0] === "") return false
@@ -576,6 +640,13 @@ Item {
       errText = ""
       command = args
       running = true
+      return true
+    }
+
+    function relaunch(args) {
+      if (!running) return launch(args)
+      if (!args || args.length === 0 || args[0] === "") return false
+      queued = args
       return true
     }
   }
@@ -626,7 +697,7 @@ Item {
       root.groups = parsed.groups
       root.configEntries = parsed.configs
       root.proxiesLoaded = true
-      root.pendingConfig = ""
+      if (!apiActionCmd.running) root.confirmSelection()
     }
   }
 
@@ -706,7 +777,7 @@ Item {
         root.reportError(code, err)
       }
       else root.reportDone("")
-      delayedRefresh.restart()
+      root.settle()
     }
   }
 
@@ -716,7 +787,7 @@ Item {
       root.pendingSubscription = ""
       if (code !== 0) root.reportError(code, err)
       else root.reportDone("")
-      delayedRefresh.restart()
+      root.settle()
     }
   }
 
@@ -733,7 +804,7 @@ Item {
         root.reportError(code, err)
       }
       else root.reportDone("")
-      delayedRefresh.restart()
+      root.settle()
     }
   }
 
@@ -742,9 +813,10 @@ Item {
     onFinished: function(code, out, err) {
       // Only a selection changes the egress path, so only a selection is
       // allowed to spend the panel's one event-driven trace call.
+      // A selection stays pending until a read that began after it confirms it.
       var wasSelection = root.pendingConfig !== ""
-      root.pendingConfig = ""
       if (code !== 0) {
+        root.confirmSelection()
         root.reportError(12, err)
         root.noteApiFailure(code)
       }
@@ -753,8 +825,22 @@ Item {
         if (wasSelection) root.configChanged()
       }
       if (root.connectionsOpen) root.refreshConnections()
-      if (root.apiReady) proxiesCmd.launch(root.apiArgs("GET", "/proxies"))
+      if (root.apiReady) proxiesCmd.relaunch(root.apiArgs("GET", "/proxies"))
+      else root.confirmSelection()
     }
+  }
+
+  function confirmSelection() {
+    if (pendingConfig === "") return
+    pendingConfig = ""
+    runQueuedTrace()
+  }
+
+  // A write lands on disk before the state that reflects it, so re-read a beat
+  // after every action rather than trusting the command's own output.
+  function settle() {
+    delayedRefresh.restart()
+    if (pendingDesired()) settleTimer.restart()
   }
 
   // Record a fresh delay on the config entry too, so the parameters view sees
@@ -769,10 +855,19 @@ Item {
   }
 
   // `/traffic` is a long-lived stream, so it runs only while the panel is on
-  // screen and dies with it rather than costing a socket all session.
+  // screen and dies with it rather than costing a socket all session. A stream
+  // that ends while it is still wanted zeroes its stale rates and reconnects
+  // with a backoff.
+  readonly property bool trafficWanted: panelOpen && apiReady
+  onTrafficWantedChanged: {
+    trafficRetry.attempt = 0
+    trafficRetry.stop()
+    trafficProcess.running = trafficWanted
+  }
+
   Process {
     id: trafficProcess
-    running: root.panelOpen && root.apiReady && root.apiAddress !== ""
+    running: false
     // Not apiArgs(): that carries a --max-time, which would sever the stream
     // on a timer instead of keeping it open for as long as the panel is.
     command: ["curl", "-fsS", "-N", "-H", "Authorization: Bearer " + root.apiSecret,
@@ -781,9 +876,25 @@ Item {
       onRead: function(line) {
         var traffic = Model.parseTraffic(line)
         if (!traffic) return
+        trafficRetry.attempt = 0
         root.downloadRate = traffic.down
         root.uploadRate = traffic.up
       }
+    }
+    onExited: {
+      root.downloadRate = 0
+      root.uploadRate = 0
+      if (root.trafficWanted) trafficRetry.restart()
+    }
+  }
+
+  Timer {
+    id: trafficRetry
+    property int attempt: 0
+    interval: Math.min(30000, 1000 * Math.pow(2, attempt))
+    onTriggered: {
+      attempt += 1
+      if (root.trafficWanted) trafficProcess.running = true
     }
   }
 
@@ -805,11 +916,25 @@ Item {
     onTriggered: root.refreshConnections()
   }
 
-  // A write lands on disk before the state that reflects it, so re-read a beat
-  // after every action rather than trusting the command's own output.
   Timer {
     id: delayedRefresh
     interval: 500
+    onTriggered: {
+      root.refresh(true)
+      root.refreshLive(true)
+    }
+  }
+
+  Timer {
+    id: settleTimer
+    interval: root.settleTimeoutMs
+    onTriggered: root.abandonDesired()
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    running: settleTimer.running && root.pendingDesired()
     onTriggered: {
       root.refresh()
       root.refreshLive()

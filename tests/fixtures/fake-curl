@@ -3,20 +3,41 @@
 set -euo pipefail
 
 url=${!#}
-case $url in
-  */proxies/Fail/delay*)
-    sleep 0.15
-    exit 22
+method=GET
+data=
+while (($#)); do
+  case $1 in
+    -X) method=$2; shift 2 ;;
+    --data) data=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+selected="${FAKE_CONTROLLER_STATE:-/nonexistent}/selected"
+
+case $method:$url in
+  PUT:*/proxies/Proxy)
+    jq -r .name <<<"$data" >"$selected"
     ;;
-  */proxies/Pass/delay*)
-    sleep 0.15
-    printf '{"delay":87}\n'
+  GET:*/proxies)
+    # The answer is decided when the read starts, so a slow read reports the
+    # selection from before any write that lands while it is in flight.
+    now=$(cat "$selected" 2>/dev/null || printf Pass)
+    sleep 0.4
+    printf '{"proxies":{"Proxy":{"name":"Proxy","type":"Selector","now":"%s","all":["Pass","Fail"]},"Pass":{"name":"Pass"},"Fail":{"name":"Fail"}}}\n' "$now"
     ;;
-  */group/Proxy/delay*)
+  GET:*/configs) printf '{"mode":"rule","mixed-port":7890}\n' ;;
+  GET:*/rules) printf '{"rules":[]}\n' ;;
+  GET:*/connections) printf '{"connections":[]}\n' ;;
+  GET:*/traffic)
+    # A stream that ends on its own, the way it does when the core restarts.
+    printf '{"up":1,"down":2}\n'
+    sleep 0.3
+    ;;
+  GET:*/group/Proxy/delay*)
     sleep 0.2
     printf '{"Pass":91}\n'
     ;;
-  https://cloudflare.com/cdn-cgi/trace)
+  GET:https://cloudflare.com/cdn-cgi/trace)
     sleep 0.15
     exit 22
     ;;

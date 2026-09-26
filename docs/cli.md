@@ -141,6 +141,11 @@ leaving the machine with no tunnel until TUN is switched off and on. So Omihomo 
 config once with `tun.enable: false`, waits for the kernel to release the adapter, and then loads
 it for real.
 
+A reload only succeeds once every load was accepted, the controller answers, and a TUN-enabled
+runtime has its adapter up. Controller requests and adapter waits are bounded. When a reload fails
+partway, Omihomo loads the previous runtime from disk the same way and exits `12`; if that also
+fails, the message says the previous config could not be restored.
+
 `set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.
 An active subscription and the root permissions installed with the core are required.

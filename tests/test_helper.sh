@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS OMIHOMO_TEST_PUT_FAIL OMIHOMO_TEST_TUN_STUCK
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -14,7 +14,8 @@ setup_test() {
   export XDG_CONFIG_HOME="$TEST_ROOT/config"
   export PATH="$TEST_ROOT/bin:$REAL_PATH"
   export OMIHOMO_YQ=${OMIHOMO_TEST_YQ:-yq}
-  mkdir -p "$HOME" "$TEST_ROOT/bin" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"
+  export OMIHOMO_NET_DIR="$TEST_ROOT/net"
+  mkdir -p "$HOME" "$TEST_ROOT/bin" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$OMIHOMO_NET_DIR"
 
   cat >"$TEST_ROOT/bin/mihomo" <<'EOF'
 #!/usr/bin/env bash
@@ -74,8 +75,21 @@ if [[ $method == PUT ]]; then
   # A config load names a file the CLI deletes straight after, so the stub keeps
   # a numbered copy: curl-put-1.yaml is what the first load carried.
   path=$(jq -r '.path // empty' <<<"$data" 2>/dev/null || true)
+  count=$(wc -l <"$TEST_ROOT/curl-put.log")
   if [[ -n $path && -f $path ]]; then
-    cp "$path" "$TEST_ROOT/curl-put-$(wc -l <"$TEST_ROOT/curl-put.log").yaml"
+    cp "$path" "$TEST_ROOT/curl-put-$count.yaml"
+  fi
+  # OMIHOMO_TEST_PUT_FAIL names the loads the core rejects, by number.
+  [[ " ${OMIHOMO_TEST_PUT_FAIL:-} " == *" $count "* ]] && exit 22
+  # The core's TUN adapter follows the last accepted load, unless it is stuck.
+  if [[ -n $path && -f $path ]]; then
+    device=${OMIHOMO_TUN_DEVICE:-$(yq -r '.tun.device // "Meta"' "$path")}
+    if [[ $(yq -r '.tun.enable // false' "$path") == true ]]; then
+      touch "$OMIHOMO_NET_DIR/$device"
+    elif [[ ${OMIHOMO_TEST_TUN_STUCK:-no} != yes ]]; then
+      rm -f "$OMIHOMO_NET_DIR/$device"
+    fi
+    cp "$path" "$TEST_ROOT/live.yaml"
   fi
   exit 0
 fi
