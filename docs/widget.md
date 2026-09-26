@@ -51,7 +51,7 @@ Every view is 420px wide. The main popup carries, top to bottom:
 2. **Status readout** — the six fields settled in ticket #5: one status indicator with its
    detail on the hero, then `Group › Config`, throughput, uptime, and egress IP with latency.
    Egress is the only field that costs a network call, so it is fetched on panel open, on a
-   config or group change, and on a click — never on a timer. It always goes through the
+   config, group, or subscription change, and on a click — never on a timer. It always goes through the
    core's mixed port.
 3. **Configs** — the browsed group's configs in a capped list, with a filter, per-config and
    whole-group latency tests, and best-effort parameters. Only a `Selector` group can be

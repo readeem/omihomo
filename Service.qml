@@ -290,7 +290,8 @@ Item {
     // A controller that stops answering keeps the unit's start time, so a
     // transient outage keeps the last snapshot on screen. A stop, restart, or
     // another subscription is a different runtime and starts from nothing.
-    if (runtimeKey !== previousRuntime) forgetRuntime()
+    var runtimeChanged = runtimeKey !== previousRuntime
+    if (runtimeChanged) forgetRuntime()
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
@@ -298,9 +299,11 @@ Item {
       _traceQueued = false
     }
     if (installed && apiAddress === "" && !apiInfoCmd.running) apiInfoCmd.launch(cli(["api-info"]))
+    // Another runtime means another egress path, and reads already in flight
+    // describe the old one.
     if (panelOpen && apiReady) {
-      refreshLive()
-      if (!wasReady) refreshTrace()
+      refreshLive(runtimeChanged)
+      if (!wasReady || runtimeChanged) refreshTrace()
     }
   }
 

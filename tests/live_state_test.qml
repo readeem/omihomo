@@ -62,7 +62,10 @@ ShellRoot {
       return
     }
     if (stage === 2) {
-      if (trafficReads < 2) return
+      if (trafficReads < 2 || service.traceTesting) return
+      service.applyStatus(JSON.stringify({ state: "on", active_subscription: "Other",
+        primary_group: "Proxy", uptime: "Thu 2026-09-24 10:00:00 UTC" }))
+      check(service.traceTesting, true, "switching subscriptions checks the egress again")
       stage = 3
       finish()
     }
