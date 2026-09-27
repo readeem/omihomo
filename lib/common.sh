@@ -448,15 +448,6 @@ omi_await_tun_release() {
   return 1
 }
 
-omi_await_tun_device() {
-  local device=$1 attempt
-  for attempt in {1..40}; do
-    omi_tun_device_present "$device" && return 0
-    sleep 0.05
-  done
-  return 1
-}
-
 omi_put_runtime() {
   local path=$1 address secret payload
   address=$(omi_api_address)
@@ -466,31 +457,50 @@ omi_put_runtime() {
     -H 'Content-Type: application/json' --data "$payload" "http://${address}/configs?force=true" >/dev/null
 }
 
+# mihomo answers a load whose adapter then failed to start with 200, and the
+# old adapter can outlive it in sysfs, so only the controller can say whether
+# TUN is actually running.
+omi_tun_running() {
+  local address secret
+  address=$(omi_api_address)
+  secret=$(omi_api_secret)
+  [[ $("$OMIHOMO_CURL" -fsS --max-time 2 -H "Authorization: Bearer $secret" "http://${address}/configs" |
+    jq -r '.tun.enable // false') == true ]]
+}
+
+omi_tun_enabled() {
+  [[ $(omi_yq -r '.tun.enable // false' "$1") == true ]]
+}
+
+# Everything mihomo builds its adapter from. It keeps a live adapter untouched
+# through any reload that leaves these alone.
+omi_tun_signature() {
+  omi_yq -o=json -I=0 '{"tun": .tun, "fake-ip-range": .dns."fake-ip-range"}' "$1"
+}
+
 # mihomo cannot rebuild a TUN adapter over one that is still up. A reload that
-# changes the `tun` block answers 200, logs "configure tun interface: device or
+# changes a live adapter answers 200, logs "configure tun interface: device or
 # resource busy", and leaves the machine with no tunnel, which is the panel's
 # degraded state, and why switching TUN off and on by hand fixes it.
 #
-# So the same load happens twice, and the first pass has TUN disabled. That is
-# the manual repair, done in the order that never leaves a device behind. Only a
-# load that ends with a reachable controller and, when asked for, a live adapter
-# counts as done.
+# So only a load that changes a live adapter tears it down, with a first pass
+# that has TUN disabled: the manual repair, done in the order that never leaves
+# a device behind. Every other load, a rule change included, is one pass that
+# mihomo applies without touching the adapter. `previous` is the config the
+# core holds now. Only a load that ends with a reachable controller and, when
+# asked for, a running TUN counts as done.
 omi_load_runtime() {
-  local path=$1 live_device staged status=0
-  if [[ $(omi_yq -r '.tun.enable // false' "$path") == true ]]; then
-    live_device=$(omi_tun_device_name)
+  local path=$1 previous=$2 staged status=0
+  if [[ -f $previous ]] && omi_tun_enabled "$previous" && omi_tun_enabled "$path" &&
+    [[ $(omi_tun_signature "$path") != "$(omi_tun_signature "$previous")" ]]; then
     staged=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
     omi_yq '.tun.enable = false' "$path" >"$staged" &&
       omi_put_runtime "$staged" &&
-      omi_await_tun_release "$live_device" || status=1
+      omi_await_tun_release "$(omi_tun_device_name "$previous")" || status=1
     rm -f "$staged"
     ((status == 0)) || return 1
-    omi_put_runtime "$path" &&
-      omi_api_reachable &&
-      omi_await_tun_device "$(omi_tun_device_name "$path")"
-  else
-    omi_put_runtime "$path" && omi_api_reachable
   fi
+  omi_put_runtime "$path" && omi_api_reachable && { ! omi_tun_enabled "$path" || omi_tun_running; }
 }
 
 # A load that fails halfway can leave the core on a config nobody asked for,
@@ -503,9 +513,9 @@ omi_reload_runtime() {
     omi_error "mihomo controller is unreachable" 12
     return 12
   fi
-  omi_load_runtime "$runtime_path" && return 0
+  omi_load_runtime "$runtime_path" "$OMIHOMO_RUNTIME_FILE" && return 0
   if [[ $runtime_path != "$OMIHOMO_RUNTIME_FILE" && -f $OMIHOMO_RUNTIME_FILE ]] &&
-    omi_load_runtime "$OMIHOMO_RUNTIME_FILE"; then
+    omi_load_runtime "$OMIHOMO_RUNTIME_FILE" "$runtime_path"; then
     omi_error "mihomo rejected the runtime config" 12
     return 12
   fi

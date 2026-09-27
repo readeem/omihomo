@@ -823,23 +823,42 @@ test_a_subscription_keeps_its_own_dns_and_inbound() {
   assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["223.5.5.5"]'
 }
 
-# mihomo answers a reload that rebuilds a live TUN adapter with 200 and then
-# logs "device or resource busy", leaving the machine with no tunnel. Loading
-# the config once with TUN off first is what makes the second load a fresh one.
-test_a_reload_tears_the_old_tun_adapter_down_first() {
-  setup_test
-  trap teardown_test RETURN
+# A running core with TUN up.
+start_tun_core() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_PERMISSIONS=yes
   run_cli sub add https://example.test/subscription/work
   run_cli set tun on
+  touch "$OMIHOMO_NET_DIR/omihomo"
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
+}
 
-  run_cli sub activate work
+# mihomo answers a reload that rebuilds a live TUN adapter with 200 and then
+# logs "device or resource busy", leaving the machine with no tunnel. Loading
+# the config once with TUN off first is what makes the second load a fresh one.
+test_a_tun_change_tears_the_old_adapter_down_first() {
+  setup_test
+  trap teardown_test RETURN
+  start_tun_core
+
+  run_cli set tun-redirect off
 
   assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-1.yaml")" false
   assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-2.yaml")" true
   [[ ! -e $TEST_ROOT/curl-put-3.yaml ]] || fail "a reload cost more than two config loads"
+}
+
+# mihomo keeps a live adapter through a reload that leaves its config alone, so
+# a rule change must not risk rebuilding it.
+test_a_rule_change_keeps_the_live_tun_adapter() {
+  setup_test
+  trap teardown_test RETURN
+  start_tun_core
+
+  run_cli rule add DOMAIN-SUFFIX example.com DIRECT
+
+  assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-1.yaml")" true
+  [[ ! -e $TEST_ROOT/curl-put-2.yaml ]] || fail "a rule change reloaded the config twice"
 }
 
 # Nothing is torn down when there is no adapter to tear down.
@@ -856,16 +875,6 @@ test_a_reload_without_tun_is_a_single_config_load() {
   [[ ! -e $TEST_ROOT/curl-put-2.yaml ]] || fail "a reload with TUN off loaded the config twice"
 }
 
-# A running core with TUN up, and a mode change for it to reload.
-start_tun_core() {
-  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  export OMIHOMO_TEST_PERMISSIONS=yes
-  run_cli sub add https://example.test/subscription/work
-  run_cli set tun on
-  touch "$OMIHOMO_NET_DIR/omihomo"
-  export OMIHOMO_TEST_UNIT_ACTIVE=yes
-}
-
 # A failed load must not leave the core on its TUN-less first pass: the runtime
 # on disk is the last one that worked, and it goes back in.
 test_a_failed_reload_restores_the_previous_runtime() {
@@ -876,12 +885,12 @@ test_a_failed_reload_restores_the_previous_runtime() {
     export OMIHOMO_TEST_PUT_FAIL=$failed_load
 
     set +e
-    run_cli set mode direct 2>/dev/null
+    run_cli set tun-redirect off 2>/dev/null
     status=$?
     set -e
 
     assert_eq "$status" 12
-    assert_eq "$(yq -r '.mode' "$XDG_DATA_HOME/omihomo/runtime.yaml")" rule
+    assert_eq "$(yq -r '.tun."auto-redirect"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" true
     cmp -s "$TEST_ROOT/live.yaml" "$XDG_DATA_HOME/omihomo/runtime.yaml" || fail "load $failed_load failing left the core on another config"
     [[ -e $OMIHOMO_NET_DIR/omihomo ]] || fail "load $failed_load failing left TUN down"
     teardown_test
@@ -896,13 +905,31 @@ test_a_tun_adapter_that_never_goes_away_fails_the_reload() {
   local stderr="$TEST_ROOT/stderr" status
 
   set +e
-  run_cli set mode direct 2>"$stderr"
+  run_cli set tun-redirect off 2>"$stderr"
   status=$?
   set -e
 
   assert_eq "$status" 12
   assert_file_contains "$stderr" "could not be restored"
-  assert_eq "$(yq -r '.mode' "$XDG_DATA_HOME/omihomo/runtime.yaml")" rule
+  assert_eq "$(yq -r '.tun."auto-redirect"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" true
+}
+
+# The core answers a load whose adapter failed to start with 200, and the old
+# device can linger, so an adapter the controller does not report fails it.
+test_a_tun_that_fails_to_start_fails_the_reload() {
+  setup_test
+  trap teardown_test RETURN
+  start_tun_core
+  export OMIHOMO_TEST_TUN_FAIL=yes
+  local status
+
+  set +e
+  run_cli rule add DOMAIN-SUFFIX example.com DIRECT 2>/dev/null
+  status=$?
+  set -e
+
+  assert_eq "$status" 12
+  assert_eq "$(run_cli rule list)" '[]'
 }
 
 test_tun_routing_excludes_local_networks_by_default() {
@@ -1277,10 +1304,12 @@ tests=(
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_a_subscription_without_dns_or_an_inbound_gains_both
   test_a_subscription_keeps_its_own_dns_and_inbound
-  test_a_reload_tears_the_old_tun_adapter_down_first
+  test_a_tun_change_tears_the_old_adapter_down_first
+  test_a_rule_change_keeps_the_live_tun_adapter
   test_a_reload_without_tun_is_a_single_config_load
   test_a_failed_reload_restores_the_previous_runtime
   test_a_tun_adapter_that_never_goes_away_fails_the_reload
+  test_a_tun_that_fails_to_start_fails_the_reload
   test_tun_routing_excludes_local_networks_by_default
   test_tun_device_is_named_after_omihomo
   test_tun_redirect_moves_the_stack_with_it

@@ -137,16 +137,19 @@ An active core receives `PUT /configs?force=true` before Omihomo replaces durabl
 conversion, merge, or reload keeps the previous cache, metadata, and runtime. The systemd unit is
 not restarted. Every mutation of the state files holds the one shared `flock`.
 
-A reload of a TUN-enabled runtime is two loads, not one. Mihomo answers a reload that rebuilds a
-live TUN adapter with `200` and then logs `configure tun interface: device or resource busy`,
-leaving the machine with no tunnel until TUN is switched off and on. So Omihomo loads the same
-config once with `tun.enable: false`, waits for the kernel to release the adapter, and then loads
-it for real.
+Mihomo keeps a live TUN adapter through any reload that leaves its `tun` block and
+`dns.fake-ip-range` alone, so rule, mode, and group changes are one load that never touches the
+tunnel. A reload that does change a live adapter is two loads. Mihomo answers a reload that
+rebuilds a live TUN adapter with `200` and then logs `configure tun interface: device or resource
+busy`, leaving the machine with no tunnel until TUN is switched off and on. So Omihomo loads the
+same config once with `tun.enable: false`, waits for the kernel to release the adapter, and then
+loads it for real.
 
-A reload only succeeds once every load was accepted, the controller answers, and a TUN-enabled
-runtime has its adapter up. Controller requests and adapter waits are bounded. When a reload fails
-partway, Omihomo loads the previous runtime from disk the same way and exits `12`; if that also
-fails, the message says the previous config could not be restored.
+A reload only succeeds once every load was accepted, the controller answers, and for a
+TUN-enabled runtime the controller reports TUN running. The adapter device alone proves nothing:
+the old one can outlive a rebuild that failed. Controller requests and adapter waits are bounded.
+When a reload fails partway, Omihomo loads the previous runtime from disk the same way and exits
+`12`; if that also fails, the message says the previous config could not be restored.
 
 `set tun on` is unprivileged. It updates the runtime config and hot-reloads a running core. If the
 core is stopped, the same command starts its user unit after preparing the TUN-enabled runtime.

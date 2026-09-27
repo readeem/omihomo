@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS OMIHOMO_TEST_PUT_FAIL OMIHOMO_TEST_TUN_STUCK
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS OMIHOMO_TEST_PUT_FAIL OMIHOMO_TEST_TUN_STUCK OMIHOMO_TEST_TUN_FAIL
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -82,14 +82,17 @@ if [[ $method == PUT ]]; then
   # OMIHOMO_TEST_PUT_FAIL names the loads the core rejects, by number.
   [[ " ${OMIHOMO_TEST_PUT_FAIL:-} " == *" $count "* ]] && exit 22
   # The core's TUN adapter follows the last accepted load, unless it is stuck.
+  # live.yaml is what the core runs: with OMIHOMO_TEST_TUN_FAIL the adapter
+  # fails to start, and the old device lingers anyway.
   if [[ -n $path && -f $path ]]; then
     device=${OMIHOMO_TUN_DEVICE:-$(yq -r '.tun.device // "Meta"' "$path")}
+    cp "$path" "$TEST_ROOT/live.yaml"
     if [[ $(yq -r '.tun.enable // false' "$path") == true ]]; then
       touch "$OMIHOMO_NET_DIR/$device"
+      [[ ${OMIHOMO_TEST_TUN_FAIL:-no} == yes ]] && yq -i '.tun.enable = false' "$TEST_ROOT/live.yaml"
     elif [[ ${OMIHOMO_TEST_TUN_STUCK:-no} != yes ]]; then
       rm -f "$OMIHOMO_NET_DIR/$device"
     fi
-    cp "$path" "$TEST_ROOT/live.yaml"
   fi
   exit 0
 fi
@@ -128,6 +131,12 @@ if [[ $url == *subscription* ]]; then
       printf 'profile-title: %s\r\n' "${OMIHOMO_TEST_TITLE:-${url##*/}}" >>"$headers"
     fi
   fi
+  exit 0
+fi
+if [[ $url == http://127.0.0.1*/configs ]]; then
+  enabled=false
+  [[ -f $TEST_ROOT/live.yaml ]] && enabled=$(yq -r '.tun.enable // false' "$TEST_ROOT/live.yaml")
+  printf '{"tun":{"enable":%s}}\n' "$enabled"
   exit 0
 fi
 if [[ $url == *127.0.0.1* ]]; then
