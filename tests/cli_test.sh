@@ -16,6 +16,15 @@ test_status_reports_not_installed() {
   [[ $(jq -e 'has("ip") and has("latency") and has("download") and has("upload") and has("config") and has("uptime") and has("permissions_ok") and has("tailscale_enabled") and has("tailscale_present")' <<<"$output") == true ]] || fail "status shape is missing fields"
 }
 
+test_cli_runs_through_the_installed_symlink() {
+  setup_test
+  trap teardown_test RETURN
+
+  mkdir -p "$TEST_ROOT/links"
+  ln -s "$REPO_ROOT/bin/omihomo" "$TEST_ROOT/links/omihomo"
+  assert_eq "$("$TEST_ROOT/links/omihomo" rule list)" "[]"
+}
+
 test_subscription_add_and_list_are_flat_json() {
   setup_test
   trap teardown_test RETURN
@@ -1257,6 +1266,7 @@ test_uninstall_can_keep_state() {
 
 tests=(
   test_status_reports_not_installed
+  test_cli_runs_through_the_installed_symlink
   test_subscription_add_and_list_are_flat_json
   test_first_subscription_added_becomes_active
   test_subscription_fetch_asks_as_a_clash_client

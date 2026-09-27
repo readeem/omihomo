@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}
 
 pretty=0
 arguments=()
