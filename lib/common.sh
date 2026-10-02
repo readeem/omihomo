@@ -124,6 +124,19 @@ omi_default_nameservers_yaml() {
   done
 }
 
+# NetworkManager decides the machine is online by fetching its connectivity URI
+# over a socket bound to the physical interface, outside the tunnel. A fake-ip
+# answer from `dns-hijack` only routes inside the tunnel, so the probe times out
+# and the desktop reports limited connectivity. Its host has to resolve for real.
+omi_connectivity_check_host() {
+  local uri
+  command -v NetworkManager >/dev/null 2>&1 || return 0
+  uri=$(NetworkManager --print-config 2>/dev/null |
+    awk -F= '/^\[/ { section = ($0 == "[connectivity]") } section && $1 == "uri" { print $2; exit }')
+  uri=${uri#*://}
+  printf '%s\n' "${uri%%[/:]*}"
+}
+
 omi_tailscale_nameserver_policy_yaml() {
   local indent
   printf -v indent '%*s' "${1:-0}" ''
@@ -565,6 +578,7 @@ omi_merge_runtime() {
   OMIHOMO_TAILSCALE_PORT=$OMIHOMO_TAILSCALE_PORT \
   OMIHOMO_MIXED_PORT=$OMIHOMO_MIXED_PORT \
   OMIHOMO_DEFAULT_NAMESERVERS_YAML=$(omi_default_nameservers_yaml) \
+  OMIHOMO_CONNECTIVITY_HOST=$(omi_connectivity_check_host) \
     omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
     select(fileIndex == 1) as $override |
@@ -585,7 +599,11 @@ omi_merge_runtime() {
     (($merged.rules // []) | map(select(. as $rule | ($filter | contains([$rule]) | not)))) as $base_rules |
     ($base_rules + $append) as $rest |
     (($merged."proxy-groups" // []) | map(select(.name != "GLOBAL"))) as $groups |
+    strenv(OMIHOMO_CONNECTIVITY_HOST) as $connectivity |
     $merged |
+    .dns."fake-ip-filter" = (((.dns."fake-ip-filter" // []) | map(select(. != $connectivity))) +
+      ([$connectivity] | map(select(. != "")))) |
+    del(.dns."fake-ip-filter" | select(length == 0)) |
     .rules = ($prepend + ([
         "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
         "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
