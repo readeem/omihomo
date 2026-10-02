@@ -132,6 +132,11 @@ cosmetic: TUN answers the machine's DNS through `dns-hijack`, so a runtime with 
 cannot resolve even its own proxy servers, and a subscription carrying no inbound is unreachable
 with TUN off. Raw subscriptions carry neither, so they get both.
 
+The host of NetworkManager's connectivity check is always appended to `dns.fake-ip-filter`.
+NetworkManager sends that probe over a socket bound to the physical interface, outside the
+tunnel, where a fake-ip address routes nowhere. Without the exemption the desktop reports limited
+connectivity while traffic flows normally.
+
 Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
 An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed
 conversion, merge, or reload keeps the previous cache, metadata, and runtime. The systemd unit is

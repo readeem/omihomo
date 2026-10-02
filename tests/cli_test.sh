@@ -832,6 +832,31 @@ test_a_subscription_keeps_its_own_dns_and_inbound() {
   assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["223.5.5.5"]'
 }
 
+# NetworkManager probes connectivity outside the tunnel, where a fake-ip answer
+# routes nowhere, so its host has to resolve for real.
+test_the_connectivity_check_host_bypasses_fake_ip() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CONNECTIVITY_URI=http://check.example.test:8080/nm-check.txt
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ndns:\n  enhanced-mode: fake-ip\n  fake-ip-filter:\n    - \'*.lan\''
+
+  run_cli sub add https://example.test/subscription/work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -o=json -I=0 '.dns."fake-ip-filter"' "$runtime")" '["*.lan","check.example.test"]'
+}
+
+test_no_connectivity_check_leaves_the_fake_ip_filter_alone() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CONNECTIVITY_URI=
+  export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+
+  run_cli sub add https://example.test/subscription/work
+  assert_eq "$(yq -r '.dns | has("fake-ip-filter")' "$XDG_DATA_HOME/omihomo/runtime.yaml")" false
+}
+
 # A running core with TUN up.
 start_tun_core() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
@@ -1314,6 +1339,8 @@ tests=(
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_a_subscription_without_dns_or_an_inbound_gains_both
   test_a_subscription_keeps_its_own_dns_and_inbound
+  test_the_connectivity_check_host_bypasses_fake_ip
+  test_no_connectivity_check_leaves_the_fake_ip_filter_alone
   test_a_tun_change_tears_the_old_adapter_down_first
   test_a_rule_change_keeps_the_live_tun_adapter
   test_a_reload_without_tun_is_a_single_config_load
