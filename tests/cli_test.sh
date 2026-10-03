@@ -875,7 +875,7 @@ test_a_tun_change_tears_the_old_adapter_down_first() {
   trap teardown_test RETURN
   start_tun_core
 
-  run_cli set tun-redirect off
+  run_cli set tun-redirect on
 
   assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-1.yaml")" false
   assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/curl-put-2.yaml")" true
@@ -919,12 +919,12 @@ test_a_failed_reload_restores_the_previous_runtime() {
     export OMIHOMO_TEST_PUT_FAIL=$failed_load
 
     set +e
-    run_cli set tun-redirect off 2>/dev/null
+    run_cli set tun-redirect on 2>/dev/null
     status=$?
     set -e
 
     assert_eq "$status" 12
-    assert_eq "$(yq -r '.tun."auto-redirect"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" true
+    assert_eq "$(yq -r '.tun."auto-redirect"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" false
     cmp -s "$TEST_ROOT/live.yaml" "$XDG_DATA_HOME/omihomo/runtime.yaml" || fail "load $failed_load failing left the core on another config"
     [[ -e $OMIHOMO_NET_DIR/omihomo ]] || fail "load $failed_load failing left TUN down"
     teardown_test
@@ -939,13 +939,13 @@ test_a_tun_adapter_that_never_goes_away_fails_the_reload() {
   local stderr="$TEST_ROOT/stderr" status
 
   set +e
-  run_cli set tun-redirect off 2>"$stderr"
+  run_cli set tun-redirect on 2>"$stderr"
   status=$?
   set -e
 
   assert_eq "$status" 12
   assert_file_contains "$stderr" "could not be restored"
-  assert_eq "$(yq -r '.tun."auto-redirect"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" true
+  assert_eq "$(yq -r '.tun."auto-redirect"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" false
 }
 
 # The core answers a load whose adapter failed to start with 200, and the old
@@ -1021,18 +1021,18 @@ test_tun_redirect_moves_the_stack_with_it() {
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
 
-  assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" true
-  assert_eq "$(yq -r '.config.tun.stack' "$override")" mixed
-
-  run_cli set tun-redirect off
   assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" false
   assert_eq "$(yq -r '.config.tun.stack' "$override")" gvisor
-  assert_eq "$(yq -r '.tun."auto-redirect"' "$runtime")" false
-  assert_eq "$(yq -r '.tun.stack' "$runtime")" gvisor
 
   run_cli set tun-redirect on
   assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" true
   assert_eq "$(yq -r '.config.tun.stack' "$override")" mixed
+  assert_eq "$(yq -r '.tun."auto-redirect"' "$runtime")" true
+  assert_eq "$(yq -r '.tun.stack' "$runtime")" mixed
+
+  run_cli set tun-redirect off
+  assert_eq "$(yq -r '.config.tun."auto-redirect"' "$override")" false
+  assert_eq "$(yq -r '.config.tun.stack' "$override")" gvisor
 
   local status
   set +e
@@ -1042,21 +1042,19 @@ test_tun_redirect_moves_the_stack_with_it() {
   assert_eq "$status" 1
 }
 
-# `status` reads the flag off the override, where `false` is the value it exists
-# to report — so it cannot go through yq's `//`, which treats false as absent.
 test_status_reports_tun_redirect_state() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   run_cli sub add https://example.test/subscription/work
 
-  assert_json_field "$(run_cli status)" tun_redirect true
-  run_cli set tun-redirect off
   assert_eq "$(run_cli status | jq -r '.tun_redirect')" false
+  run_cli set tun-redirect on
+  assert_json_field "$(run_cli status)" tun_redirect true
 }
 
-# A redirect that cannot claim its nftables table is repairable from the panel,
-# so the detail names that switch instead of guessing at what holds the table.
+# A redirect that cannot install its nftables rules is repairable from the
+# panel, so the detail names that switch instead of guessing at the cause.
 test_status_points_a_blocked_redirect_at_its_repair() {
   setup_test
   trap teardown_test RETURN
@@ -1104,6 +1102,23 @@ test_an_override_without_exclusions_gains_them() {
   assert_file_contains "$runtime" '192.168.0.0/16'
 }
 
+# sing-tun cannot write a range ending at the last address into nftables, so an
+# override carrying the old pair has it replaced in place.
+test_exclusions_reaching_the_last_address_are_replaced() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  yq -i '.config.tun."route-exclude-address" = ["10.0.0.0/8", "224.0.0.0/3", "ff00::/8"]' "$override"
+
+  run_cli core start
+
+  assert_eq "$(yq -o=json -I=0 '.config.tun."route-exclude-address"' "$override")" \
+    '["10.0.0.0/8","224.0.0.0/4","240.0.0.0/5","ff00::/9"]'
+  assert_file_contains "$XDG_DATA_HOME/omihomo/runtime.yaml" '240.0.0.0/5'
+}
+
 # Turning the integration on has to produce both halves: the loopback listener
 # and rules mihomo needs, and the drop-in that points tailscaled at them.
 test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin() {
@@ -1134,6 +1149,33 @@ test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin() {
     fail "turning the integration off must remove its rules"
   fi
   assert_file_contains "$TEST_ROOT/privileged.log" 'tailscale off 7899'
+}
+
+# Tailnet traffic reaches the proxy only if TUN's ip rules beat Tailscale's
+# table 52, while MagicDNS stays with the local tailscaled.
+test_tailnet_proxy_routes_the_tailnet_through_global() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TAILSCALED_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies:\n  - name: Tokyo\n    type: direct\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [Tokyo]'
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+
+  run_cli set tailscale on
+  run_cli set tailnet-proxy on
+  assert_eq "$(yq -r '.rules[0]' "$runtime")" 'IP-CIDR,100.64.0.0/10,GLOBAL,no-resolve'
+  assert_eq "$(yq -r '.rules[1]' "$runtime")" 'DOMAIN-SUFFIX,ts.net,GLOBAL'
+  assert_eq "$(yq -r '.tun."route-exclude-address" | contains(["100.64.0.0/10"])' "$runtime")" false
+  assert_eq "$(yq -r '.tun."route-exclude-address" | contains(["100.100.100.100/32"])' "$runtime")" true
+  assert_eq "$(yq -r '.tun."iproute2-rule-index"' "$runtime")" 5260
+  assert_json_field "$(run_cli status)" tailnet_proxy true
+
+  run_cli set tailnet-proxy off
+  assert_eq "$(yq -r '.rules[0]' "$runtime")" 'IP-CIDR,100.64.0.0/10,DIRECT,no-resolve'
+  assert_eq "$(yq -r '.tun."route-exclude-address" | contains(["100.64.0.0/10"])' "$runtime")" true
+  assert_eq "$(yq -r '.tun."iproute2-rule-index" // "absent"' "$runtime")" absent
 }
 
 # The toggle only makes sense against a tailscaled that exists, so it says so
@@ -1354,7 +1396,9 @@ tests=(
   test_status_points_a_blocked_redirect_at_its_repair
   test_an_override_without_exclusions_gains_them
   test_an_emptied_exclusion_list_is_left_alone
+  test_exclusions_reaching_the_last_address_are_replaced
   test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin
+  test_tailnet_proxy_routes_the_tailnet_through_global
   test_tailscale_requires_tailscaled
   test_status_reports_tailscale_presence_and_state
   test_an_override_without_tailscale_coexistence_gains_it

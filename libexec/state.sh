@@ -6,24 +6,23 @@ OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 source "$OMIHOMO_ROOT/lib/common.sh"
 
 status_json() {
-  local state=$1 detail=${2:-} active primary tun autostart permissions uptime tailscale tailscale_present redirect
+  local state=$1 detail=${2:-} active primary tun autostart permissions uptime tailscale tailscale_present redirect tailnet
   active=$(omi_active_name)
   primary=
   tun=false
-  redirect=true
+  redirect=false
   autostart=false
   permissions=false
   tailscale=false
+  tailnet=false
   tailscale_present=false
   uptime=
   if [[ -f $OMIHOMO_OVERRIDE_FILE ]] && omi_yq_available; then
     primary=$(omi_yq -r '.omihomo."primary-group" // ""' "$OMIHOMO_OVERRIDE_FILE")
     tun=$(omi_yq -r '.config.tun.enable // false' "$OMIHOMO_OVERRIDE_FILE")
-    # Not `// true`: yq's alternative operator treats `false` as absent, which
-    # is exactly the value this key is read for.
-    redirect=$(omi_yq -r '.config.tun."auto-redirect"' "$OMIHOMO_OVERRIDE_FILE")
-    [[ $redirect == true || $redirect == false ]] || redirect=true
+    redirect=$(omi_yq -r '.config.tun."auto-redirect" // false' "$OMIHOMO_OVERRIDE_FILE")
     tailscale=$(omi_yq -r '.omihomo.tailscale // false' "$OMIHOMO_OVERRIDE_FILE")
+    tailnet=$(omi_yq -r '.omihomo."tailnet-proxy" // false' "$OMIHOMO_OVERRIDE_FILE")
   fi
   # Presence is the panel's cue to show the row at all, and it is the machine's
   # to answer rather than the override's.
@@ -39,8 +38,8 @@ status_json() {
   if [[ $state != not-installed && $state != stopped ]]; then
     uptime=$("$OMIHOMO_SYSTEMCTL" --user show "$OMIHOMO_UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)
   fi
-  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson redirect "$redirect" --argjson autostart "$autostart" --argjson permissions "$permissions" --argjson tailscale "$tailscale" --argjson tailscale_present "$tailscale_present" \
-    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, tun_redirect: $redirect, autostart_enabled: $autostart, permissions_ok: $permissions, tailscale_enabled: $tailscale, tailscale_present: $tailscale_present}'
+  jq -cn --arg state "$state" --arg detail "$detail" --arg active "$active" --arg primary "$primary" --arg uptime "$uptime" --argjson tun "$tun" --argjson redirect "$redirect" --argjson autostart "$autostart" --argjson permissions "$permissions" --argjson tailscale "$tailscale" --argjson tailscale_present "$tailscale_present" --argjson tailnet "$tailnet" \
+    '{state: $state, status: $state, detail: (if $detail == "" then null else $detail end), ip: null, latency: null, download: null, upload: null, config: null, uptime: (if $uptime == "" then null else $uptime end), active_subscription: (if $active == "" then null else $active end), primary_group: (if $primary == "" then null else $primary end), tun_enabled: $tun, tun_redirect: $redirect, autostart_enabled: $autostart, permissions_ok: $permissions, tailscale_enabled: $tailscale, tailscale_present: $tailscale_present, tailnet_proxy: $tailnet}'
 }
 
 # mihomo logs why the TUN adapter refused to come up and then keeps serving the
@@ -63,12 +62,10 @@ tun_failure_reason() {
   printf '%s\n' "${line:0:160}"
 }
 
-# An `auto redirect:` failure is sing-tun refusing to create the nftables table
-# the fast pairing needs, because something on this machine already holds one.
-# What that is cannot be read from here without root, and it is not Omihomo's to
-# take away in any case — but it is also not needed: `set tun-redirect off`
-# switches to the gVisor stack, which tunnels without any firewall rules. So the
-# detail names the repair rather than guessing at the culprit.
+# An `auto redirect:` failure is sing-tun failing to install the nftables rules
+# the fast pairing needs. Why cannot be read from here without root, but it does
+# not need to be: `set tun-redirect off` switches to the gVisor stack, which
+# tunnels without any firewall rules. So the detail names the repair.
 tun_failure_detail() {
   local reason
   reason=$(tun_failure_reason)

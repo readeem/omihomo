@@ -113,7 +113,7 @@ Panel {
     }
     if (view === "manage") {
       rows.push({ s: "autostart" })
-      if (omihomo.tailscalePresent) rows.push({ s: "tailscale" })
+      if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
       rows.push({ s: "tunRedirect" })
       if (!omihomo.permissionsOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
@@ -210,6 +210,8 @@ Panel {
       omihomo.toggleAutostart()
     } else if (cursorRow.s === "tailscale") {
       omihomo.toggleTailscale()
+    } else if (cursorRow.s === "tailnetProxy") {
+      omihomo.toggleTailnetProxy()
     } else if (cursorRow.s === "tunRedirect") {
       omihomo.toggleTunRedirect()
     } else if (cursorRow.s === "ruleType") {
@@ -234,6 +236,7 @@ Panel {
     case "manage": openManage(); break
     case "autostart": omihomo.toggleAutostart(); break
     case "tailscale": omihomo.toggleTailscale(); break
+    case "tailnetProxy": omihomo.toggleTailnetProxy(); break
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "repair": omihomo.repairCore(); break
     case "sub": activateSubscriptionAt(cursorRow.i); break
@@ -285,6 +288,7 @@ Panel {
       else if (key === "R") omihomo.repairCore()
       else if (lower === "b") omihomo.toggleAutostart()
       else if (key === "T") omihomo.toggleTailscale()
+      else if (key === "P") omihomo.toggleTailnetProxy()
       else if (key === "A") omihomo.toggleTunRedirect()
       return
     }
@@ -837,6 +841,17 @@ Panel {
             onActivated: omihomo.toggleTailscale()
           }
 
+          ActionRow {
+            width: parent.width
+            visible: omihomo.tailscalePresent
+            section: "tailnetProxy"
+            title: "Tailnet via proxy"
+            subtitle: "Send tailnet addresses to the proxy server instead of the local Tailscale. The server has to be on the tailnet."
+            trailing: omihomo.tailnetProxyActive ? "on" : "off"
+            current: omihomo.tailnetProxyActive
+            onActivated: omihomo.toggleTailnetProxy()
+          }
+
           // The repair for a TUN that will not start on this machine. It is
           // urgent only while the core is actually degraded by it; the rest of
           // the time it is an ordinary speed-versus-compatibility switch.
@@ -878,7 +893,7 @@ Panel {
         Text {
           width: parent.width
           text: "enter activate · b autostart"
-            + (omihomo.tailscalePresent ? " · T tailscale" : "")
+            + (omihomo.tailscalePresent ? " · T tailscale · P tailnet" : "")
             + " · A acceleration"
             + (omihomo.permissionsOk ? "" : " · R repair")
             + " · esc back"

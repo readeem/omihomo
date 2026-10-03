@@ -180,6 +180,21 @@ set_tailscale() {
   fi
 }
 
+# Only the runtime changes: tailscaled keeps running and keeps the tailnet's
+# MagicDNS, while the tailnet's traffic goes to a proxy server that is itself on
+# the tailnet.
+set_tailnet_proxy() {
+  local state=${1:-}
+  [[ $state == on || $state == off ]] || omi_error "tailnet-proxy expects on or off" 1
+  omi_init_layout
+  if [[ $state == on ]]; then
+    omi_tailscale_present || omi_error "tailscaled is not installed" 15
+    override_candidate '.omihomo."tailnet-proxy" = true'
+  else
+    override_candidate '.omihomo."tailnet-proxy" = false'
+  fi
+}
+
 set_group() {
   local group=${1:-}
   [[ -n $group ]] || omi_error "group name is required" 1
@@ -204,6 +219,7 @@ case ${1:-} in
       tun) omi_with_lock set_tun "${3:-}" ;;
       tun-redirect) omi_with_lock set_tun_redirect "${3:-}" ;;
       tailscale) omi_with_lock set_tailscale "${3:-}" ;;
+      tailnet-proxy) omi_with_lock set_tailnet_proxy "${3:-}" ;;
       group) omi_with_lock set_group "${3:-}" ;;
       *) omi_error "unknown set command" 1 ;;
     esac

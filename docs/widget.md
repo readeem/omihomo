@@ -101,7 +101,7 @@ opens the view with the form already up.
 
 The **manage view** holds the operations that outlive a session: autostart, TUN acceleration,
 permission repair, and uninstall. Acceleration is `omihomo set tun-redirect`, which moves
-`auto-redirect` and the TUN stack together; turning it off is the repair for a core that reports
+`auto-redirect` and the TUN stack together. It is off by default; turning it off is the repair for a core that reports
 `TUN acceleration cannot start on this machine`, and its cell is coloured while that is the
 reason the core is degraded. Autostart is
 `systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
@@ -142,6 +142,7 @@ Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole
 | `R` | Repair permissions |
 | `b` | Toggle autostart (manage view) |
 | `T` | Toggle the Tailscale integration (manage view, when tailscaled is installed) |
+| `P` | Toggle routing the tailnet through the proxy (manage view, when tailscaled is installed) |
 | `i` | Install the core (only when it is missing) |
 | `esc` | Close the form, filter, or view; otherwise close the panel |
 

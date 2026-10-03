@@ -13,7 +13,8 @@ test("status parses the CLI's stable object", () => {
     ip: null, latency: null, download: null, upload: null, config: null,
     uptime: "Tue 2026-08-18 13:06:48 MSK", active_subscription: "home",
     primary_group: "Proxy", tun_enabled: true, autostart_enabled: true,
-    permissions_ok: true, tailscale_enabled: true, tailscale_present: true
+    permissions_ok: true, tailscale_enabled: true, tailscale_present: true,
+    tailnet_proxy: true
   }))
   assert.equal(status.state, "degraded")
   assert.equal(status.detail, "tun device is missing")
@@ -24,6 +25,7 @@ test("status parses the CLI's stable object", () => {
   assert.equal(status.permissionsOk, true)
   assert.equal(status.tailscaleEnabled, true)
   assert.equal(status.tailscalePresent, true)
+  assert.equal(status.tailnetProxy, true)
   assert.ok(status.startedMs > 0)
 })
 

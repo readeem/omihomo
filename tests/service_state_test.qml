@@ -99,8 +99,7 @@ ShellRoot {
       active_subscription: "",
       primary_group: "",
       tun_enabled: tun === true,
-      // Absent means the fast pairing, which is what most callers here want.
-      tun_redirect: redirect !== false,
+      tun_redirect: redirect === true,
       autostart_enabled: autostart === true,
       uptime: uptime || null
     })
@@ -196,7 +195,7 @@ ShellRoot {
     // Turning the redirect off is the repair for a TUN that will not start, so
     // it settles the same way every other optimistic toggle does.
     redirectService.applyStatus(status("degraded", true, false, true))
-    check(redirectService.tunRedirectActive, true, "the fast pairing is the default")
+    check(redirectService.tunRedirectActive, true, "status reports the fast pairing")
     redirectService.toggleTunRedirect()
     check(redirectService.tunRedirectActive, false, "redirect changes immediately after click")
     redirectService.applyStatus(status("degraded", true, false, true))

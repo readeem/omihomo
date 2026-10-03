@@ -34,6 +34,12 @@ OMIHOMO_TAILSCALE_LISTENER=omihomo-tailscale
 OMIHOMO_TAILSCALE_INTERFACE=tailscale0
 OMIHOMO_TAILSCALE_DNS=100.100.100.100
 OMIHOMO_TAILSCALE_DOMAIN='+.ts.net'
+# Sending the tailnet through the proxy means TUN has to see it before
+# Tailscale's peer routes do. Tailscale's ip rules sit at 5210-5250 (its own
+# packets, which must still leave directly) and 5270 (table 52, the peers), and
+# sing-tun takes the index plus up to ten, so 5260 slots TUN in between.
+OMIHOMO_TAILNET_RANGE=100.64.0.0/10
+OMIHOMO_TAILNET_TUN_RULE_INDEX=5260
 # The TUN adapter's interface name. mihomo defaults it to `Meta`, which every
 # other mihomo-based client also defaults to, so a machine that runs one of
 # those alongside Omihomo has a `Meta` that belongs to somebody else. The
@@ -42,9 +48,8 @@ OMIHOMO_TAILSCALE_DOMAIN='+.ts.net'
 OMIHOMO_TUN_DEVICE_NAME=omihomo
 # TUN has two working shapes, and `auto-redirect` decides which. On it hands TCP
 # to the kernel through an nftables table sing-tun creates, which is the faster
-# path but needs that table to itself; anything else already holding one stops
-# the adapter from starting at all. Off, the gVisor stack tunnels entirely in
-# userspace and touches no firewall rules, so it works on any machine.
+# path. Off, the gVisor stack tunnels entirely in userspace and touches no
+# firewall rules, so it works on any machine, which is why it is the default.
 #
 # The stack is not a free choice alongside it. `mixed` uses the system TCP
 # stack, which only ever sees TCP because the redirect puts it there, so the
@@ -77,7 +82,12 @@ omi_init_layout() {
 # CGNAT private space, link-local, the documentation and multicast blocks, and
 # their IPv6 equivalents. Without them `auto-route` swallows the LAN, so the
 # router's web UI, printers, and local DNS stop answering the moment TUN comes
-# up. Same set Koala Clash ships.
+# up.
+#
+# Koala Clash ships the multicast and reserved space as 224.0.0.0/3 and
+# ff00::/8, but both run to the last address, which sing-tun cannot put in an
+# nftables interval set: it writes an end equal to the start, the kernel answers
+# "file exists", and TUN acceleration never starts. So these stop just short.
 OMIHOMO_TUN_ROUTE_EXCLUDE=(
   0.0.0.0/8
   10.0.0.0/8
@@ -91,11 +101,12 @@ OMIHOMO_TUN_ROUTE_EXCLUDE=(
   192.168.0.0/16
   198.51.100.0/24
   203.0.113.0/24
-  224.0.0.0/3
+  224.0.0.0/4
+  240.0.0.0/5
   ::/127
   fc00::/7
   fe80::/10
-  ff00::/8
+  ff00::/9
 )
 
 # The list as a YAML block sequence, indented by the given number of spaces.
@@ -166,6 +177,8 @@ omi_backfill_override() {
     expression+='.config.tun.device = strenv(OMIHOMO_TUN_DEVICE_NAME) | '
   omi_override_has "$file" .config.tun route-exclude-address ||
     expression+='.config.tun."route-exclude-address" = env(OMIHOMO_TUN_ROUTE_EXCLUDE_YAML) | '
+  [[ $(omi_yq -r '.config.tun."route-exclude-address" // [] | any_c(. == "224.0.0.0/3" or . == "ff00::/8")' "$file" 2>/dev/null) != true ]] ||
+    expression+='.config.tun."route-exclude-address" |= (map(sub("^224\.0\.0\.0/3$"; "224.0.0.0/4,240.0.0.0/5") | sub("^ff00::/8$"; "ff00::/9") | split(",")) | flatten) | '
   omi_override_has "$file" .config.tun exclude-interface ||
     expression+='.config.tun."exclude-interface" = env(OMIHOMO_TAILSCALE_EXCLUDE_INTERFACE_YAML) | '
   omi_override_has "$file" .config.dns nameserver-policy ||
@@ -214,8 +227,8 @@ config:
     enable: false
     device: $OMIHOMO_TUN_DEVICE_NAME
     auto-route: true
-    auto-redirect: true
-    stack: $OMIHOMO_TUN_REDIRECT_STACK
+    auto-redirect: false
+    stack: $OMIHOMO_TUN_COMPATIBLE_STACK
     dns-hijack:
       - any:53
     route-exclude-address:
@@ -228,6 +241,7 @@ $(omi_tailscale_nameserver_policy_yaml 6)
 omihomo:
   primary-group: ""
   tailscale: false
+  tailnet-proxy: false
 rules:
   prepend: []
   append: []
@@ -570,12 +584,19 @@ omi_resolve_primary_group() {
 # They go after the user's own prepended rules, not before: an explicit rule
 # about Tailscale is the user's to win, and the panel identifies its own rules by
 # matching them against the head of the merged list (Model.stripOwnRules).
+#
+# `.omihomo.tailnet-proxy` is generated the same way. It sends the tailnet's
+# IPv4 range and `ts.net` names to GLOBAL ahead of the integration's DIRECT
+# rule, lets TUN take that range, and keeps only MagicDNS out of the tunnel.
 omi_merge_runtime() {
   local source=$1 override=$2 destination=$3 primary
   primary=$(omi_resolve_primary_group "$source" "$override")
   OMIHOMO_PRIMARY_GROUP=$primary \
   OMIHOMO_TAILSCALE_LISTENER=$OMIHOMO_TAILSCALE_LISTENER \
   OMIHOMO_TAILSCALE_PORT=$OMIHOMO_TAILSCALE_PORT \
+  OMIHOMO_TAILSCALE_DNS=$OMIHOMO_TAILSCALE_DNS \
+  OMIHOMO_TAILNET_RANGE=$OMIHOMO_TAILNET_RANGE \
+  OMIHOMO_TAILNET_TUN_RULE_INDEX=$OMIHOMO_TAILNET_TUN_RULE_INDEX \
   OMIHOMO_MIXED_PORT=$OMIHOMO_MIXED_PORT \
   OMIHOMO_DEFAULT_NAMESERVERS_YAML=$(omi_default_nameservers_yaml) \
   OMIHOMO_CONNECTIVITY_HOST=$(omi_connectivity_check_host) \
@@ -587,6 +608,7 @@ omi_merge_runtime() {
     ($override.rules.append // []) as $append |
     ($override.rules.filter // []) as $filter |
     ($override.omihomo.tailscale) as $tailscale |
+    ($override.omihomo."tailnet-proxy") as $tailnet |
     ($base | {
       "mixed-port": (strenv(OMIHOMO_MIXED_PORT) | to_number),
       "dns": {
@@ -605,6 +627,10 @@ omi_merge_runtime() {
       ([$connectivity] | map(select(. != "")))) |
     del(.dns."fake-ip-filter" | select(length == 0)) |
     .rules = ($prepend + ([
+        "IP-CIDR," + strenv(OMIHOMO_TAILNET_RANGE) + ",GLOBAL,no-resolve",
+        "DOMAIN-SUFFIX,ts.net,GLOBAL"
+      ] | map(select(($tailnet == true) and (strenv(OMIHOMO_PRIMARY_GROUP) != "")))
+      ) + ([
         "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
         "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
         "DOMAIN-SUFFIX,tailscale.com,GLOBAL",
@@ -620,6 +646,10 @@ omi_merge_runtime() {
         "users": []
       }] | map(select($tailscale == true)))) |
     del(.listeners | select(length == 0)) |
+    with(.tun | select($tailnet == true);
+      ."route-exclude-address" = (((."route-exclude-address" // []) |
+        map(select(. != strenv(OMIHOMO_TAILNET_RANGE)))) + [strenv(OMIHOMO_TAILSCALE_DNS) + "/32"]) |
+      ."iproute2-rule-index" = (strenv(OMIHOMO_TAILNET_TUN_RULE_INDEX) | to_number)) |
     ."proxy-groups" = ((
       [{"name": "GLOBAL", "type": "select", "proxies": [strenv(OMIHOMO_PRIMARY_GROUP)]}] |
         map(select(strenv(OMIHOMO_PRIMARY_GROUP) != ""))

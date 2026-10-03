@@ -26,6 +26,7 @@ omihomo set mode <rule|global|direct>
 omihomo set tun <on|off>
 omihomo set tun-redirect <on|off>
 omihomo set tailscale <on|off>
+omihomo set tailnet-proxy <on|off>
 omihomo set group <name>
 
 omihomo status
@@ -78,8 +79,8 @@ Exit codes are:
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
 `download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
-`tun_enabled`, `tun_redirect`, `autostart_enabled`, `permissions_ok`, `tailscale_enabled`, and
-`tailscale_present`. The IP, latency, throughput, and config
+`tun_enabled`, `tun_redirect`, `autostart_enabled`, `permissions_ok`, `tailscale_enabled`,
+`tailscale_present`, and `tailnet_proxy`. The IP, latency, throughput, and config
 fields are nullable because those live API values remain panel-owned per ADR-0001.
 
 ## Files
@@ -171,23 +172,27 @@ the unit's journal for the current invocation, so `detail` carries what mihomo a
 `set tun-redirect on|off` moves `config.tun.auto-redirect` and `config.tun.stack` together, and
 `status` reports the flag as `tun_redirect`. On is `auto-redirect: true` with the `mixed` stack:
 sing-tun creates an nftables table and hands TCP to the kernel through it, which is the faster
-path but needs that table to itself. Off is `auto-redirect: false` with the `gvisor` stack, which
-tunnels entirely in userspace and installs no firewall rules, so it works anywhere.
+path. Off is `auto-redirect: false` with the `gvisor` stack, which
+tunnels entirely in userspace and installs no firewall rules, so it works anywhere. Off is the
+default; an override written before that default keeps the value it already has.
 
 The two are one setting because the pairing `auto-redirect: false` with `mixed` is the one
 combination that comes up looking healthy and carries no TCP at all — `mixed` uses the system TCP
 stack, which only ever sees TCP because the redirect puts it there.
 
-A machine where something else already holds an nftables table sing-tun wants reports
-`TUN acceleration cannot start on this machine`, and `set tun-redirect off` is the repair. What
-holds the table cannot be read without root and is not Omihomo's to take away, so the detail names
-the switch rather than guessing at the culprit.
+When sing-tun cannot install its nftables rules, `status` reports
+`TUN acceleration cannot start on this machine`, and `set tun-redirect off` is the repair. The cause
+cannot be read without root, so the detail names the switch rather than guessing.
 
 The default override excludes loopback, the private and CGNAT ranges, link-local, the
 documentation and multicast blocks, and their IPv6 equivalents from TUN's `auto-route`, through
 `config.tun.route-exclude-address`. Without them the LAN goes into the tunnel and the router's web
-UI, printers, and local DNS stop answering while TUN is on. The list is the same set Koala Clash
-ships, and it replaces any `route-exclude-address` the subscription carries. Edit it in
+UI, printers, and local DNS stop answering while TUN is on. The list is the set Koala Clash ships,
+except that multicast and reserved space stop short of the last address (`224.0.0.0/4`,
+`240.0.0.0/5`, `ff00::/9` instead of `224.0.0.0/3` and `ff00::/8`): sing-tun cannot write a range
+that ends at the last address into nftables, so with those two TUN acceleration never starts. An
+override still carrying the old pair has them replaced on the next command that writes state. The
+list replaces any `route-exclude-address` the subscription carries. Edit it in
 `override.yaml`; an override that predates the list gains it on the next command that writes state,
 which rebuilds `runtime.yaml` too. An emptied list is left as the user left it.
 
@@ -216,6 +221,17 @@ that needs this toggle, peers therefore connect relayed rather than directly. No
 core's lifecycle either: with the integration on and the core stopped, Tailscale cannot reach its
 control plane. A system unit cannot depend on a user unit, so that is accepted rather than worked
 around.
+
+`set tailnet-proxy on` sends the tailnet to the proxy server instead of the local tailscaled, for a
+proxy server that is itself on the tailnet. It needs tailscaled installed, and the local tailscaled
+keeps running. The runtime gains `IP-CIDR,100.64.0.0/10,GLOBAL,no-resolve` and
+`DOMAIN-SUFFIX,ts.net,GLOBAL` behind the user's prepended rules and ahead of the integration's own.
+TUN's `route-exclude-address` loses `100.64.0.0/10` and gains `100.100.100.100/32`, so names
+still resolve through local MagicDNS while their addresses go through the tunnel. TUN's ip rules
+move to `iproute2-rule-index: 5260`: after Tailscale's bypass for its own packets at 5210-5250,
+and before its peer routes in table 52 at 5270, which would otherwise take every tailnet address
+before TUN sees it. Only IPv4 is covered; `fd7a:115c:a1e0::/48` stays with the local tailscaled.
+Like the integration, it is generated during the merge from one flag in `override.yaml`.
 
 The generated runtime owns Mihomo's `GLOBAL` system group and points it at the resolved primary
 subscription group. This makes global mode follow the same selected config as rule mode without

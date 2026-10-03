@@ -41,11 +41,12 @@ function defaultStatus() {
     activeSubscription: "",
     primaryGroup: "",
     tunEnabled: false,
-    tunRedirect: true,
+    tunRedirect: false,
     autostartEnabled: false,
     permissionsOk: false,
     tailscaleEnabled: false,
     tailscalePresent: false,
+    tailnetProxy: false,
     startedMs: 0
   }
 }
@@ -61,12 +62,12 @@ function parseStatus(raw) {
     activeSubscription: text(data.active_subscription),
     primaryGroup: text(data.primary_group),
     tunEnabled: data.tun_enabled === true,
-    // Absent means the fast pairing, which is what a default override carries.
-    tunRedirect: data.tun_redirect !== false,
+    tunRedirect: data.tun_redirect === true,
     autostartEnabled: data.autostart_enabled === true,
     permissionsOk: data.permissions_ok === true,
     tailscaleEnabled: data.tailscale_enabled === true,
     tailscalePresent: data.tailscale_present === true,
+    tailnetProxy: data.tailnet_proxy === true,
     startedMs: parseUnitTimestamp(data.uptime)
   }
 }

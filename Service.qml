@@ -29,15 +29,16 @@ Item {
   property string configuredPrimaryGroup: ""
   property bool tunEnabled: false
   // Whether TUN uses the nftables-backed fast pairing. Off is the fallback that
-  // needs no firewall rules, which is the repair for a machine where sing-tun
-  // cannot claim its table.
-  property bool tunRedirect: true
+  // needs no firewall rules, which is the repair when sing-tun cannot install
+  // its nftables rules.
+  property bool tunRedirect: false
   property bool autostartEnabled: false
   property bool permissionsOk: false
   property bool tailscaleEnabled: false
   // Whether tailscaled is on this machine at all. The panel hides the row
   // rather than offering a toggle that can only fail.
   property bool tailscalePresent: false
+  property bool tailnetProxy: false
   property double startedMs: 0
 
   // Confirmed state keeps following status reads. While an action is settling,
@@ -48,6 +49,7 @@ Item {
   property int _desiredTunRedirect: -1
   property int _desiredAutostartEnabled: -1
   property int _desiredTailscaleEnabled: -1
+  property int _desiredTailnetProxy: -1
   // How long a command that succeeded may wait for status to agree with it.
   // After that the observed state wins and the panel says the change did not
   // take.
@@ -63,6 +65,8 @@ Item {
     ? autostartEnabled : _desiredAutostartEnabled === 1
   readonly property bool tailscaleActive: _desiredTailscaleEnabled === -1
     ? tailscaleEnabled : _desiredTailscaleEnabled === 1
+  readonly property bool tailnetProxyActive: _desiredTailnetProxy === -1
+    ? tailnetProxy : _desiredTailnetProxy === 1
   readonly property bool apiReady: coreRunning && apiAddress !== ""
   // One run of one subscription. Anything read from the controller belongs to
   // the runtime it was read from, and is dropped when this changes.
@@ -278,6 +282,7 @@ Item {
     permissionsOk = status.permissionsOk
     tailscaleEnabled = status.tailscaleEnabled
     tailscalePresent = status.tailscalePresent
+    tailnetProxy = status.tailnetProxy
     startedMs = status.startedMs
     if (_desiredCoreRunning !== -1 && confirmedCoreRunning === (_desiredCoreRunning === 1))
       _desiredCoreRunning = -1
@@ -289,6 +294,8 @@ Item {
       _desiredAutostartEnabled = -1
     if (_desiredTailscaleEnabled !== -1 && tailscaleEnabled === (_desiredTailscaleEnabled === 1))
       _desiredTailscaleEnabled = -1
+    if (_desiredTailnetProxy !== -1 && tailnetProxy === (_desiredTailnetProxy === 1))
+      _desiredTailnetProxy = -1
     // A controller that stops answering keeps the unit's start time, so a
     // transient outage keeps the last snapshot on screen. A stop, restart, or
     // another subscription is a different runtime and starts from nothing.
@@ -330,7 +337,8 @@ Item {
 
   function pendingDesired() {
     return _desiredCoreRunning !== -1 || _desiredTunEnabled !== -1 || _desiredTunRedirect !== -1
-      || _desiredAutostartEnabled !== -1 || _desiredTailscaleEnabled !== -1 || _desiredMode !== ""
+      || _desiredAutostartEnabled !== -1 || _desiredTailscaleEnabled !== -1
+      || _desiredTailnetProxy !== -1 || _desiredMode !== ""
   }
 
   // Called when the settle deadline passes with a change still unconfirmed.
@@ -341,6 +349,7 @@ Item {
     _desiredTunRedirect = -1
     _desiredAutostartEnabled = -1
     _desiredTailscaleEnabled = -1
+    _desiredTailnetProxy = -1
     _desiredMode = ""
     reportError(1, "mihomo did not reach the requested state")
   }
@@ -430,6 +439,18 @@ Item {
     _overrideAction = "tailscale"
     if (!overrideCmd.launch(cli(["set", "tailscale", desired === 1 ? "on" : "off"]))) {
       _desiredTailscaleEnabled = -1
+      _overrideAction = ""
+    }
+  }
+
+  function toggleTailnetProxy() {
+    if (overrideCmd.running || !tailscalePresent) return
+    var desired = tailnetProxyActive ? 0 : 1
+    reportDone(desired === 1 ? "Routing the tailnet through the proxy…" : "Routing the tailnet through Tailscale…")
+    _desiredTailnetProxy = desired
+    _overrideAction = "tailnetProxy"
+    if (!overrideCmd.launch(cli(["set", "tailnet-proxy", desired === 1 ? "on" : "off"]))) {
+      _desiredTailnetProxy = -1
       _overrideAction = ""
     }
   }
@@ -810,6 +831,7 @@ Item {
         else if (action === "tun") root._desiredTunEnabled = -1
         else if (action === "tunRedirect") root._desiredTunRedirect = -1
         else if (action === "tailscale") root._desiredTailscaleEnabled = -1
+        else if (action === "tailnetProxy") root._desiredTailnetProxy = -1
         root.reportError(code, err)
       }
       else {
