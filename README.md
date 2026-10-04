@@ -39,7 +39,9 @@ final `MATCH,Proxy` rule.
 
 A subscription that brings no DNS settings or no inbound of its own gets Omihomo's: `1.1.1.1` and
 `8.8.8.8` as resolvers, and a mixed HTTP and SOCKS proxy on `127.0.0.1:7890`. Anything the
-subscription does state it keeps, and `override.yaml` beats both.
+subscription does state it keeps, and `override.yaml` beats both. Omihomo defaults DNS to
+`redir-host` so apps that block private or reserved destinations receive real addresses.
+An explicit `config.dns.enhanced-mode` in the override takes precedence.
 
 Everything the panel does is also a CLI verb. See [docs/cli.md](docs/cli.md) for the full list and
 [docs/widget.md](docs/widget.md) for how the panel is put together.

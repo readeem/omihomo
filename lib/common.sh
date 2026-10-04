@@ -161,15 +161,6 @@ omi_override_has() {
   [[ $(omi_yq -r "($parent // {}) | has(\"$key\")" "$file" 2>/dev/null) == true ]]
 }
 
-# A default added after the first override was written would otherwise never
-# reach an existing install, because the default block above is only written
-# once. So the missing ones are backfilled in place, in a single pass, and the
-# runtime is rebuilt once at the end.
-#
-# Every step after the override write is best effort and silent: this runs from
-# omi_init_layout, ahead of whatever command the user actually asked for, and
-# must not fail it. The rebuilt runtime stays correct on disk even when a live
-# core refuses the reload, so a later restart picks the additions up anyway.
 omi_backfill_override() {
   local file=$1 candidate active cache runtime expression=""
   omi_yq_available || return 0
@@ -183,6 +174,8 @@ omi_backfill_override() {
     expression+='.config.tun."exclude-interface" = env(OMIHOMO_TAILSCALE_EXCLUDE_INTERFACE_YAML) | '
   omi_override_has "$file" .config.dns nameserver-policy ||
     expression+='.config.dns."nameserver-policy" = env(OMIHOMO_TAILSCALE_NAMESERVER_POLICY_YAML) | '
+  omi_override_has "$file" .config.dns enhanced-mode ||
+    expression+='.config.dns."enhanced-mode" = "redir-host" | '
   [[ -n $expression ]] || return 0
   candidate=$(mktemp "${OMIHOMO_DATA_DIR}/.override.XXXXXX")
   if ! OMIHOMO_TUN_ROUTE_EXCLUDE_YAML=$(omi_tun_route_exclude_yaml) \
@@ -236,6 +229,7 @@ $(omi_tun_route_exclude_yaml 6)
     exclude-interface:
 $(omi_tailscale_exclude_interface_yaml 6)
   dns:
+    enhanced-mode: redir-host
     nameserver-policy:
 $(omi_tailscale_nameserver_policy_yaml 6)
 omihomo:
