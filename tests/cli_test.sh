@@ -812,13 +812,12 @@ test_a_subscription_without_dns_or_an_inbound_gains_both() {
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '.dns.enable' "$runtime")" true
   assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 1.1.1.1
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
   assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7890
   # The Tailscale policy the override carries has to survive landing on them.
   assert_eq "$(yq -r '.dns."nameserver-policy"."+.ts.net"' "$runtime")" 100.100.100.100
 }
 
-# The floor is under the subscription, not over it: a config that resolves and
-# listens the way its author meant keeps doing that.
 test_a_subscription_keeps_its_own_dns_and_inbound() {
   setup_test
   trap teardown_test RETURN
@@ -828,8 +827,43 @@ test_a_subscription_keeps_its_own_dns_and_inbound() {
   run_cli sub add https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7891
-  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" fake-ip
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
   assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["223.5.5.5"]'
+}
+
+test_an_existing_override_gains_real_dns_answers() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ndns:\n  enhanced-mode: fake-ip'
+  run_cli sub add https://example.test/subscription/work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  yq -i 'del(.config.dns."enhanced-mode")' "$override"
+  yq -i '.dns."enhanced-mode" = "fake-ip"' "$runtime"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+
+  run_cli core start
+
+  assert_eq "$(yq -r '.config.dns."enhanced-mode"' "$override")" redir-host
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$TEST_ROOT/curl-put-1.yaml")" redir-host
+  run_cli sub update work
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
+}
+
+test_an_explicit_dns_mode_survives_subscription_updates() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ndns:\n  enhanced-mode: redir-host'
+  run_cli sub add https://example.test/subscription/work
+  yq -i '.config.dns."enhanced-mode" = "fake-ip"' "$XDG_DATA_HOME/omihomo/override.yaml"
+
+  run_cli sub update work
+
+  assert_eq "$(yq -r '.config.dns."enhanced-mode"' "$XDG_DATA_HOME/omihomo/override.yaml")" fake-ip
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$XDG_DATA_HOME/omihomo/runtime.yaml")" fake-ip
 }
 
 # NetworkManager probes connectivity outside the tunnel, where a fake-ip answer
@@ -1421,6 +1455,8 @@ tests=(
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_a_subscription_without_dns_or_an_inbound_gains_both
   test_a_subscription_keeps_its_own_dns_and_inbound
+  test_an_existing_override_gains_real_dns_answers
+  test_an_explicit_dns_mode_survives_subscription_updates
   test_the_connectivity_check_host_bypasses_fake_ip
   test_no_connectivity_check_leaves_the_fake_ip_filter_alone
   test_sync_reloads_a_runtime_built_by_an_older_merge

@@ -37,6 +37,19 @@ The form-facing rule types are `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and
 `rule raw` is the CLI-only escape hatch for all other mihomo rule syntax. Raw rules go to the
 prepend list by default; `append` and `filter` are available only through this command.
 
+When the core is already running, rule writes hot-reload its config and leave the TUN adapter in
+place. A successful write means mihomo accepted the config; it does not prove that every existing
+or new connection was assigned the intended route. If a `PROCESS-NAME` rule appears in
+`omihomo rule list` but traffic still follows another rule, check the process name and route in
+the mihomo journal. `PROCESS-NAME` matches the exact process name: for example, `steam` does not
+cover `steamwebhelper`.
+
+On one Linux TUN/gVisor setup, new Steam CDN connections had no process name in the journal and
+followed `MATCH` after a successful hot reload. Restarting Steam did not change this; restarting
+the mihomo core did. `omihomo core restart` is a workaround when this happens, but it interrupts
+active proxy connections. The cause of missing process metadata during a live reload still needs
+investigation.
+
 ## Output
 
 Read verbs emit one JSON object or array on stdout. Objects and array members are flat so the
@@ -132,6 +145,11 @@ ports or resolvers keeps them, and `override.yaml` still wins over both. Neither
 cosmetic: TUN answers the machine's DNS through `dns-hijack`, so a runtime with no `nameserver`
 cannot resolve even its own proxy servers, and a subscription carrying no inbound is unreachable
 with TUN off. Raw subscriptions carry neither, so they get both.
+
+The override defaults `config.dns.enhanced-mode` to `redir-host`, returning real addresses
+instead of the reserved addresses used by `fake-ip`. Apps with private-address protections can
+then fetch public URLs. Existing overrides gain this setting on the next state-writing command
+when it is missing; an explicit DNS mode is preserved, including `fake-ip`.
 
 The host of NetworkManager's connectivity check is always appended to `dns.fake-ip-filter`.
 NetworkManager sends that probe over a socket bound to the physical interface, outside the
