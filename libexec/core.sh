@@ -112,6 +112,13 @@ core_start() {
   omi_start_core
 }
 
+# Re-derives runtime.yaml when it has gone stale. Without state there is
+# nothing to derive, so it writes none either.
+core_sync() {
+  [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
+  omi_with_lock omi_init_layout
+}
+
 core_stop() {
   omi_require_core
   omi_systemctl --user stop "$OMIHOMO_UNIT"
@@ -151,6 +158,7 @@ case ${1:-} in
   uninstall) core_uninstall "${2:-}" ;;
   repair) core_repair ;;
   start) core_start ;;
+  sync) core_sync ;;
   stop) core_stop ;;
   restart) core_restart ;;
   autostart) core_autostart "${2:-}" ;;

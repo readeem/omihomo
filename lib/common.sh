@@ -76,6 +76,34 @@ omi_init_layout() {
   else
     omi_backfill_override "$OMIHOMO_OVERRIDE_FILE"
   fi
+  omi_sync_runtime
+}
+
+# The runtime is derived from the active subscription, the override, the
+# machine's NetworkManager config, and the merge this plugin ships, so a plugin
+# update or a machine change can leave it stale with no command ever touching
+# it. Re-deriving it is cheap and deterministic, so a runtime that no longer
+# matches is replaced and reloaded.
+#
+# Best effort and silent: this runs ahead of whatever command the user actually
+# asked for and must not fail it. The subshells keep a failure in here from
+# claiming the one error message that command still owes the caller (see
+# omi_error). The new runtime stays on disk even when a live core refuses the
+# reload, so a later restart picks it up anyway.
+omi_sync_runtime() {
+  local active cache runtime
+  active=$(omi_active_name)
+  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
+  [[ -n $active && -f $cache ]] && omi_yq_available || return 0
+  runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
+  if (omi_merge_runtime "$cache" "$OMIHOMO_OVERRIDE_FILE" "$runtime") 2>/dev/null &&
+    ! cmp -s "$runtime" "$OMIHOMO_RUNTIME_FILE" &&
+    (omi_validate_yaml "$runtime") >/dev/null 2>&1; then
+    (omi_reload_runtime "$runtime") >/dev/null 2>&1 || true
+    omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
+  else
+    rm -f "$runtime"
+  fi
 }
 
 # Ranges that must never leave through the tunnel: loopback, the RFC 1918 and
@@ -163,15 +191,10 @@ omi_override_has() {
 
 # A default added after the first override was written would otherwise never
 # reach an existing install, because the default block above is only written
-# once. So the missing ones are backfilled in place, in a single pass, and the
-# runtime is rebuilt once at the end.
-#
-# Every step after the override write is best effort and silent: this runs from
-# omi_init_layout, ahead of whatever command the user actually asked for, and
-# must not fail it. The rebuilt runtime stays correct on disk even when a live
-# core refuses the reload, so a later restart picks the additions up anyway.
+# once. So the missing ones are backfilled in place, in a single pass, and
+# omi_sync_runtime carries them into the runtime.
 omi_backfill_override() {
-  local file=$1 candidate active cache runtime expression=""
+  local file=$1 candidate expression=""
   omi_yq_available || return 0
   omi_override_has "$file" .config.tun device ||
     expression+='.config.tun.device = strenv(OMIHOMO_TUN_DEVICE_NAME) | '
@@ -194,19 +217,6 @@ omi_backfill_override() {
     return 0
   fi
   omi_atomic_move "$candidate" "$file"
-
-  active=$(omi_active_name)
-  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
-  [[ -n $active && -f $cache ]] || return 0
-  runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
-  # A subshell keeps a failure in here from claiming the one error message the
-  # real command still owes the caller (see omi_error).
-  if (omi_prepare_runtime "$cache" "$file" "$runtime") >/dev/null 2>&1; then
-    (omi_reload_runtime "$runtime") >/dev/null 2>&1 || true
-    omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
-  else
-    rm -f "$runtime"
-  fi
 }
 
 omi_write_default_override() {

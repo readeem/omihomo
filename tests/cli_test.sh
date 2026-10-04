@@ -857,6 +857,46 @@ test_no_connectivity_check_leaves_the_fake_ip_filter_alone() {
   assert_eq "$(yq -r '.dns | has("fake-ip-filter")' "$XDG_DATA_HOME/omihomo/runtime.yaml")" false
 }
 
+# A plugin update changes the merge without any command touching the runtime,
+# and the panel's sync on load is what brings the running core in line.
+test_sync_reloads_a_runtime_built_by_an_older_merge() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CONNECTIVITY_URI=
+  run_cli sub add https://example.test/subscription/work
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_CONNECTIVITY_URI=http://check.example.test/nm-check.txt
+
+  run_cli core sync
+
+  assert_eq "$(yq -r '.dns."fake-ip-filter"[-1]' "$XDG_DATA_HOME/omihomo/runtime.yaml")" check.example.test
+  assert_eq "$(yq -r '.dns."fake-ip-filter"[-1]' "$TEST_ROOT/curl-put-1.yaml")" check.example.test
+}
+
+test_sync_leaves_a_current_runtime_alone() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+
+  run_cli core sync
+
+  [[ ! -e $TEST_ROOT/curl-put.log ]] || fail "a current runtime was reloaded"
+}
+
+# The panel syncs on load before anything is installed, which must not create
+# Omihomo's state.
+test_sync_without_state_writes_nothing() {
+  setup_test
+  trap teardown_test RETURN
+
+  run_cli core sync
+
+  [[ ! -e $XDG_DATA_HOME/omihomo ]] || fail "sync created the data directory"
+}
+
 # A running core with TUN up.
 start_tun_core() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
@@ -1383,6 +1423,9 @@ tests=(
   test_a_subscription_keeps_its_own_dns_and_inbound
   test_the_connectivity_check_host_bypasses_fake_ip
   test_no_connectivity_check_leaves_the_fake_ip_filter_alone
+  test_sync_reloads_a_runtime_built_by_an_older_merge
+  test_sync_leaves_a_current_runtime_alone
+  test_sync_without_state_writes_nothing
   test_a_tun_change_tears_the_old_adapter_down_first
   test_a_rule_change_keeps_the_live_tun_adapter
   test_a_reload_without_tun_is_a_single_config_load

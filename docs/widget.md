@@ -156,6 +156,9 @@ Every one of those is also reachable with the mouse. A focused text field owns `
 
 ## Cost
 
+Loading the widget runs `omihomo core sync` once, so a runtime left behind by an older plugin
+version is replaced as soon as the shell picks the update up.
+
 Polling is scoped to what is on screen. The bar only needs `omihomo status`, which runs on the
 shared refresh timer (`refreshIntervalSec`, 10s by default). Proxies, rules, subscriptions, and
 the `/traffic` stream run only while the panel is open. Opening the panel reads them once
