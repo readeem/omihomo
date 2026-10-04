@@ -161,6 +161,8 @@ the merge this plugin ships. Every command that writes state first re-derives it
 result differs from the file on disk it is validated, loaded into a running core, and replaces the
 file. `core sync` does only that, and the panel runs it each time the shell loads the widget, which
 covers plugin updates, shell restarts, and login. Without state it writes nothing.
+Sync is silent and best effort. A failed merge, validation, or reload preserves the previous
+runtime so the next sync or state-writing command can retry.
 
 Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
 An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed

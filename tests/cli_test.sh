@@ -891,8 +891,6 @@ test_no_connectivity_check_leaves_the_fake_ip_filter_alone() {
   assert_eq "$(yq -r '.dns | has("fake-ip-filter")' "$XDG_DATA_HOME/omihomo/runtime.yaml")" false
 }
 
-# A plugin update changes the merge without any command touching the runtime,
-# and the panel's sync on load is what brings the running core in line.
 test_sync_reloads_a_runtime_built_by_an_older_merge() {
   setup_test
   trap teardown_test RETURN
@@ -920,8 +918,32 @@ test_sync_leaves_a_current_runtime_alone() {
   [[ ! -e $TEST_ROOT/curl-put.log ]] || fail "a current runtime was reloaded"
 }
 
-# The panel syncs on load before anything is installed, which must not create
-# Omihomo's state.
+test_sync_retries_a_failed_reload() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_CONNECTIVITY_URI=
+  run_cli sub add https://example.test/subscription/work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  cp "$runtime" "$TEST_ROOT/previous.yaml"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_CONNECTIVITY_URI=http://check.example.test/nm-check.txt
+  export OMIHOMO_TEST_PUT_FAIL=1
+
+  run_cli core sync
+
+  assert_eq "$(wc -l <"$TEST_ROOT/curl-put.log")" 2
+  cmp -s "$TEST_ROOT/previous.yaml" "$runtime" || fail "failed sync replaced the previous runtime"
+  cmp -s "$TEST_ROOT/previous.yaml" "$TEST_ROOT/live.yaml" || fail "failed sync did not restore the live runtime"
+  unset OMIHOMO_TEST_PUT_FAIL
+
+  run_cli core sync
+
+  assert_eq "$(wc -l <"$TEST_ROOT/curl-put.log")" 3
+  assert_eq "$(yq -r '.dns."fake-ip-filter"[-1]' "$runtime")" check.example.test
+  cmp -s "$TEST_ROOT/live.yaml" "$runtime" || fail "retry left the live runtime behind"
+}
+
 test_sync_without_state_writes_nothing() {
   setup_test
   trap teardown_test RETURN
@@ -1461,6 +1483,7 @@ tests=(
   test_no_connectivity_check_leaves_the_fake_ip_filter_alone
   test_sync_reloads_a_runtime_built_by_an_older_merge
   test_sync_leaves_a_current_runtime_alone
+  test_sync_retries_a_failed_reload
   test_sync_without_state_writes_nothing
   test_a_tun_change_tears_the_old_adapter_down_first
   test_a_rule_change_keeps_the_live_tun_adapter

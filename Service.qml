@@ -255,9 +255,6 @@ Item {
     if (_traceQueued) refreshTrace()
   }
 
-  // The shell recreates the widget after a plugin update, a shell restart, and
-  // at login, which are exactly the moments a runtime built by an older merge
-  // can be left behind with no command ever touching it.
   Component.onCompleted: if (cliPath !== "") syncCmd.launch(cli(["core", "sync"]))
 
   // The panel's `panelOpen` binding lands after the panel's own

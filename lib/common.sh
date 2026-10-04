@@ -79,17 +79,6 @@ omi_init_layout() {
   omi_sync_runtime
 }
 
-# The runtime is derived from the active subscription, the override, the
-# machine's NetworkManager config, and the merge this plugin ships, so a plugin
-# update or a machine change can leave it stale with no command ever touching
-# it. Re-deriving it is cheap and deterministic, so a runtime that no longer
-# matches is replaced and reloaded.
-#
-# Best effort and silent: this runs ahead of whatever command the user actually
-# asked for and must not fail it. The subshells keep a failure in here from
-# claiming the one error message that command still owes the caller (see
-# omi_error). The new runtime stays on disk even when a live core refuses the
-# reload, so a later restart picks it up anyway.
 omi_sync_runtime() {
   local active cache runtime
   active=$(omi_active_name)
@@ -98,8 +87,8 @@ omi_sync_runtime() {
   runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
   if (omi_merge_runtime "$cache" "$OMIHOMO_OVERRIDE_FILE" "$runtime") 2>/dev/null &&
     ! cmp -s "$runtime" "$OMIHOMO_RUNTIME_FILE" &&
-    (omi_validate_yaml "$runtime") >/dev/null 2>&1; then
-    (omi_reload_runtime "$runtime") >/dev/null 2>&1 || true
+    (omi_validate_yaml "$runtime") >/dev/null 2>&1 &&
+    (omi_reload_runtime "$runtime") >/dev/null 2>&1; then
     omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
   else
     rm -f "$runtime"
