@@ -37,6 +37,19 @@ The form-facing rule types are `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and
 `rule raw` is the CLI-only escape hatch for all other mihomo rule syntax. Raw rules go to the
 prepend list by default; `append` and `filter` are available only through this command.
 
+When the core is already running, rule writes hot-reload its config and leave the TUN adapter in
+place. A successful write means mihomo accepted the config; it does not prove that every existing
+or new connection was assigned the intended route. If a `PROCESS-NAME` rule appears in
+`omihomo rule list` but traffic still follows another rule, check the process name and route in
+the mihomo journal. `PROCESS-NAME` matches the exact process name: for example, `steam` does not
+cover `steamwebhelper`.
+
+On one Linux TUN/gVisor setup, new Steam CDN connections had no process name in the journal and
+followed `MATCH` after a successful hot reload. Restarting Steam did not change this; restarting
+the mihomo core did. `omihomo core restart` is a workaround when this happens, but it interrupts
+active proxy connections. The cause of missing process metadata during a live reload still needs
+investigation.
+
 ## Output
 
 Read verbs emit one JSON object or array on stdout. Objects and array members are flat so the
