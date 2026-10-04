@@ -76,6 +76,23 @@ omi_init_layout() {
   else
     omi_backfill_override "$OMIHOMO_OVERRIDE_FILE"
   fi
+  omi_sync_runtime
+}
+
+omi_sync_runtime() {
+  local active cache runtime
+  active=$(omi_active_name)
+  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
+  [[ -n $active && -f $cache ]] && omi_yq_available || return 0
+  runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
+  if (omi_merge_runtime "$cache" "$OMIHOMO_OVERRIDE_FILE" "$runtime") 2>/dev/null &&
+    ! cmp -s "$runtime" "$OMIHOMO_RUNTIME_FILE" &&
+    (omi_validate_yaml "$runtime") >/dev/null 2>&1 &&
+    (omi_reload_runtime "$runtime") >/dev/null 2>&1; then
+    omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
+  else
+    rm -f "$runtime"
+  fi
 }
 
 # Ranges that must never leave through the tunnel: loopback, the RFC 1918 and
@@ -162,7 +179,7 @@ omi_override_has() {
 }
 
 omi_backfill_override() {
-  local file=$1 candidate active cache runtime expression=""
+  local file=$1 candidate expression=""
   omi_yq_available || return 0
   omi_override_has "$file" .config.tun device ||
     expression+='.config.tun.device = strenv(OMIHOMO_TUN_DEVICE_NAME) | '
@@ -187,19 +204,6 @@ omi_backfill_override() {
     return 0
   fi
   omi_atomic_move "$candidate" "$file"
-
-  active=$(omi_active_name)
-  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
-  [[ -n $active && -f $cache ]] || return 0
-  runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
-  # A subshell keeps a failure in here from claiming the one error message the
-  # real command still owes the caller (see omi_error).
-  if (omi_prepare_runtime "$cache" "$file" "$runtime") >/dev/null 2>&1; then
-    (omi_reload_runtime "$runtime") >/dev/null 2>&1 || true
-    omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
-  else
-    rm -f "$runtime"
-  fi
 }
 
 omi_write_default_override() {

@@ -255,6 +255,8 @@ Item {
     if (_traceQueued) refreshTrace()
   }
 
+  Component.onCompleted: if (cliPath !== "") syncCmd.launch(cli(["core", "sync"]))
+
   // The panel's `panelOpen` binding lands after the panel's own
   // `onOpenedChanged` handler has run, so an open-time `refresh()` called from
   // there would still see a closed panel and skip the subscription and rule
@@ -679,6 +681,11 @@ Item {
       queued = args
       return true
     }
+  }
+
+  Cmd {
+    id: syncCmd
+    onFinished: root.refresh(true)
   }
 
   Cmd {

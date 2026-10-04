@@ -7,7 +7,7 @@ config selection, latency, connections, or parameter lookup.
 ## Commands
 
 ```text
-omihomo core install|repair|start|stop|restart|version
+omihomo core install|repair|start|stop|restart|sync|version
 omihomo core uninstall [--keep-data]
 omihomo core autostart on|off
 
@@ -155,6 +155,14 @@ The host of NetworkManager's connectivity check is always appended to `dns.fake-
 NetworkManager sends that probe over a socket bound to the physical interface, outside the
 tunnel, where a fake-ip address routes nowhere. Without the exemption the desktop reports limited
 connectivity while traffic flows normally.
+
+`runtime.yaml` is derived state: the active cache, `override.yaml`, NetworkManager's config, and
+the merge this plugin ships. Every command that writes state first re-derives it, and when the
+result differs from the file on disk it is validated, loaded into a running core, and replaces the
+file. `core sync` does only that, and the panel runs it each time the shell loads the widget, which
+covers plugin updates, shell restarts, and login. Without state it writes nothing.
+Sync is silent and best effort. A failed merge, validation, or reload preserves the previous
+runtime so the next sync or state-writing command can retry.
 
 Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
 An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed
