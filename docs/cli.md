@@ -133,6 +133,11 @@ cosmetic: TUN answers the machine's DNS through `dns-hijack`, so a runtime with 
 cannot resolve even its own proxy servers, and a subscription carrying no inbound is unreachable
 with TUN off. Raw subscriptions carry neither, so they get both.
 
+The override defaults `config.dns.enhanced-mode` to `redir-host`, returning real addresses
+instead of the reserved addresses used by `fake-ip`. Apps with private-address protections can
+then fetch public URLs. Existing overrides gain this setting on the next state-writing command
+when it is missing; an explicit DNS mode is preserved, including `fake-ip`.
+
 The host of NetworkManager's connectivity check is always appended to `dns.fake-ip-filter`.
 NetworkManager sends that probe over a socket bound to the physical interface, outside the
 tunnel, where a fake-ip address routes nowhere. Without the exemption the desktop reports limited
