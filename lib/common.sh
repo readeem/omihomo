@@ -58,13 +58,8 @@ OMIHOMO_TUN_DEVICE_NAME=omihomo
 # move together, which is what `set tun-redirect` exists to guarantee.
 OMIHOMO_TUN_REDIRECT_STACK=mixed
 OMIHOMO_TUN_COMPATIBLE_STACK=gvisor
-# The floor `omi_merge_runtime` puts under every subscription. mihomo's own
-# default for both is nothing at all, and nothing is unusable: no resolver means
-# no proxy server address resolves, no inbound means TUN is the only way in.
-# 7890 is the port the whole Clash family has used for its mixed inbound since
-# the beginning, so it is the one a browser or shell is already pointed at.
 OMIHOMO_MIXED_PORT=${OMIHOMO_MIXED_PORT:-7890}
-OMIHOMO_DEFAULT_NAMESERVERS=(1.1.1.1 8.8.8.8)
+OMIHOMO_DEFAULT_NAMESERVERS=(https://1.1.1.1/dns-query https://1.0.0.1/dns-query)
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"
@@ -146,9 +141,10 @@ omi_tailscale_exclude_interface_yaml() {
 }
 
 omi_default_nameservers_yaml() {
-  local entry
+  local entry indent
+  printf -v indent '%*s' "${2:-0}" ''
   for entry in "${OMIHOMO_DEFAULT_NAMESERVERS[@]}"; do
-    printf -- '- %s\n' "$entry"
+    printf '%s- %s#%s\n' "$indent" "$entry" "${1:-DIRECT}"
   done
 }
 
@@ -179,7 +175,7 @@ omi_override_has() {
 }
 
 omi_backfill_override() {
-  local file=$1 candidate expression=""
+  local file=$1 candidate key expression=""
   omi_yq_available || return 0
   omi_override_has "$file" .config.tun device ||
     expression+='.config.tun.device = strenv(OMIHOMO_TUN_DEVICE_NAME) | '
@@ -193,11 +189,21 @@ omi_backfill_override() {
     expression+='.config.dns."nameserver-policy" = env(OMIHOMO_TAILSCALE_NAMESERVER_POLICY_YAML) | '
   omi_override_has "$file" .config.dns enhanced-mode ||
     expression+='.config.dns."enhanced-mode" = "redir-host" | '
+  omi_override_has "$file" .config.dns nameserver ||
+    expression+='.config.dns.nameserver = env(OMIHOMO_PROXY_NAMESERVERS_YAML) | '
+  omi_override_has "$file" .config.dns fallback ||
+    expression+='.config.dns.fallback = [] | '
+  for key in default-nameserver proxy-server-nameserver; do
+    omi_override_has "$file" .config.dns "$key" ||
+      expression+=".config.dns.\"$key\" = env(OMIHOMO_DEFAULT_NAMESERVERS_YAML) | "
+  done
   [[ -n $expression ]] || return 0
   candidate=$(mktemp "${OMIHOMO_DATA_DIR}/.override.XXXXXX")
   if ! OMIHOMO_TUN_ROUTE_EXCLUDE_YAML=$(omi_tun_route_exclude_yaml) \
     OMIHOMO_TAILSCALE_EXCLUDE_INTERFACE_YAML=$(omi_tailscale_exclude_interface_yaml) \
     OMIHOMO_TAILSCALE_NAMESERVER_POLICY_YAML=$(omi_tailscale_nameserver_policy_yaml) \
+    OMIHOMO_PROXY_NAMESERVERS_YAML=$(omi_default_nameservers_yaml GLOBAL) \
+    OMIHOMO_DEFAULT_NAMESERVERS_YAML=$(omi_default_nameservers_yaml) \
     OMIHOMO_TUN_DEVICE_NAME=$OMIHOMO_TUN_DEVICE_NAME \
     omi_yq eval "${expression%' | '}" "$file" >"$candidate" 2>/dev/null; then
     rm -f "$candidate"
@@ -234,6 +240,13 @@ $(omi_tun_route_exclude_yaml 6)
 $(omi_tailscale_exclude_interface_yaml 6)
   dns:
     enhanced-mode: redir-host
+    fallback: []
+    nameserver:
+$(omi_default_nameservers_yaml GLOBAL 6)
+    default-nameserver:
+$(omi_default_nameservers_yaml DIRECT 6)
+    proxy-server-nameserver:
+$(omi_default_nameservers_yaml DIRECT 6)
     nameserver-policy:
 $(omi_tailscale_nameserver_policy_yaml 6)
 omihomo:
@@ -562,30 +575,6 @@ omi_resolve_primary_group() {
   ' "$source"
 }
 
-# A raw subscription carries proxies and nothing else, and a full one is free to
-# leave out DNS and every inbound too. Neither gap is survivable. TUN makes
-# mihomo answer the machine's DNS through `dns-hijack`, so a runtime with no
-# `nameserver` resolves nothing, not even the addresses of its own proxy
-# servers, and every config in the panel reads as failed. With TUN off and no
-# inbound there is no way to reach the proxy at all.
-#
-# So the merge sits on a floor of both, under the subscription rather than over
-# it. A subscription that names its own resolvers or ports keeps them, and the
-# override still wins over everything.
-#
-# The Tailscale listener and its rules are generated here rather than stored in
-# the override, so the toggle in `.omihomo.tailscale` is the only state: turning
-# it off removes both. The rules target GLOBAL, which Omihomo points at the
-# primary group just below, because a group's own name may contain a comma and
-# mihomo splits rules on commas.
-#
-# They go after the user's own prepended rules, not before: an explicit rule
-# about Tailscale is the user's to win, and the panel identifies its own rules by
-# matching them against the head of the merged list (Model.stripOwnRules).
-#
-# `.omihomo.tailnet-proxy` is generated the same way. It sends the tailnet's
-# IPv4 range and `ts.net` names to GLOBAL ahead of the integration's DIRECT
-# rule, lets TUN take that range, and keeps only MagicDNS out of the tunnel.
 omi_merge_runtime() {
   local source=$1 override=$2 destination=$3 primary
   primary=$(omi_resolve_primary_group "$source" "$override")
@@ -597,6 +586,7 @@ omi_merge_runtime() {
   OMIHOMO_TAILNET_TUN_RULE_INDEX=$OMIHOMO_TAILNET_TUN_RULE_INDEX \
   OMIHOMO_MIXED_PORT=$OMIHOMO_MIXED_PORT \
   OMIHOMO_DEFAULT_NAMESERVERS_YAML=$(omi_default_nameservers_yaml) \
+  OMIHOMO_PROXY_NAMESERVERS_YAML=$(omi_default_nameservers_yaml GLOBAL) \
   OMIHOMO_CONNECTIVITY_HOST=$(omi_connectivity_check_host) \
     omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
@@ -612,7 +602,8 @@ omi_merge_runtime() {
       "dns": {
         "enable": true,
         "default-nameserver": env(OMIHOMO_DEFAULT_NAMESERVERS_YAML),
-        "nameserver": env(OMIHOMO_DEFAULT_NAMESERVERS_YAML)
+        "proxy-server-nameserver": env(OMIHOMO_DEFAULT_NAMESERVERS_YAML),
+        "nameserver": env(OMIHOMO_PROXY_NAMESERVERS_YAML)
       }
     }) as $defaults |
     ($defaults * $base * $config) as $merged |

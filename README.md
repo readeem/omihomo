@@ -37,11 +37,10 @@ Subscription URLs may return a full Mihomo YAML config or a raw share-link forma
 installed Mihomo version understands. Raw subscriptions get one generated `Proxy` selector and a
 final `MATCH,Proxy` rule.
 
-A subscription that brings no DNS settings or no inbound of its own gets Omihomo's: `1.1.1.1` and
-`8.8.8.8` as resolvers, and a mixed HTTP and SOCKS proxy on `127.0.0.1:7890`. Anything the
-subscription does state it keeps, and `override.yaml` beats both. Omihomo defaults DNS to
-`redir-host` so apps that block private or reserved destinations receive real addresses.
-An explicit `config.dns.enhanced-mode` in the override takes precedence.
+Subscriptions without an inbound get `mixed-port: 7890`. Omihomo defaults DNS to `redir-host`
+with Cloudflare DNS-over-HTTPS through the primary proxy group. Proxy-server hostnames and
+DNS-server hostnames use direct Cloudflare DoH so connecting the proxy does not depend on
+itself. Explicit resolver settings and DNS modes in `override.yaml` take precedence.
 
 Everything the panel does is also a CLI verb. See [docs/cli.md](docs/cli.md) for the full list and
 [docs/widget.md](docs/widget.md) for how the panel is put together.

@@ -139,17 +139,22 @@ provider hourly after activation, using the same User-Agent as Omihomo.
 refuses to run without one. A later `sub add` never takes the slot from the active subscription;
 `sub activate` is the way to switch.
 
-The merge sits on a floor of `mixed-port: 7890` and a DNS block enabling `1.1.1.1` and `8.8.8.8`,
-applied under the subscription rather than over it. A subscription that names its own inbound
-ports or resolvers keeps them, and `override.yaml` still wins over both. Neither default is
-cosmetic: TUN answers the machine's DNS through `dns-hijack`, so a runtime with no `nameserver`
-cannot resolve even its own proxy servers, and a subscription carrying no inbound is unreachable
-with TUN off. Raw subscriptions carry neither, so they get both.
+Subscriptions without an inbound get `mixed-port: 7890`; their own ports take precedence.
+The default override uses Cloudflare DNS-over-HTTPS at `1.1.1.1` and `1.0.0.1`, explicitly routed
+through `GLOBAL`. Omihomo points that group at the primary proxy group, so ordinary DNS follows
+the selected proxy rather than leaving directly or depending on traffic rules. Selecting DIRECT
+in that group also sends DNS directly. The default override clears subscription fallback resolvers
+so they cannot send parallel plain-DNS queries; an explicit override fallback is preserved.
+
+`config.dns.proxy-server-nameserver` and `config.dns.default-nameserver` use direct Cloudflare
+DoH. These separate bootstrap resolvers avoid a circular dependency when a proxy server has a
+hostname. The existing Tailscale nameserver policy continues to use local MagicDNS.
 
 The override defaults `config.dns.enhanced-mode` to `redir-host`, returning real addresses
-instead of the reserved addresses used by `fake-ip`. Apps with private-address protections can
-then fetch public URLs. Existing overrides gain this setting on the next state-writing command
-when it is missing; an explicit DNS mode is preserved, including `fake-ip`.
+instead of the reserved addresses used by `fake-ip`, which apps with private-address protections
+may reject. Existing overrides gain missing resolver lists and DNS mode on the next sync or
+state-writing command. Explicit settings, including `fake-ip` or custom resolvers, are preserved.
+The override takes precedence over subscription DNS settings across refreshes.
 
 The host of NetworkManager's connectivity check is always appended to `dns.fake-ip-filter`.
 NetworkManager sends that probe over a socket bound to the physical interface, outside the

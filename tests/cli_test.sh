@@ -811,27 +811,28 @@ test_a_subscription_without_dns_or_an_inbound_gains_both() {
   run_cli sub add https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '.dns.enable' "$runtime")" true
-  assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 1.1.1.1
+  assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 'https://1.1.1.1/dns-query#GLOBAL'
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
   assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7890
   # The Tailscale policy the override carries has to survive landing on them.
   assert_eq "$(yq -r '.dns."nameserver-policy"."+.ts.net"' "$runtime")" 100.100.100.100
 }
 
-test_a_subscription_keeps_its_own_dns_and_inbound() {
+test_a_subscription_uses_proxied_dns_and_keeps_its_inbound() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\nmixed-port: 7891\ndns:\n  enable: true\n  enhanced-mode: fake-ip\n  nameserver:\n    - 223.5.5.5'
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\nmixed-port: 7891\ndns:\n  enable: true\n  enhanced-mode: fake-ip\n  nameserver:\n    - 223.5.5.5\n  fallback:\n    - 8.8.8.8'
 
   run_cli sub add https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7891
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
-  assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["223.5.5.5"]'
+  assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["https://1.1.1.1/dns-query#GLOBAL","https://1.0.0.1/dns-query#GLOBAL"]'
+  assert_eq "$(yq -o=json -I=0 '.dns.fallback' "$runtime")" '[]'
 }
 
-test_an_existing_override_gains_real_dns_answers() {
+test_an_existing_override_gains_proxied_dns() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
@@ -839,7 +840,7 @@ test_an_existing_override_gains_real_dns_answers() {
   run_cli sub add https://example.test/subscription/work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
-  yq -i 'del(.config.dns."enhanced-mode")' "$override"
+  yq -i 'del(.config.dns."enhanced-mode", .config.dns.nameserver, .config.dns.fallback, .config.dns."default-nameserver", .config.dns."proxy-server-nameserver")' "$override"
   yq -i '.dns."enhanced-mode" = "fake-ip"' "$runtime"
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
 
@@ -848,8 +849,33 @@ test_an_existing_override_gains_real_dns_answers() {
   assert_eq "$(yq -r '.config.dns."enhanced-mode"' "$override")" redir-host
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$TEST_ROOT/curl-put-1.yaml")" redir-host
+  assert_eq "$(yq -r '.dns.nameserver[0]' "$TEST_ROOT/curl-put-1.yaml")" 'https://1.1.1.1/dns-query#GLOBAL'
+  assert_eq "$(yq -r '.dns."default-nameserver"[0]' "$runtime")" 'https://1.1.1.1/dns-query#DIRECT'
+  assert_eq "$(yq -r '.dns."proxy-server-nameserver"[0]' "$runtime")" 'https://1.1.1.1/dns-query#DIRECT'
+  assert_eq "$(yq -o=json -I=0 '.dns.fallback' "$runtime")" '[]'
   run_cli sub update work
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
+}
+
+test_explicit_resolvers_survive_sync_and_subscription_updates() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add https://example.test/subscription/work
+  local override="$XDG_DATA_HOME/omihomo/override.yaml"
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  yq -i '.config.dns.nameserver = ["https://9.9.9.9/dns-query#DIRECT"] |
+    .config.dns.fallback = ["https://149.112.112.112/dns-query#GLOBAL"] |
+    .config.dns."default-nameserver" = ["tls://9.9.9.9"] |
+    .config.dns."proxy-server-nameserver" = ["tls://149.112.112.112"]' "$override"
+
+  run_cli core sync
+  run_cli sub update work
+
+  assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 'https://9.9.9.9/dns-query#DIRECT'
+  assert_eq "$(yq -r '.dns.fallback[0]' "$runtime")" 'https://149.112.112.112/dns-query#GLOBAL'
+  assert_eq "$(yq -r '.dns."default-nameserver"[0]' "$runtime")" 'tls://9.9.9.9'
+  assert_eq "$(yq -r '.dns."proxy-server-nameserver"[0]' "$runtime")" 'tls://149.112.112.112'
 }
 
 test_an_explicit_dns_mode_survives_subscription_updates() {
@@ -1476,9 +1502,10 @@ tests=(
   test_turning_tun_on_requires_an_active_subscription
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_a_subscription_without_dns_or_an_inbound_gains_both
-  test_a_subscription_keeps_its_own_dns_and_inbound
-  test_an_existing_override_gains_real_dns_answers
+  test_a_subscription_uses_proxied_dns_and_keeps_its_inbound
+  test_an_existing_override_gains_proxied_dns
   test_an_explicit_dns_mode_survives_subscription_updates
+  test_explicit_resolvers_survive_sync_and_subscription_updates
   test_the_connectivity_check_host_bypasses_fake_ip
   test_no_connectivity_check_leaves_the_fake_ip_filter_alone
   test_sync_reloads_a_runtime_built_by_an_older_merge
