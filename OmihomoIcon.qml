@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Shapes
 import qs.Commons
+import qs.Commons as Commons
 
 // Omihomo's mark, drawn natively rather than shipped as an SVG: a globe, built
 // from a circle for the sphere, two mirrored curves for the meridian, and a bar
@@ -9,7 +10,7 @@ Item {
   id: root
 
   property real iconSize: Style.font.icon
-  property color color: Color.foreground
+  property color color: Commons.Color.foreground
   // The core is installed but not running.
   property bool crossed: false
 
