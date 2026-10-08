@@ -425,12 +425,14 @@ omi_write_subscription_timer() {
   mkdir -p "$directory"
   cat >"$directory/omihomo-subscription-update.service" <<EOF
 [Unit]
-Description=Refresh Omihomo subscriptions when six hours have elapsed
+Description=Refresh Omihomo subscriptions when their saved deadlines elapse
 
 [Service]
 Type=oneshot
 ExecStart=$HOME/.local/bin/omihomo sub update-due
-TimeoutStartSec=10min
+# Downloads and controller calls have their own bounds. A fixed batch limit
+# could repeatedly stop long lists before their healthy final subscriptions.
+TimeoutStartSec=infinity
 EOF
   cat >"$directory/omihomo-subscription-update.timer" <<'EOF'
 [Unit]

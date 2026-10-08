@@ -37,12 +37,19 @@ Subscription URLs may return a full Mihomo YAML config or a raw share-link forma
 installed Mihomo version understands. Raw subscriptions get one generated `Proxy` selector and a
 final `MATCH,Proxy` rule.
 
-Subscriptions refresh automatically six hours after their last successful download, including
-manual updates. Time while the computer is off or asleep counts toward that deadline; overdue
+Subscriptions refresh automatically using the provider's `Profile-Update-Interval` header
+(positive whole hours), with a 12-hour default when it is absent or invalid. The deadline starts
+at the last successful download, including manual updates. Time while the computer is off or
+asleep counts toward that deadline; overdue
 subscriptions refresh on the next check after login or resume. Checks run every minute, even
 with the panel closed or the core stopped. A refresh preserves the core's running/stopped state,
 mode, TUN state, and selected configs that still exist in their groups. Failed downloads keep
 the previous configuration and retry on the next check.
+
+Each successful import or update saves the effective interval with its timestamp. A provider can
+change the interval on the next response; failed updates retain both previous values. Downloads
+and controller calls have individual timeouts, while the sequential batch has no fixed time
+limit that could prevent later subscriptions from being checked.
 
 `core install` enables the user timer. Existing installations gain it through `core sync` when
 the updated widget loads. To turn automatic refresh off or back on:

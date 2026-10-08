@@ -203,7 +203,18 @@ subscription_header() {
   local headers=$1 field=$2 line
   line=$(grep -i "^${field}:" "$headers" | tail -n 1 | tr -d '\r' || true)
   [[ -n $line ]] || return 0
-  printf '%s\n' "${line#*: }"
+  printf '%s\n' "${line#*:}" | sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//'
+}
+
+subscription_update_interval_hours() {
+  local value
+  value=$(subscription_header "$1" profile-update-interval)
+  # Whole positive hours only. Keep conversion and multiplication representable
+  # even for a malformed or excessively large provider header.
+  jq -nr --arg value "$value" '$value |
+    if test("^[0-9]+$") then
+      (try tonumber catch 12) | if . > 0 and . <= 2147483647 then . else 12 end
+    else 12 end'
 }
 
 # A name arrives from a server header, so it has to be made safe for a cache
@@ -278,8 +289,9 @@ subscription_add() {
   body=$FETCH_BODY
   headers=$FETCH_HEADERS
   name=$(unique_name "$(subscription_fetched_name "$headers" "$url")")
-  record=$(jq -cn --arg name "$name" --arg url "$url" --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson userinfo "$(subscription_userinfo_json "$headers")" \
-    '{name: $name, url: $url, updated_at: $updated, userinfo: $userinfo}')
+  record=$(jq -cn --arg name "$name" --arg url "$url" --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson interval "$(subscription_update_interval_hours "$headers")" --argjson userinfo "$(subscription_userinfo_json "$headers")" \
+    '{name: $name, url: $url, updated_at: $updated, update_interval_hours: $interval, userinfo: $userinfo}')
   temporary=$(mktemp "${OMIHOMO_DATA_DIR}/.subscriptions.XXXXXX")
   jq --argjson record "$record" '. + [$record]' "$OMIHOMO_SUBSCRIPTIONS_FILE" >"$temporary"
   omi_atomic_move "$body" "$OMIHOMO_CACHE_DIR/${name}.yaml"
@@ -367,8 +379,9 @@ subscription_update() {
   fetch_validated_subscription "$url" || return $?
   body=$FETCH_BODY
   headers=$FETCH_HEADERS
-  record=$(jq -cn --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson userinfo "$(subscription_userinfo_json "$headers")" \
-    '{updated_at: $updated, userinfo: $userinfo}')
+  record=$(jq -cn --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson interval "$(subscription_update_interval_hours "$headers")" --argjson userinfo "$(subscription_userinfo_json "$headers")" \
+    '{updated_at: $updated, update_interval_hours: $interval, userinfo: $userinfo}')
   temporary=$(mktemp "${OMIHOMO_DATA_DIR}/.subscriptions.XXXXXX")
   jq --arg name "$name" --argjson record "$record" 'map(if .name == $name then . * $record else . end)' "$OMIHOMO_SUBSCRIPTIONS_FILE" >"$temporary"
   active=$(omi_active_name)
@@ -406,16 +419,21 @@ subscription_update() {
 }
 
 # Each subscription is checked under the same lock as manual changes. A
-# successful manual refresh resets the six-hour deadline as well. Failed
+# successful manual refresh resets the provider's deadline as well. Failed
 # downloads keep updated_at unchanged and are retried on the next timer tick.
 subscription_update_if_due() {
-  local name=$1 updated now
+  local name=$1 updated now interval
   [[ -f $OMIHOMO_SUBSCRIPTIONS_FILE ]] || return 0
   subscription_exists "$name" || return 0
   updated=$(jq -r --arg name "$name" '.[] | select(.name == $name) |
     (.updated_at | try fromdateiso8601 catch 0)' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  # Records imported before interval metadata existed use the same 12-hour
+  # default as a response with no valid Profile-Update-Interval header.
+  interval=$(jq -r --arg name "$name" '.[] | select(.name == $name) |
+    (.update_interval_hours // 12) |
+    if type == "number" and . > 0 and . == floor and . <= 2147483647 then . else 12 end' "$OMIHOMO_SUBSCRIPTIONS_FILE")
   now=$(date +%s)
-  ((now - updated >= 21600)) || return 0
+  ((now - updated >= interval * 3600)) || return 0
   subscription_update "$name"
 }
 

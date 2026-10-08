@@ -3,8 +3,9 @@ set -euo pipefail
 source "$(dirname "$0")/test_helper.sh"
 
 setup_refresh_test() {
-  unset OMIHOMO_TEST_FETCH_FAIL_URL
+  unset OMIHOMO_TEST_FETCH_FAIL_URL OMIHOMO_TEST_FETCH_FAIL_PREFIX OMIHOMO_TEST_FETCH_FAIL_DELAY
   setup_test
+  export OMIHOMO_TEST_INTERVAL_HEADER='Profile-Update-Interval: 6'
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_NOW=1735732800 # 2025-01-01 12:00 UTC
   cat >"$TEST_ROOT/bin/date" <<'EOF'
@@ -230,6 +231,119 @@ test_sync_installs_timer_for_existing_users_once() {
   assert_eq "$(<"$TEST_ROOT/systemctl.log")" "$operations"
 }
 
+test_import_persists_the_provider_interval() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  assert_eq "$(jq -r '.[0].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 6
+  export OMIHOMO_TEST_INTERVAL_HEADER=$'pRoFiLe-UpDaTe-InTeRvAl:\t 24  '
+  run_cli sub add https://example.test/subscription/second
+  assert_eq "$(jq -r '.[1].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 24
+  age_subscription second 2024-12-31T13:00:00Z # 23 hours old
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 2
+  export OMIHOMO_TEST_NOW=1735736400 # 13:00 UTC; 24 hours elapsed
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 3
+}
+
+test_absent_and_invalid_intervals_default_to_twelve_hours() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_INTERVAL_HEADER=''
+  run_cli sub add https://example.test/subscription/second
+  assert_eq "$(jq -r '.[1].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 12
+  local header
+  for header in '' 'Profile-Update-Interval:' 'Profile-Update-Interval: 0' 'Profile-Update-Interval: -6' \
+    'Profile-Update-Interval: 1.5' 'Profile-Update-Interval: invalid' \
+    'Profile-Update-Interval: 12e0' 'Profile-Update-Interval: 999999999999999999999'; do
+    export OMIHOMO_TEST_INTERVAL_HEADER="$header"
+    run_cli sub update work
+    assert_eq "$(jq -r '.[0].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 12
+  done
+  age_subscription work 2025-01-01T01:00:00Z # 11 hours old
+  run_cli sub update-due
+  local before
+  before=$(fetch_count)
+  export OMIHOMO_TEST_NOW=1735736400 # 13:00 UTC; 12 hours elapsed
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" "$((before + 1))"
+}
+
+test_legacy_subscriptions_use_twelve_hours_and_catch_overdue_checks() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  local file="$XDG_DATA_HOME/omihomo/subscriptions.json"
+  jq 'map(del(.update_interval_hours))' "$file" >"$file.tmp"
+  mv "$file.tmp" "$file"
+  age_subscription work 2025-01-01T01:00:00Z
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 1
+  export OMIHOMO_TEST_NOW=1735779600 # 2025-01-02 01:00 UTC; overdue after offline time
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 2
+  assert_eq "$(jq -r '.[0].updated_at' "$file")" 2025-01-02T01:00:00Z
+}
+
+test_successful_refresh_commits_interval_changes_and_failed_reload_keeps_them() {
+  setup_connection_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_INTERVAL_HEADER='Profile-Update-Interval: 24'
+  export OMIHOMO_TEST_PUT_FAIL='1'
+  local file="$XDG_DATA_HOME/omihomo/subscriptions.json" before status
+  before=$(<"$file")
+  set +e
+  run_cli sub update work 2>"$TEST_ROOT/error"
+  status=$?
+  set -e
+  assert_eq "$status" 12
+  assert_eq "$(<"$file")" "$before"
+  unset OMIHOMO_TEST_PUT_FAIL
+  run_cli sub update work
+  assert_eq "$(jq -r '.[0].update_interval_hours' "$file")" 24
+  age_subscription work 2024-12-31T13:00:00Z
+  local downloads
+  downloads=$(fetch_count)
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" "$downloads"
+  export OMIHOMO_TEST_NOW=1735736400
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" "$((downloads + 1))"
+}
+
+test_slow_failures_do_not_starve_the_healthy_tail() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  local file="$XDG_DATA_HOME/omihomo/subscriptions.json"
+  # Ten slow failures precede the healthy active subscription, in both runs.
+  jq '.[0] as $healthy | [range(10) | {
+    name: ("slow-" + tostring), url: ("https://example.test/subscription/slow-" + tostring),
+    updated_at: "2025-01-01T06:00:00Z", update_interval_hours: 6, userinfo: {}
+  }] + [$healthy]' "$file" >"$file.tmp"
+  mv "$file.tmp" "$file"
+  mkdir -p "$HOME/.local/bin"
+  ln -s "$REPO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
+  run_cli core sync
+  local service="$XDG_CONFIG_HOME/systemd/user/omihomo-subscription-update.service" batch_budget round status
+  batch_budget=$(sed -n 's/^TimeoutStartSec=//p' "$service")
+  export OMIHOMO_TEST_FETCH_FAIL_PREFIX=https://example.test/subscription/slow-
+  # Scale 60-second downloads and the old 10-minute limit by 1/1000.
+  export OMIHOMO_TEST_FETCH_FAIL_DELAY=0.06
+  for round in 1 2; do
+    age_subscription work
+    set +e
+    if [[ $batch_budget == infinity || -z $batch_budget ]]; then
+      timeout 10s "$REPO_ROOT/bin/omihomo" sub update-due 2>"$TEST_ROOT/error"
+    else
+      timeout 0.6s "$REPO_ROOT/bin/omihomo" sub update-due 2>"$TEST_ROOT/error"
+    fi
+    status=$?
+    set -e
+    assert_eq "$status" 1
+    assert_eq "$(jq -r '.[] | select(.name == "work") | .updated_at' "$file")" 2025-01-01T12:00:00Z
+  done
+  assert_eq "$(grep -c '^clash.meta$' "$TEST_ROOT/curl-agent.log")" 23
+}
+
 tests=(
   test_elapsed_time_survives_sessions_and_refreshes_at_six_hours
   test_manual_refresh_resets_the_deadline
@@ -245,7 +359,13 @@ tests=(
   test_empty_install_does_not_create_state
   test_missing_core_does_not_attempt_a_refresh
   test_sync_installs_timer_for_existing_users_once
+  test_import_persists_the_provider_interval
+  test_absent_and_invalid_intervals_default_to_twelve_hours
+  test_legacy_subscriptions_use_twelve_hours_and_catch_overdue_checks
+  test_successful_refresh_commits_interval_changes_and_failed_reload_keeps_them
+  test_slow_failures_do_not_starve_the_healthy_tail
 )
+if (($#)); then tests=("$@"); fi
 for test_name in "${tests[@]}"; do
   printf 'TEST %s\n' "$test_name"
   "$test_name"

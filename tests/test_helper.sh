@@ -128,6 +128,10 @@ if [[ ${OMIHOMO_TEST_API_UNREACHABLE:-no} == yes && $url == *127.0.0.1* ]]; then
 fi
 if [[ $url == *subscription* ]]; then
   printf '%s\n' "$agent" >>"$TEST_ROOT/curl-agent.log"
+  if [[ -n ${OMIHOMO_TEST_FETCH_FAIL_PREFIX:-} && $url == "$OMIHOMO_TEST_FETCH_FAIL_PREFIX"* ]]; then
+    sleep "${OMIHOMO_TEST_FETCH_FAIL_DELAY:-0}"
+    exit 1
+  fi
   [[ ${OMIHOMO_TEST_FETCH_FAIL:-no} == yes ]] && exit 1
   [[ -n ${OMIHOMO_TEST_FETCH_FAIL_URL:-} && $url == "$OMIHOMO_TEST_FETCH_FAIL_URL" ]] && exit 1
   if [[ -n ${OMIHOMO_TEST_SUBSCRIPTION_FIXTURE:-} ]]; then
@@ -145,6 +149,9 @@ if [[ $url == *subscription* ]]; then
     # The subscription names itself, so the stub titles it after the last path
     # segment: /subscription/work answers to "work".
     printf 'subscription-userinfo: upload=10; download=20; total=100; expire=200\r\n' >"$headers"
+    if [[ -n ${OMIHOMO_TEST_INTERVAL_HEADER:-} ]]; then
+      printf '%s\r\n' "$OMIHOMO_TEST_INTERVAL_HEADER" >>"$headers"
+    fi
     if [[ ${OMIHOMO_TEST_NO_TITLE:-no} != yes ]]; then
       printf 'profile-title: %s\r\n' "${OMIHOMO_TEST_TITLE:-${url##*/}}" >>"$headers"
     fi

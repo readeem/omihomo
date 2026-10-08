@@ -16,7 +16,9 @@ Five suites, one runner:
   command stubs for mihomo, curl, and systemd.
 - `auto_update_test.sh` uses the same isolated CLI boundary with a fixed clock. It checks
   deadlines across sessions, manual updates, failure/retry, concurrent checks, stopped cores,
-  connection restoration, removed configs, rollback, and timer installation on upgrade.
+  connection restoration, removed configs, rollback, and timer installation on upgrade. It
+  also checks provider intervals, the 12-hour fallback, metadata changes committed only on
+  success, legacy records and healthy subscriptions behind long sequences of slow failures.
 
 `real_provider_test.sh` is an optional contract check against the installed Mihomo binary. It
 starts an isolated core in a temporary directory, verifies plain and base64 share-link providers,

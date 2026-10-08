@@ -39,12 +39,18 @@ The form-facing rule types are `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and
 `rule raw` is the CLI-only escape hatch for all other mihomo rule syntax. Raw rules go to the
 prepend list by default; `append` and `filter` are available only through this command.
 
-`sub update-due` refreshes each subscription whose saved `updated_at` is at least six hours old.
+`sub update-due` refreshes each subscription once its saved `updated_at` plus
+`update_interval_hours` has elapsed. The response header `Profile-Update-Interval` supplies
+positive whole hours; absent, invalid or unrepresentably large values fall back to 12 hours.
+Records imported before interval metadata existed also use 12 hours until their next update.
+The provider's header is documented in the [Mistgate subscription guide](https://www.mistgate.app/guide/subscriptions/).
 It is the entry point for `omihomo-subscription-update.timer`, which checks once per minute and
 catches missed checks after login or resume. Each deadline is checked under the shared file
 lock, so overlapping checks and manual updates cannot download the same due subscription twice.
 A successful manual refresh resets the deadline. Failed refreshes leave it unchanged and are
 retried at the next check; one failing subscription does not prevent the others from updating.
+Each successful import/update commits the effective interval alongside its cache and timestamp;
+a changed provider interval takes effect only when that transaction succeeds.
 With no subscriptions or no installed core, the command succeeds without creating state.
 
 The timer is independent of core autostart. An update never starts a stopped core. For a running
@@ -53,6 +59,8 @@ then restores selections still present in the new subscription. A removed config
 group's valid fallback selected. Failed selection restoration attempts to reload the previous
 runtime and restore its selections before reporting failure. Downloads have a 10-second
 connection timeout and a 60-second overall timeout.
+The oneshot service has no whole-batch timeout, so a long sequence of slow failed downloads
+cannot repeatedly prevent healthy later subscriptions from being checked.
 
 When the core is already running, rule writes hot-reload its config and leave the TUN adapter in
 place. A successful write means mihomo accepted the config; it does not prove that every existing
@@ -118,7 +126,7 @@ fields are nullable because those live API values remain panel-owned per ADR-000
 The state directory is `$XDG_DATA_HOME/omihomo`, falling back to `~/.local/share/omihomo`:
 
 ```text
-subscriptions.json       array of {name, url, updated_at, userinfo}
+subscriptions.json       array of {name, url, updated_at, update_interval_hours, userinfo}
   cache/<name>.yaml        validated config or generated raw-subscription wrapper
 override.yaml            global user-owned settings and rule lists
 runtime.yaml             merged YAML loaded by mihomo
