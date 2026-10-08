@@ -27,4 +27,5 @@ fi
 if [[ ${OMIHOMO_REAL_CORE_TEST:-0} == 1 ]]; then
   "$here/real_provider_test.sh"
 fi
-exec "$here/cli_test.sh"
+"$here/cli_test.sh"
+exec "$here/auto_update_test.sh"

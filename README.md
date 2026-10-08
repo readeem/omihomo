@@ -37,6 +37,21 @@ Subscription URLs may return a full Mihomo YAML config or a raw share-link forma
 installed Mihomo version understands. Raw subscriptions get one generated `Proxy` selector and a
 final `MATCH,Proxy` rule.
 
+Subscriptions refresh automatically six hours after their last successful download, including
+manual updates. Time while the computer is off or asleep counts toward that deadline; overdue
+subscriptions refresh on the next check after login or resume. Checks run every minute, even
+with the panel closed or the core stopped. A refresh preserves the core's running/stopped state,
+mode, TUN state, and selected configs that still exist in their groups. Failed downloads keep
+the previous configuration and retry on the next check.
+
+`core install` enables the user timer. Existing installations gain it through `core sync` when
+the updated widget loads. To turn automatic refresh off or back on:
+
+```sh
+systemctl --user disable --now omihomo-subscription-update.timer
+systemctl --user enable --now omihomo-subscription-update.timer
+```
+
 Subscriptions without an inbound get `mixed-port: 7890`. Omihomo defaults DNS to `redir-host`
 with Cloudflare DNS-over-HTTPS through the primary proxy group. Proxy-server hostnames and
 DNS-server hostnames use direct Cloudflare DoH so connecting the proxy does not depend on
@@ -56,6 +71,7 @@ Omihomo is a proxy manager, so it needs more than a config file. All of it is li
 | setuid+setgid root on `/usr/bin/mihomo` | `chmod 6755` | `core install`, `core repair` |
 | pacman hook that reapplies those bits after a mihomo upgrade | `/usr/share/libalpm/hooks/omihomo-permissions.hook` | `core install`, `core repair` |
 | systemd user unit for the core | `~/.config/systemd/user/omihomo.service` | `core install` |
+| subscription refresh service and timer | `~/.config/systemd/user/omihomo-subscription-update.{service,timer}` | `core install`, first `core sync` after upgrade |
 | CLI symlink | `~/.local/bin/omihomo` | `core install` |
 | subscriptions, configs, rules, cache | `~/.local/share/omihomo/` | every write verb |
 | proxy env for tailscaled | `/etc/systemd/system/tailscaled.service.d/omihomo.conf` | `set tailscale on` only |
@@ -75,7 +91,7 @@ omihomo core uninstall          # add --keep-data to spare subscriptions and cac
 omarchy plugin remove dev.readeem.omihomo
 ```
 
-`core uninstall` stops and deletes the systemd unit, drops the setuid bits and the pacman hook,
+`core uninstall` stops and deletes the core unit and subscription refresh units, drops the setuid bits and the pacman hook,
 removes the tailscaled drop-in, removes the `~/.local/bin/omihomo` symlink, uninstalls
 `mihomo-bin`, and deletes `~/.local/share/omihomo`. It leaves `go-yq`, `jq`, `nftables`, and
 `curl` alone, since your system probably wanted those anyway.

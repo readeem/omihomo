@@ -34,7 +34,8 @@ subscription_userinfo_json() {
 # downstream sees binary instead of a subscription.
 fetch_subscription() {
   local url=$1 body=$2 headers=$3
-  if ! "$OMIHOMO_CURL" -fsSL --compressed -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" "$url"; then
+  if ! "$OMIHOMO_CURL" -fsSL --compressed --connect-timeout 10 --max-time 60 \
+    -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" "$url"; then
     omi_error "subscription fetch failed" 21
   fi
 }
@@ -139,15 +140,13 @@ preflight_raw_provider() {
 }
 
 write_raw_wrapper() {
-  local url=$1 provider_path=$2 destination=$3
-  OMIHOMO_SUBSCRIPTION_URL=$url OMIHOMO_PROVIDER_PATH=$provider_path \
-  OMIHOMO_USER_AGENT=$OMIHOMO_USER_AGENT omi_yq -n -P '
+  local provider_path=$1 destination=$2
+  # The subscription scheduler owns downloads and their saved deadline. A
+  # second HTTP provider timer would bypass both it and connection restoration.
+  OMIHOMO_PROVIDER_PATH=$provider_path omi_yq -n -P '
     ."proxy-providers".subscription = {
-      "type": "http",
-      "url": strenv(OMIHOMO_SUBSCRIPTION_URL),
-      "path": strenv(OMIHOMO_PROVIDER_PATH),
-      "interval": 3600,
-      "header": {"User-Agent": [strenv(OMIHOMO_USER_AGENT)]}
+      "type": "file",
+      "path": strenv(OMIHOMO_PROVIDER_PATH)
     } |
     ."proxy-groups" = [{
       "name": "Proxy",
@@ -176,7 +175,7 @@ prepare_subscription_cache() {
       return 20
     }
   prepared=$(mktemp "${OMIHOMO_DATA_DIR}/.subscription.XXXXXX")
-  if ! write_raw_wrapper "$url" "./providers/${PREPARED_PROVIDER##*/}" "$prepared"; then
+  if ! write_raw_wrapper "./providers/${PREPARED_PROVIDER##*/}" "$prepared"; then
     rm -f "$prepared"
     omi_error "failed to prepare the raw subscription" 20
     return 20
@@ -303,12 +302,65 @@ subscription_list() {
   jq --arg active "$active" '[.[] | {name, url, updated_at, upload: .userinfo.upload, download: .userinfo.download, total: .userinfo.total, expire: .userinfo.expire, active: (.name == $active)}]' "$OMIHOMO_SUBSCRIPTIONS_FILE"
 }
 
+# Capture immediately before reloading, after the potentially slow download.
+# Mode and TUN normally live in the override; selectors are live controller
+# state, and a reload can reset them even with store-selected enabled.
+subscription_connection_snapshot() {
+  local address secret config proxies
+  address=$(omi_api_address)
+  secret=$(omi_api_secret)
+  config=$("$OMIHOMO_CURL" -fsS --max-time 5 -H "Authorization: Bearer $secret" "http://${address}/configs") || return 12
+  proxies=$("$OMIHOMO_CURL" -fsS --max-time 5 -H "Authorization: Bearer $secret" "http://${address}/proxies") || return 12
+  jq -cen --argjson config "$config" --argjson proxies "$proxies" '
+    select(($config.mode == "rule" or $config.mode == "global" or $config.mode == "direct")
+      and ($config.tun.enable | type == "boolean") and ($proxies.proxies | type == "object")) |
+    {mode: $config.mode, tun: $config.tun.enable,
+     selections: [$proxies.proxies | to_entries[] | select(.value.type == "Selector") |
+       {group: .key, name: .value.now}]}
+  '
+}
+
+subscription_restore_selections() {
+  local snapshot=$1 address secret proxies selections selection group name encoded payload
+  address=$(omi_api_address)
+  secret=$(omi_api_secret)
+  proxies=$("$OMIHOMO_CURL" -fsS --max-time 5 -H "Authorization: Bearer $secret" "http://${address}/proxies") || return 12
+  # A server removed by the provider cannot be restored. Leave mihomo's valid
+  # fallback in that group, while restoring every selection still available.
+  selections=$(jq -cr --argjson proxies "$proxies" '.selections[] |
+    select(. as $selection | $proxies.proxies[$selection.group] |
+      .type == "Selector" and any(.all[]?; . == $selection.name)) |
+    [.group, .name] | @base64' <<<"$snapshot") || return 12
+  while IFS= read -r selection; do
+    [[ -n $selection ]] || continue
+    group=$(base64 -d <<<"$selection" | jq -r '.[0]')
+    name=$(base64 -d <<<"$selection" | jq -r '.[1]')
+    encoded=$(jq -rn --arg group "$group" '$group | @uri')
+    payload=$(jq -cn --arg name "$name" '{name: $name}')
+    "$OMIHOMO_CURL" -fsS --max-time 5 -X PUT -H "Authorization: Bearer $secret" \
+      -H 'Content-Type: application/json' --data "$payload" "http://${address}/proxies/${encoded}" >/dev/null || return 12
+  done <<<"$selections"
+}
+
+subscription_reload_runtime() {
+  local runtime=$1 snapshot=$2 status=0
+  omi_reload_runtime "$runtime" || status=$?
+  if ((status == 0)); then
+    subscription_restore_selections "$snapshot" && return 0
+    status=12
+    # Disk still contains the previous runtime until the whole update succeeds.
+    omi_load_runtime "$OMIHOMO_RUNTIME_FILE" "$runtime" || true
+  fi
+  subscription_restore_selections "$snapshot" || true
+  omi_error "subscription reload failed; attempted to restore the previous connection" "$status"
+}
+
 subscription_update() {
   local name=${1:-}
-  omi_init_layout
+  omi_init_layout --no-runtime-sync
   omi_require_core
   subscription_exists "$name" || omi_error "subscription not found: $name" 1
-  local url body headers record temporary active cache runtime= status previous_provider
+  local url body headers record temporary active cache runtime= status previous_provider snapshot
   url=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .url' "$OMIHOMO_SUBSCRIPTIONS_FILE")
   cache="$OMIHOMO_CACHE_DIR/${name}.yaml"
   previous_provider=$(cached_raw_provider "$cache" "$url")
@@ -328,7 +380,17 @@ subscription_update() {
       return "$status"
     }
     if omi_unit_active; then
-      omi_reload_runtime "$runtime" || {
+      snapshot=$(subscription_connection_snapshot) || {
+        status=$?
+        rm -f "$body" "$headers" "$temporary" "$runtime" "${PREPARED_PROVIDER:-}"
+        omi_error "could not capture the current connection before updating" "$status"
+        return "$status"
+      }
+      OMIHOMO_CONNECTION_SNAPSHOT=$snapshot omi_yq -i '
+        .mode = (strenv(OMIHOMO_CONNECTION_SNAPSHOT) | from_json | .mode) |
+        .tun.enable = (strenv(OMIHOMO_CONNECTION_SNAPSHOT) | from_json | .tun)
+      ' "$runtime"
+      subscription_reload_runtime "$runtime" "$snapshot" || {
         status=$?
         rm -f "$body" "$headers" "$temporary" "$runtime" "${PREPARED_PROVIDER:-}"
         return "$status"
@@ -341,6 +403,33 @@ subscription_update() {
     omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
   fi
   rm -f "$headers" "$previous_provider"
+}
+
+# Each subscription is checked under the same lock as manual changes. A
+# successful manual refresh resets the six-hour deadline as well. Failed
+# downloads keep updated_at unchanged and are retried on the next timer tick.
+subscription_update_if_due() {
+  local name=$1 updated now
+  [[ -f $OMIHOMO_SUBSCRIPTIONS_FILE ]] || return 0
+  subscription_exists "$name" || return 0
+  updated=$(jq -r --arg name "$name" '.[] | select(.name == $name) |
+    (.updated_at | try fromdateiso8601 catch 0)' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  now=$(date +%s)
+  ((now - updated >= 21600)) || return 0
+  subscription_update "$name"
+}
+
+subscription_update_due() {
+  [[ -f $OMIHOMO_SUBSCRIPTIONS_FILE ]] && omi_core_installed || return 0
+  local names name status=0
+  names=$(jq -r '.[].name' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    # A separate process keeps errexit effective inside subscription_update
+    # while allowing one failing subscription to leave the others runnable.
+    "$OMIHOMO_ROOT/libexec/sub.sh" update-if-due "$name" || status=1
+  done <<<"$names"
+  return "$status"
 }
 
 subscription_remove() {
@@ -400,6 +489,8 @@ case ${1:-} in
   list) subscription_list ;;
   remove) omi_with_lock subscription_remove "${2:-}" ;;
   update) omi_with_lock subscription_update "${2:-}" ;;
+  update-due) subscription_update_due ;;
+  update-if-due) omi_with_lock subscription_update_if_due "${2:-}" ;;
   activate) omi_with_lock subscription_activate "${2:-}" ;;
   *) omi_error "unknown subscription command" 1 ;;
 esac

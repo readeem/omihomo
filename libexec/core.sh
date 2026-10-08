@@ -19,7 +19,9 @@ core_install() {
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$OMIHOMO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
   omi_write_unit
+  omi_write_subscription_timer
   omi_systemctl --user daemon-reload
+  omi_systemctl --user enable --now omihomo-subscription-update.timer
   omi_note "mihomo is installed. Open the panel and add a subscription."
 }
 
@@ -67,6 +69,8 @@ core_uninstall() {
     sudo -v || omi_error "sudo is required to uninstall mihomo" 1
   fi
 
+  "$OMIHOMO_SYSTEMCTL" --user disable --now omihomo-subscription-update.timer omihomo-subscription-update.service >/dev/null 2>&1 || true
+  rm -f "$(dirname "$OMIHOMO_UNIT_FILE")"/omihomo-subscription-update.{service,timer}
   "$OMIHOMO_SYSTEMCTL" --user disable --now "$OMIHOMO_UNIT" >/dev/null 2>&1 || true
   rm -f "$OMIHOMO_UNIT_FILE"
   "$OMIHOMO_SYSTEMCTL" --user daemon-reload >/dev/null 2>&1 || true
@@ -117,6 +121,14 @@ core_start() {
 core_sync() {
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
   omi_with_lock omi_init_layout
+  # Existing installations reach sync when the updated widget loads. Create
+  # the new timer once; later syncs respect users who disabled it themselves.
+  if omi_core_installed && [[ -x $HOME/.local/bin/omihomo &&
+    ! -f $(dirname "$OMIHOMO_UNIT_FILE")/omihomo-subscription-update.timer ]]; then
+    omi_write_subscription_timer
+    omi_systemctl --user daemon-reload
+    omi_systemctl --user enable --now omihomo-subscription-update.timer
+  fi
 }
 
 core_stop() {

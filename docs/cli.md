@@ -1,8 +1,9 @@
 # Omihomo CLI
 
 `bin/omihomo` is the disk and systemd boundary for the plugin. The panel invokes this file by
-absolute path from the plugin directory. The CLI does not wrap mihomo API operations for group or
-config selection, latency, connections, or parameter lookup.
+absolute path from the plugin directory. The CLI does not expose mihomo API operations for group
+or config selection, latency, connections, or parameter lookup. A subscription update briefly
+captures and restores live selections as part of its config reload transaction.
 
 ## Commands
 
@@ -15,6 +16,7 @@ omihomo sub add <url>
 omihomo sub list
 omihomo sub remove <name>
 omihomo sub update <name>
+omihomo sub update-due
 omihomo sub activate <name>
 
 omihomo rule add <type> <value> <target>
@@ -36,6 +38,21 @@ omihomo api-info
 The form-facing rule types are `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME`.
 `rule raw` is the CLI-only escape hatch for all other mihomo rule syntax. Raw rules go to the
 prepend list by default; `append` and `filter` are available only through this command.
+
+`sub update-due` refreshes each subscription whose saved `updated_at` is at least six hours old.
+It is the entry point for `omihomo-subscription-update.timer`, which checks once per minute and
+catches missed checks after login or resume. Each deadline is checked under the shared file
+lock, so overlapping checks and manual updates cannot download the same due subscription twice.
+A successful manual refresh resets the deadline. Failed refreshes leave it unchanged and are
+retried at the next check; one failing subscription does not prevent the others from updating.
+With no subscriptions or no installed core, the command succeeds without creating state.
+
+The timer is independent of core autostart. An update never starts a stopped core. For a running
+active subscription it captures mode, TUN enablement and group selections just before reloading,
+then restores selections still present in the new subscription. A removed config leaves the
+group's valid fallback selected. Failed selection restoration attempts to reload the previous
+runtime and restore its selections before reporting failure. Downloads have a 10-second
+connection timeout and a 60-second overall timeout.
 
 When the core is already running, rule writes hot-reload its config and leave the TUN adapter in
 place. A successful write means mihomo accepted the config; it does not prove that every existing
@@ -102,7 +119,7 @@ The state directory is `$XDG_DATA_HOME/omihomo`, falling back to `~/.local/share
 
 ```text
 subscriptions.json       array of {name, url, updated_at, userinfo}
-cache/<name>.yaml        validated config or generated raw-subscription wrapper
+  cache/<name>.yaml        validated config or generated raw-subscription wrapper
 override.yaml            global user-owned settings and rule lists
 runtime.yaml             merged YAML loaded by mihomo
 active                   active subscription name, one line
@@ -128,12 +145,14 @@ temporary core. This forces Mihomo to parse raw base64 and share-link lists with
 URL twice or touching the running service. Rejected content exits with code `20` and leaves no
 subscription record or cache.
 
-For accepted raw content, the cached YAML is a generated config with one HTTP provider named
+For accepted raw content, the cached YAML is a generated config with one file provider named
 `subscription`, one `Proxy` selector, and a final `MATCH,Proxy` rule. The validated response is
 saved at `providers/<sha256-of-url>.<generation>.yaml`. Each import gets a new path so Mihomo
 loads the fetched links immediately instead of reusing an older provider cache. A successful
-update removes the previous cache; a failed reload preserves it. Mihomo still refreshes the
-provider hourly after activation, using the same User-Agent as Omihomo.
+update removes the previous cache; a failed reload preserves it. The subscription timer owns
+refreshes for both raw content and full configs. Mihomo reads the downloaded provider file
+without running a second HTTP refresh schedule or bypassing saved deadlines and selection
+restoration. Existing HTTP wrappers become file-backed on their next successful update.
 
 `sub add` activates the subscription it just added when nothing is active yet, because `core start`
 refuses to run without one. A later `sub add` never takes the slot from the active subscription;
@@ -281,13 +300,19 @@ ADR-0006). Installation is terminal-only because pacman's output and the one set
 prompt need somewhere to go. `core repair` is the explicit reapplication path, and it also clears
 the file capabilities left behind by installs that predate ADR-0006.
 
+Installation also writes and enables `omihomo-subscription-update.service` and its timer.
+Existing installations gain these units through the first `core sync` after upgrading, when
+the installed CLI symlink exists. Subsequent syncs leave an explicitly disabled timer disabled.
+The timer can be disabled with `systemctl --user disable --now omihomo-subscription-update.timer`
+and enabled again with `systemctl --user enable --now omihomo-subscription-update.timer`.
+
 The YAML tool has to be mikefarah's yq v4, packaged on Arch as `go-yq`. Arch's `yq` package is
 kislyuk's jq wrapper, which owns the same `/usr/bin/yq` and speaks a different language; `core
 install` replaces it, and every other command fails with an explicit message when the wrong one is
 on `PATH`.
 
-`core uninstall` reverses all of it: it stops and disables the unit, restores the binary's plain
+`core uninstall` reverses all of it: it stops and disables the core and subscription refresh units, restores the binary's plain
 `755` mode and removes the pacman hook and the tailscaled drop-in, drops the
-`~/.local/bin/omihomo` symlink and the unit file, removes the `mihomo-bin` package, and deletes
+`~/.local/bin/omihomo` symlink and all three unit files, removes the `mihomo-bin` package, and deletes
 the state directory. `--keep-data` keeps subscriptions, override,
 and cache. Removing the widget itself is `omarchy plugin remove omihomo`.
