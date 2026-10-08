@@ -1,6 +1,6 @@
 # Tests
 
-Four suites, one runner:
+Five suites, one runner:
 
 - `model_test.js` exercises `Model.js`, the widget's parsing and formatting seam, under
   `node --test`. Everything the panel renders passes through it, and none of it needs QML.
@@ -14,6 +14,11 @@ Four suites, one runner:
   already in flight cannot undo a selection and that a traffic stream which ends reconnects.
 - `cli_test.sh` runs the public `bin/omihomo` interface with isolated XDG directories and
   command stubs for mihomo, curl, and systemd.
+- `auto_update_test.sh` uses the same isolated CLI boundary with a fixed clock. It checks
+  deadlines across sessions, manual updates, failure/retry, concurrent checks, stopped cores,
+  connection restoration, removed configs, rollback, and timer installation on upgrade. It
+  also checks provider intervals, the 12-hour fallback, metadata changes committed only on
+  success, legacy records and healthy subscriptions behind long sequences of slow failures.
 
 `real_provider_test.sh` is an optional contract check against the installed Mihomo binary. It
 starts an isolated core in a temporary directory, verifies plain and base64 share-link providers,

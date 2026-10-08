@@ -71,7 +71,9 @@ omi_init_layout() {
   else
     omi_backfill_override "$OMIHOMO_OVERRIDE_FILE"
   fi
-  omi_sync_runtime
+  # An update prepares and validates its final runtime in one transaction.
+  # Syncing the old cache first could reset live selections before capture.
+  [[ ${1:-} == --no-runtime-sync ]] || omi_sync_runtime
 }
 
 omi_sync_runtime() {
@@ -414,6 +416,35 @@ Restart=on-failure
 
 [Install]
 WantedBy=default.target
+EOF
+}
+
+omi_write_subscription_timer() {
+  local directory
+  directory=$(dirname "$OMIHOMO_UNIT_FILE")
+  mkdir -p "$directory"
+  cat >"$directory/omihomo-subscription-update.service" <<EOF
+[Unit]
+Description=Refresh Omihomo subscriptions when their saved deadlines elapse
+
+[Service]
+Type=oneshot
+ExecStart=$HOME/.local/bin/omihomo sub update-due
+# Downloads and controller calls have their own bounds. A fixed batch limit
+# could repeatedly stop long lists before their healthy final subscriptions.
+TimeoutStartSec=infinity
+EOF
+  cat >"$directory/omihomo-subscription-update.timer" <<'EOF'
+[Unit]
+Description=Check Omihomo subscription refresh deadlines every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
 EOF
 }
 

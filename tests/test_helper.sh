@@ -62,7 +62,7 @@ while (($#)); do
     -D) headers=$2; shift 2 ;;
     -X) method=$2; shift 2 ;;
     --compressed) compressed=yes; shift ;;
-    --unix-socket|--max-time) shift 2 ;;
+    --unix-socket|--max-time|--connect-timeout) shift 2 ;;
     --data|--data-raw|--data-binary|--json) data=$2; shift 2 ;;
     -w) shift 2 ;;
     -s|-S|-f|-L|-N|-k|-H) shift; [[ $1 == *:* ]] && shift || true ;;
@@ -81,12 +81,29 @@ if [[ $method == PUT ]]; then
   fi
   # OMIHOMO_TEST_PUT_FAIL names the loads the core rejects, by number.
   [[ " ${OMIHOMO_TEST_PUT_FAIL:-} " == *" $count "* ]] && exit 22
+  if [[ $url == */proxies/* ]]; then
+    group=${url##*/}
+    printf -v group '%b' "${group//%/\\x}"
+    name=$(jq -r '.name' <<<"$data")
+    jq --arg group "$group" --arg name "$name" '.[$group].now = $name' \
+      "$TEST_ROOT/proxies.json" >"$TEST_ROOT/proxies.tmp"
+    mv "$TEST_ROOT/proxies.tmp" "$TEST_ROOT/proxies.json"
+    exit 0
+  fi
   # The core's TUN adapter follows the last accepted load, unless it is stuck.
   # live.yaml is what the core runs: with OMIHOMO_TEST_TUN_FAIL the adapter
   # fails to start, and the old device lingers anyway.
   if [[ -n $path && -f $path ]]; then
     device=${OMIHOMO_TUN_DEVICE:-$(yq -r '.tun.device // "Meta"' "$path")}
     cp "$path" "$TEST_ROOT/live.yaml"
+    if [[ -f $TEST_ROOT/proxies.json ]]; then
+      groups=$(yq -o=json '."proxy-groups" // []' "$path")
+      jq --argjson groups "$groups" 'with_entries(.key as $name |
+        ($groups[] | select(.name == $name)) as $group |
+        .value.all = $group.proxies | .value.now = .value.all[0])' \
+        "$TEST_ROOT/proxies.json" >"$TEST_ROOT/proxies.tmp"
+      mv "$TEST_ROOT/proxies.tmp" "$TEST_ROOT/proxies.json"
+    fi
     if [[ $(yq -r '.tun.enable // false' "$path") == true ]]; then
       touch "$OMIHOMO_NET_DIR/$device"
       [[ ${OMIHOMO_TEST_TUN_FAIL:-no} == yes ]] && yq -i '.tun.enable = false' "$TEST_ROOT/live.yaml"
@@ -111,7 +128,12 @@ if [[ ${OMIHOMO_TEST_API_UNREACHABLE:-no} == yes && $url == *127.0.0.1* ]]; then
 fi
 if [[ $url == *subscription* ]]; then
   printf '%s\n' "$agent" >>"$TEST_ROOT/curl-agent.log"
+  if [[ -n ${OMIHOMO_TEST_FETCH_FAIL_PREFIX:-} && $url == "$OMIHOMO_TEST_FETCH_FAIL_PREFIX"* ]]; then
+    sleep "${OMIHOMO_TEST_FETCH_FAIL_DELAY:-0}"
+    exit 1
+  fi
   [[ ${OMIHOMO_TEST_FETCH_FAIL:-no} == yes ]] && exit 1
+  [[ -n ${OMIHOMO_TEST_FETCH_FAIL_URL:-} && $url == "$OMIHOMO_TEST_FETCH_FAIL_URL" ]] && exit 1
   if [[ -n ${OMIHOMO_TEST_SUBSCRIPTION_FIXTURE:-} ]]; then
     cp "$OMIHOMO_TEST_SUBSCRIPTION_FIXTURE" "$output"
   else
@@ -127,6 +149,9 @@ if [[ $url == *subscription* ]]; then
     # The subscription names itself, so the stub titles it after the last path
     # segment: /subscription/work answers to "work".
     printf 'subscription-userinfo: upload=10; download=20; total=100; expire=200\r\n' >"$headers"
+    if [[ -n ${OMIHOMO_TEST_INTERVAL_HEADER:-} ]]; then
+      printf '%s\r\n' "$OMIHOMO_TEST_INTERVAL_HEADER" >>"$headers"
+    fi
     if [[ ${OMIHOMO_TEST_NO_TITLE:-no} != yes ]]; then
       printf 'profile-title: %s\r\n' "${OMIHOMO_TEST_TITLE:-${url##*/}}" >>"$headers"
     fi
@@ -135,8 +160,20 @@ if [[ $url == *subscription* ]]; then
 fi
 if [[ $url == http://127.0.0.1*/configs ]]; then
   enabled=false
-  [[ -f $TEST_ROOT/live.yaml ]] && enabled=$(yq -r '.tun.enable // false' "$TEST_ROOT/live.yaml")
-  printf '{"tun":{"enable":%s}}\n' "$enabled"
+  mode=rule
+  runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  [[ ! -f $TEST_ROOT/live.yaml ]] || runtime="$TEST_ROOT/live.yaml"
+  if [[ -f $runtime ]]; then
+    enabled=$(yq -r '.tun.enable // false' "$runtime")
+    mode=$(yq -r '.mode // "rule"' "$runtime")
+  fi
+  jq -cn --arg mode "$mode" --argjson enabled "$enabled" '{mode: $mode, tun: {enable: $enabled}}'
+  exit 0
+fi
+if [[ $url == http://127.0.0.1*/proxies ]]; then
+  proxies='{}'
+  [[ ! -f $TEST_ROOT/proxies.json ]] || proxies=$(cat "$TEST_ROOT/proxies.json")
+  jq -cn --argjson proxies "$proxies" '{proxies: $proxies}'
   exit 0
 fi
 if [[ $url == *127.0.0.1* ]]; then

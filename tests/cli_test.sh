@@ -127,13 +127,13 @@ test_raw_subscription_is_cached_as_a_provider_wrapper() {
   run_cli sub add "$url"
 
   local cache="$XDG_DATA_HOME/omihomo/cache/raw.yaml"
-  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
-  assert_eq "$(yq -r '."proxy-providers".subscription.url' "$cache")" "$url"
+  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" file
+  assert_eq "$(yq -r '."proxy-providers".subscription | has("url")' "$cache")" false
   local provider
   provider=$(yq -r '."proxy-providers".subscription.path' "$cache")
   [[ $provider =~ ^\./providers/d314e84c465c28453ac705094c504c6004c0bfc32741962e9939760a7f3484ec\.[[:alnum:]]{6}\.yaml$ ]] ||
     fail "provider cache is not scoped to the subscription URL"
-  assert_eq "$(yq -r '."proxy-providers".subscription.header.User-Agent[0]' "$cache")" clash.meta
+  assert_eq "$(yq -r '."proxy-providers".subscription | has("interval")' "$cache")" false
   assert_eq "$(yq -r '."proxy-groups"[0].name' "$cache")" Proxy
   assert_eq "$(yq -r '.rules[0]' "$cache")" MATCH,Proxy
   assert_json_field "$(run_cli sub list | jq '.[0]')" upload 10
@@ -150,7 +150,7 @@ test_base64_subscription_is_cached_as_a_provider_wrapper() {
   run_cli sub add https://example.test/subscription/encoded
 
   local cache="$XDG_DATA_HOME/omihomo/cache/encoded.yaml"
-  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
+  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" file
   assert_eq "$(yq -r '."proxy-groups"[0].use[0]' "$cache")" subscription
 }
 
@@ -203,7 +203,7 @@ test_gzip_only_subscription_server_is_decoded() {
   run_cli sub add https://example.test/subscription/gzipped
 
   local cache="$XDG_DATA_HOME/omihomo/cache/gzipped.yaml"
-  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" http
+  assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" file
   assert_eq "$(yq -r '."proxy-groups"[0].use[0]' "$cache")" subscription
 }
 
@@ -1382,6 +1382,9 @@ test_install_has_one_privileged_setup_boundary() {
   assert_eq "$(wc -l <"$TEST_ROOT/sudo.log")" 1
   assert_file_contains "$TEST_ROOT/sudo.log" "root.sh prepare"
   assert_file_contains "$TEST_ROOT/yay.log" "--sudoloop"
+  assert_file_contains "$XDG_CONFIG_HOME/systemd/user/omihomo-subscription-update.timer" 'OnCalendar=*-*-* *:*:00'
+  assert_file_contains "$XDG_CONFIG_HOME/systemd/user/omihomo-subscription-update.service" 'sub update-due'
+  assert_file_contains "$TEST_ROOT/systemctl.log" 'enable --now omihomo-subscription-update.timer'
 }
 
 test_active_override_change_reports_unreachable_controller() {
@@ -1430,10 +1433,14 @@ test_uninstall_removes_every_artifact() {
   local unit="$XDG_CONFIG_HOME/systemd/user/omihomo.service"
   mkdir -p "$(dirname "$unit")"
   printf '[Service]\n' >"$unit"
+  touch "$(dirname "$unit")"/omihomo-subscription-update.{service,timer}
 
   run_cli core uninstall
 
   [[ ! -e $unit ]] || fail "unit file survived uninstall"
+  [[ ! -e $(dirname "$unit")/omihomo-subscription-update.timer ]] || fail "refresh timer survived uninstall"
+  [[ ! -e $(dirname "$unit")/omihomo-subscription-update.service ]] || fail "refresh service survived uninstall"
+  assert_file_contains "$TEST_ROOT/systemctl.log" 'disable --now omihomo-subscription-update.timer omihomo-subscription-update.service'
   [[ ! -e $HOME/.local/bin/omihomo ]] || fail "launcher symlink survived uninstall"
   [[ ! -d $XDG_DATA_HOME/omihomo ]] || fail "state directory survived uninstall"
   assert_file_contains "$TEST_ROOT/yay.log" "-Rns --noconfirm mihomo-bin"
