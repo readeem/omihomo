@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="Omihomo logo" width="96" height="96">
-
-# Omihomo
+<h1>
+  <img src="assets/logo.svg" alt="" height="32">
+  Omihomo
+</h1>
 
 **The [mihomo](https://wiki.metacubex.one) proxy core, run from the Omarchy bar.**
 
@@ -42,8 +43,6 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
     <td></td>
   </tr>
 </table>
-
-All data in the screenshots is made up.
 
 ## Requirements
 
