@@ -1,21 +1,59 @@
+<div align="center">
+
+<img src="assets/logo.svg" alt="Omihomo logo" width="96" height="96">
+
 # Omihomo
 
-An Omarchy 4 bar widget for the [mihomo](https://wiki.metacubex.one) proxy core. Add a
-subscription, pick a config, flip TUN, watch live connections, all from the bar. Underneath sits a
-small bash CLI that owns the core's install, its systemd user unit, and everything that touches
-disk.
+**The [mihomo](https://wiki.metacubex.one) proxy core, run from the Omarchy bar.**
 
-![The Omihomo panel open in the Omarchy bar](preview.png)
+Subscriptions, groups, latency, rules, TUN, and live connections, one keypress away.
+
+[![Omarchy 4](https://img.shields.io/badge/Omarchy-4-7aa2f7)](https://omarchy.org)
+[![Bar widget](https://img.shields.io/badge/plugin-bar%20widget-bb9af7)](manifest.json)
+[![License: MIT](https://img.shields.io/badge/license-MIT-9ece6a)](LICENSE)
+
+![Omihomo's main panel, connections log, and rules editor open over the Omarchy desktop](preview.png)
+
+</div>
+
+## Features
+
+- **One-click core.** Start, stop, and install mihomo from the bar. The icon dims when the core is off.
+- **Subscriptions.** Paste a URL, and Omihomo imports it, names it, and refreshes it on the provider's schedule.
+- **Groups and configs.** Pick a config, latency-test one or a whole group, and choose the primary group.
+- **Live readout.** Throughput, uptime, and the egress IP with its round trip through the selected config.
+- **Connections log.** Open and recently closed connections, grouped by process and destination. Close one stack or all of them.
+- **Your rules first.** Add `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME` rules that apply before the subscription's own rules.
+- **TUN, mode, Tailscale.** Toggle TUN, cycle rule, global, and direct mode, and route the tailnet through the proxy.
+- **Keyboard first.** `j`/`k` walk the whole panel, and every action has a single-letter key.
+- **Scriptable.** Everything the panel does is also an `omihomo` CLI verb.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="assets/screenshots/main.png" alt="Main panel with status, configs, and groups"><br><sub>Status, configs, and groups</sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/subscriptions.png" alt="Subscriptions with quota and expiry"><br><sub>Subscriptions with quota and expiry</sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/connections.png" alt="Connections log with open and closed stacks"><br><sub>Connections log</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/rules.png" alt="Rules view adding a rule"><br><sub>Your rules and the subscription's</sub></td>
+    <td align="center"><img src="assets/screenshots/manage.png" alt="Manage view with autostart, Tailscale, and acceleration"><br><sub>Autostart, Tailscale, and TUN acceleration</sub></td>
+    <td></td>
+  </tr>
+</table>
+
+All data in the screenshots is made up.
 
 ## Requirements
 
 - Omarchy 4 on Arch Linux
 - `yay`, to build `mihomo-bin` from the AUR
-- A mihomo-compatible subscription URL, or a Mihomo YAML config you host yourself
+- A mihomo-compatible subscription URL, or a mihomo YAML config you host yourself
 
-`omihomo core install` pulls the rest through pacman: `go-yq`, `jq`, `nftables`, and `curl`. Arch's
-`yq` package is a jq wrapper that owns the same `/usr/bin/yq` as `go-yq`, so if you have it
-installed the CLI asks pacman to replace it and tells you before it does.
+`omihomo core install` installs the rest with pacman: `go-yq`, `jq`, `nftables`, and `curl`. Arch's
+`yq` package is a jq wrapper that owns the same `/usr/bin/yq` as `go-yq`. If you have it installed,
+the CLI tells you and then asks pacman to replace it.
 
 ## Install
 
@@ -24,52 +62,77 @@ omarchy plugin add https://github.com/readeem/omihomo.git --enable
 omarchy bar move dev.readeem.omihomo
 ```
 
-The plugin ships without the core. Click the bar icon and run the panel's install action, which
+The plugin does not include the core. Click the bar icon and run the panel's install action, which
 opens a floating terminal for the AUR build, or run `omihomo core install` yourself.
 
-## Use
+## Usage
 
-Left click opens the panel, right click starts or stops the core, middle click refreshes. Inside
-the panel `j`/`k` move, `enter` activates, and single letters do the rest. `s` core, `t` TUN, `m`
-mode, `c` connections, `a` add subscription, `n` new rule, `d` latency.
+| Input | Action |
+| --- | --- |
+| Left click | Open the panel |
+| Right click | Start or stop the core |
+| Middle click | Refresh |
+| `j` / `k`, `enter` | Move, activate |
+| `s` / `t` / `m` | Core on/off, TUN, mode |
+| `a` / `n` | Add subscription, new rule |
+| `d` / `D` | Latency test a config, a whole group |
+| `c` / `M` | Connections view, manage view |
+| `/` | Filter configs |
 
-Subscription URLs may return a full Mihomo YAML config or a raw share-link format that your
-installed Mihomo version understands. Raw subscriptions get one generated `Proxy` selector and a
+The full key map is in [docs/widget.md](docs/widget.md#keys), and every CLI verb is in
+[docs/cli.md](docs/cli.md).
+
+### Subscriptions
+
+A subscription URL may return a full mihomo YAML config, or a raw share-link format that your
+installed mihomo version understands. A raw subscription gets one generated `Proxy` selector and a
 final `MATCH,Proxy` rule.
 
-Subscriptions refresh automatically using the provider's `Profile-Update-Interval` header
-(positive whole hours), with a 12-hour default when it is absent or invalid. The deadline starts
-at the last successful download, including manual updates. Time while the computer is off or
-asleep counts toward that deadline; overdue
-subscriptions refresh on the next check after login or resume. Checks run every minute, even
-with the panel closed or the core stopped. A refresh preserves the core's running/stopped state,
-mode, TUN state, and selected configs that still exist in their groups. Failed downloads keep
-the previous configuration and retry on the next check.
+<details>
+<summary><b>Automatic refresh</b></summary>
 
-Each successful import or update saves the effective interval with its timestamp. A provider can
-change the interval on the next response; failed updates retain both previous values. Downloads
-and controller calls have individual timeouts, while the sequential batch has no fixed time
-limit that could prevent later subscriptions from being checked.
+<br>
 
-`core install` enables the user timer. Existing installations gain it through `core sync` when
-the updated widget loads. To turn automatic refresh off or back on:
+Subscriptions refresh on the interval in the provider's `Profile-Update-Interval` header (a
+positive whole number of hours). When the header is missing or invalid, the interval is 12 hours.
+The interval counts from the last successful download, including manual updates. Time while the
+computer is off or asleep counts too, so an overdue subscription refreshes on the first check after
+login or resume.
+
+Checks run every minute, even with the panel closed or the core stopped. A refresh keeps the core's
+running or stopped state, mode, and TUN state, and the selected configs that still exist in their
+groups. A failed download keeps the previous configuration and retries on the next check.
+
+Each successful import or update records the interval and its timestamp, so a provider can change
+the interval in any response. A failed update keeps both previous values. Every download and
+controller call has its own timeout. The batch as a whole has none, so a slow subscription cannot
+stop later ones from being checked.
+
+`core install` enables the user timer, and `core sync` adds it to existing installs when the
+updated widget loads. To turn automatic refresh off or back on:
 
 ```sh
 systemctl --user disable --now omihomo-subscription-update.timer
 systemctl --user enable --now omihomo-subscription-update.timer
 ```
 
-Subscriptions without an inbound get `mixed-port: 7890`. Omihomo defaults DNS to `redir-host`
-with Cloudflare DNS-over-HTTPS through the primary proxy group. Proxy-server hostnames and
-DNS-server hostnames use direct Cloudflare DoH so connecting the proxy does not depend on
-itself. Explicit resolver settings and DNS modes in `override.yaml` take precedence.
+</details>
 
-Everything the panel does is also a CLI verb. See [docs/cli.md](docs/cli.md) for the full list and
-[docs/widget.md](docs/widget.md) for how the panel is put together.
+<details>
+<summary><b>Ports and DNS defaults</b></summary>
+
+<br>
+
+A subscription without an inbound gets `mixed-port: 7890`. Omihomo sets DNS to `redir-host` mode,
+with Cloudflare DNS-over-HTTPS through the primary proxy group. Proxy-server and DNS-server
+hostnames resolve through direct Cloudflare DoH, so connecting to the proxy never depends on the
+proxy itself. Resolver settings and DNS modes you set in `override.yaml` take precedence.
+
+</details>
 
 ## What it changes on your system
 
-Omihomo is a proxy manager, so it needs more than a config file. All of it is listed here:
+A proxy manager needs more than a config file. This is everything Omihomo changes:
 
 | Change | Where | Made by |
 | --- | --- | --- |
@@ -83,41 +146,47 @@ Omihomo is a proxy manager, so it needs more than a config file. All of it is li
 | subscriptions, configs, rules, cache | `~/.local/share/omihomo/` | every write verb |
 | proxy env for tailscaled | `/etc/systemd/system/tailscaled.service.d/omihomo.conf` | `set tailscale on` only |
 
-The root work lives in one file, [libexec/root.sh](libexec/root.sh), with a fixed set of actions.
-It runs through `sudo` from a terminal and `pkexec` from the panel, and it installs no sudoers
-policy. mihomo runs setuid root because TUN needs it, which is
-[ADR-0006](docs/adr/0006-tun-via-setuid-root.md); the file capabilities Omihomo used before are
-[ADR-0002](docs/adr/0002-tun-via-file-capabilities.md), and the grant path still clears them.
+All root work lives in one file, [libexec/root.sh](libexec/root.sh), which accepts a fixed set of
+actions. It runs through `sudo` from a terminal and `pkexec` from the panel, and Omihomo installs no
+sudoers policy. mihomo runs setuid root because TUN needs it
+([ADR-0006](docs/adr/0006-tun-via-setuid-root.md)). Omihomo used file capabilities before
+([ADR-0002](docs/adr/0002-tun-via-file-capabilities.md)), and granting permissions still clears
+them.
 
 Omihomo never writes to your Hyprland, shell, or terminal config.
+
+## Settings
+
+Omarchy's plugin settings expose one option, `refreshIntervalSec`: how often the bar polls core
+status. The default is 10 seconds, and the range is 2 to 3600. That poll runs whether the panel is
+open or not. The mihomo API reads behind live traffic, latency, and connections run only while the
+panel is open, and the connections view polls every 2 seconds while it is on screen.
+
+The CLI reads a few environment variables for unusual setups, such as `OMIHOMO_USER_AGENT` for
+subscription servers that respond differently by user agent, and `OMIHOMO_TAILSCALE_PORT`. They
+are listed at the top of [lib/common.sh](lib/common.sh).
 
 ## Remove
 
 ```sh
-omihomo core uninstall          # add --keep-data to spare subscriptions and cache
+omihomo core uninstall          # add --keep-data to keep subscriptions and cache
 omarchy plugin remove dev.readeem.omihomo
 ```
 
-`core uninstall` stops and deletes the core unit and subscription refresh units, drops the setuid bits and the pacman hook,
-removes the tailscaled drop-in, removes the `~/.local/bin/omihomo` symlink, uninstalls
-`mihomo-bin`, and deletes `~/.local/share/omihomo`. It leaves `go-yq`, `jq`, `nftables`, and
-`curl` alone, since your system probably wanted those anyway.
+Run `core uninstall` before removing the plugin. The uninstall verb lives in the plugin directory,
+so removing the plugin first leaves the unit and the setuid bits behind.
 
-Run it before removing the plugin. The uninstall verb lives in the plugin directory, so removing
-the plugin first leaves the unit and the setuid bits behind.
-
-## Settings
-
-One setting, exposed in Omarchy's plugin settings: `refreshIntervalSec`, how often the bar polls
-core status. Default 10, range 2 to 3600. That poll runs whether the panel is open or not. The
-mihomo API reads behind live traffic, latency, and connections only run while the panel is open,
-and the connections view drops to 2 seconds while you are looking at it.
-
-The CLI reads a handful of environment variables for people with unusual setups, including
-`OMIHOMO_USER_AGENT` for subscription servers that content-negotiate on it, and
-`OMIHOMO_TAILSCALE_PORT`. They are declared at the top of [lib/common.sh](lib/common.sh).
+`core uninstall` stops and deletes the core unit and the subscription refresh units, drops the
+setuid bits and the pacman hook, removes the tailscaled drop-in and the `~/.local/bin/omihomo`
+symlink, uninstalls `mihomo-bin`, and deletes `~/.local/share/omihomo`. It leaves `go-yq`, `jq`,
+`nftables`, and `curl` installed, since other software probably uses them.
 
 ## Development
+
+<details>
+<summary><b>Run from a checkout</b></summary>
+
+<br>
 
 Link a checkout into Omarchy's user plugin directory instead of installing from git:
 
@@ -128,8 +197,8 @@ omarchy bar move dev.readeem.omihomo
 omarchy restart shell
 ```
 
-Omarchy loads the checkout directly, so saved changes reload with `omarchy restart shell`. Confirm
-the plugin was found:
+Omarchy loads the checkout directly, so `omarchy restart shell` picks up saved changes. Confirm
+that Omarchy found the plugin:
 
 ```sh
 omarchy plugin list --json | jq '.[] | select(.id == "dev.readeem.omihomo")'
@@ -141,13 +210,15 @@ Unlink without deleting the checkout:
 rm ~/.config/omarchy/plugins/dev.readeem.omihomo
 ```
 
-`tests/run` runs both suites, the bash CLI tests and the QML service tests. Neither touches the
-real service, the real config, or the network.
+</details>
+
+`tests/run` runs the bash CLI tests and the QML service tests. Neither touches the real service,
+the real config, or the network. See [tests/README.md](tests/README.md).
 
 ```text
 Panel.qml, Service.qml, Model.js, OmihomoIcon.qml   the bar widget
 bin/omihomo, libexec/, lib/                          the CLI
-tests/run                                            both test suites
+tests/                                               both test suites
 docs/                                                CLI and widget reference, ADRs
 ```
 
@@ -155,5 +226,5 @@ docs/                                                CLI and widget reference, A
 
 MIT. See [LICENSE](LICENSE).
 
-Omihomo installs and drives mihomo but does not bundle or redistribute it. mihomo is GPL-3.0 and
-comes from the AUR as `mihomo-bin`.
+Omihomo installs and drives mihomo but does not bundle or redistribute it. mihomo is licensed under
+GPL-3.0 and comes from the AUR as `mihomo-bin`.
