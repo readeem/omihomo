@@ -889,16 +889,16 @@ Panel {
             Layout.fillWidth: true
             spacing: Style.space(8)
 
-            Readout { Layout.preferredWidth: parent.width * 0.27; label: "UPTIME"; value: root.uptimeText }
+            Readout { Layout.horizontalStretchFactor: 27; label: "UPTIME"; value: root.uptimeText }
             Readout {
-              Layout.fillWidth: true
+              Layout.horizontalStretchFactor: 46
               label: "EGRESS"
               value: root.egressText
               faded: omihomo.traceFailed && !omihomo.traceTesting
               tooltip: "Check again · r"
               onActivated: omihomo.refreshTrace()
             }
-            Readout { Layout.preferredWidth: parent.width * 0.27; label: "LATENCY"; value: root.latencyText }
+            Readout { Layout.horizontalStretchFactor: 27; label: "LATENCY"; value: root.latencyText }
           }
         }
 
@@ -954,7 +954,7 @@ Panel {
           CursorSurface {
             id: gear
             Layout.preferredWidth: Style.space(36)
-            Layout.fillHeight: true
+            implicitHeight: Style.space(30)
             current: root.view === "settings"
             hasCursor: gearMouse.containsMouse
             bordered: true
@@ -1999,6 +1999,7 @@ Panel {
 
     signal activated()
 
+    Layout.fillWidth: true
     implicitHeight: readoutColumn.implicitHeight
 
     Column {
@@ -2129,7 +2130,7 @@ Panel {
         ctx.fillText("No open connections.", 0, height / 2)
         return
       }
-      var pad = Style.space(8)
+      var pad = Style.space(14)
       var left = Style.space(86)
       var right = width - Style.space(96)
 
