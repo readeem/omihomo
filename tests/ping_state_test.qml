@@ -14,6 +14,7 @@ ShellRoot {
     id: service
     cliPath: "/usr/bin/true"
     apiAddress: "controller.test:9090"
+    apiSecret: "test-secret"
   }
 
   Timer {

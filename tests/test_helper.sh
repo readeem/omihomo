@@ -55,6 +55,7 @@ agent=
 data=
 method=GET
 compressed=no
+[[ "$*" != *Bearer* ]] || exit 99
 while (($#)); do
   case $1 in
     -o) output=$2; shift 2 ;;
@@ -65,7 +66,8 @@ while (($#)); do
     --unix-socket|--max-time|--connect-timeout) shift 2 ;;
     --data|--data-raw|--data-binary|--json) data=$2; shift 2 ;;
     -w) shift 2 ;;
-    -s|-S|-f|-L|-N|-k|-H) shift; [[ $1 == *:* ]] && shift || true ;;
+    -H) [[ $2 != @- ]] || cat >>"$TEST_ROOT/curl-auth.log"; shift 2 ;;
+    -s|-S|-f|-L|-N|-k) shift ;;
     http*) url=$1; shift ;;
     *) shift ;;
   esac

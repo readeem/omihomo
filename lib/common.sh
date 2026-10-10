@@ -483,12 +483,16 @@ omi_api_secret() {
   omi_yq -r '.config.secret // ""' "$OMIHOMO_OVERRIDE_FILE"
 }
 
+# Calls the controller at PATH, passing the secret on stdin to keep it out of argv.
+omi_api_curl() {
+  local path=$1 address
+  address=$(omi_api_address)
+  "$OMIHOMO_CURL" -fsS -H @- "${@:2}" "http://${address}${path}" <<<"Authorization: Bearer $(omi_api_secret)"
+}
+
 omi_api_reachable() {
   omi_unit_active || return 1
-  local address secret
-  address=$(omi_api_address)
-  secret=$(omi_api_secret)
-  "$OMIHOMO_CURL" -fsS --max-time 2 -H "Authorization: Bearer $secret" "http://${address}/version" >/dev/null
+  omi_api_curl /version --max-time 2 >/dev/null
 }
 
 # Omihomo names its adapter after itself, but the runtime is the config mihomo
@@ -518,23 +522,17 @@ omi_await_tun_release() {
 }
 
 omi_put_runtime() {
-  local path=$1 address secret payload
-  address=$(omi_api_address)
-  secret=$(omi_api_secret)
+  local path=$1 payload
   payload=$(jq -cn --arg path "$path" '{path: $path, payload: ""}')
-  "$OMIHOMO_CURL" -fsS --max-time "$OMIHOMO_RELOAD_TIMEOUT" -X PUT -H "Authorization: Bearer $secret" \
-    -H 'Content-Type: application/json' --data "$payload" "http://${address}/configs?force=true" >/dev/null
+  omi_api_curl '/configs?force=true' --max-time "$OMIHOMO_RELOAD_TIMEOUT" -X PUT \
+    -H 'Content-Type: application/json' --data "$payload" >/dev/null
 }
 
 # mihomo answers a load whose adapter then failed to start with 200, and the
 # old adapter can outlive it in sysfs, so only the controller can say whether
 # TUN is actually running.
 omi_tun_running() {
-  local address secret
-  address=$(omi_api_address)
-  secret=$(omi_api_secret)
-  [[ $("$OMIHOMO_CURL" -fsS --max-time 2 -H "Authorization: Bearer $secret" "http://${address}/configs" |
-    jq -r '.tun.enable // false') == true ]]
+  [[ $(omi_api_curl /configs --max-time 2 | jq -r '.tun.enable // false') == true ]]
 }
 
 omi_tun_enabled() {

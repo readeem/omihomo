@@ -318,11 +318,9 @@ subscription_list() {
 # Mode and TUN normally live in the override; selectors are live controller
 # state, and a reload can reset them even with store-selected enabled.
 subscription_connection_snapshot() {
-  local address secret config proxies
-  address=$(omi_api_address)
-  secret=$(omi_api_secret)
-  config=$("$OMIHOMO_CURL" -fsS --max-time 5 -H "Authorization: Bearer $secret" "http://${address}/configs") || return 12
-  proxies=$("$OMIHOMO_CURL" -fsS --max-time 5 -H "Authorization: Bearer $secret" "http://${address}/proxies") || return 12
+  local config proxies
+  config=$(omi_api_curl /configs --max-time 5) || return 12
+  proxies=$(omi_api_curl /proxies --max-time 5) || return 12
   jq -cen --argjson config "$config" --argjson proxies "$proxies" '
     select(($config.mode == "rule" or $config.mode == "global" or $config.mode == "direct")
       and ($config.tun.enable | type == "boolean") and ($proxies.proxies | type == "object")) |
@@ -333,10 +331,8 @@ subscription_connection_snapshot() {
 }
 
 subscription_restore_selections() {
-  local snapshot=$1 address secret proxies selections selection group name encoded payload
-  address=$(omi_api_address)
-  secret=$(omi_api_secret)
-  proxies=$("$OMIHOMO_CURL" -fsS --max-time 5 -H "Authorization: Bearer $secret" "http://${address}/proxies") || return 12
+  local snapshot=$1 proxies selections selection group name encoded payload
+  proxies=$(omi_api_curl /proxies --max-time 5) || return 12
   # A server removed by the provider cannot be restored. Leave mihomo's valid
   # fallback in that group, while restoring every selection still available.
   selections=$(jq -cr --argjson proxies "$proxies" '.selections[] |
@@ -349,8 +345,8 @@ subscription_restore_selections() {
     name=$(base64 -d <<<"$selection" | jq -r '.[1]')
     encoded=$(jq -rn --arg group "$group" '$group | @uri')
     payload=$(jq -cn --arg name "$name" '{name: $name}')
-    "$OMIHOMO_CURL" -fsS --max-time 5 -X PUT -H "Authorization: Bearer $secret" \
-      -H 'Content-Type: application/json' --data "$payload" "http://${address}/proxies/${encoded}" >/dev/null || return 12
+    omi_api_curl "/proxies/${encoded}" --max-time 5 -X PUT \
+      -H 'Content-Type: application/json' --data "$payload" >/dev/null || return 12
   done <<<"$selections"
 }
 

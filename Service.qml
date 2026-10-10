@@ -75,6 +75,7 @@ Item {
   // ---- controller ---------------------------------------------------------
   property string apiAddress: ""
   property string apiSecret: ""
+  readonly property string apiHeader: "Authorization: Bearer " + apiSecret + "\n"
   property int mixedPort: 0
   property string mode: ""
   property string _desiredMode: ""
@@ -152,9 +153,8 @@ Item {
   }
 
   function apiArgs(method, path, body) {
-    var args = ["curl", "-fsS", "--max-time", "6"]
+    var args = ["curl", "-fsS", "--max-time", "6", "-H", "@-"]
     if (method !== "GET") args.push("-X", method)
-    if (apiSecret !== "") args.push("-H", "Authorization: Bearer " + apiSecret)
     if (body !== undefined && body !== "") args.push("-H", "Content-Type: application/json", "--data", body)
     args.push("http://" + apiAddress + path)
     return args
@@ -604,8 +604,7 @@ Item {
   function closeStack(stack) {
     var ids = stack ? stack.ids : null
     if (!apiReady || !ids || ids.length === 0) return
-    var args = ["curl", "-sS", "--max-time", "6", "-X", "DELETE"]
-    if (apiSecret !== "") args.push("-H", "Authorization: Bearer " + apiSecret)
+    var args = ["curl", "-sS", "--max-time", "6", "-H", "@-", "-X", "DELETE"]
     for (var i = 0; i < ids.length; i++) {
       args.push("http://" + apiAddress + "/connections/" + encodeURIComponent(ids[i]))
     }
@@ -653,10 +652,12 @@ Item {
     property string outText: ""
     property string errText: ""
     property var queued: null
+    property string input: ""
     signal finished(int code, string out, string err)
 
     running: false
     command: []
+    onStarted: if (stdinEnabled) { write(input); stdinEnabled = false }
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: cmd.outText = text }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: cmd.errText = text }
     onExited: function(exitCode) {
@@ -671,6 +672,7 @@ Item {
       outText = ""
       errText = ""
       command = args
+      stdinEnabled = input !== ""
       running = true
       return true
     }
@@ -720,6 +722,7 @@ Item {
 
   Cmd {
     id: apiRulesCmd
+    input: root.apiHeader
     onFinished: function(code, out) {
       root.subscriptionRules = code === 0 ? Model.stripOwnRules(Model.parseApiRules(out), root.rules) : []
       if (code !== 0) root.noteApiFailure(code)
@@ -728,6 +731,7 @@ Item {
 
   Cmd {
     id: proxiesCmd
+    input: root.apiHeader
     onFinished: function(code, out) {
       if (code !== 0) return root.noteApiFailure(code)
       var parsed = Model.parseProxies(out)
@@ -740,6 +744,7 @@ Item {
 
   Cmd {
     id: configsCmd
+    input: root.apiHeader
     onFinished: function(code, out) {
       if (code !== 0) return root.noteApiFailure(code)
       root.applyConfigs(out)
@@ -748,6 +753,7 @@ Item {
 
   Cmd {
     id: connectionsCmd
+    input: root.apiHeader
     onFinished: function(code, out) {
       if (code !== 0) return root.noteApiFailure(code)
       var now = Date.now()
@@ -782,6 +788,7 @@ Item {
 
   Cmd {
     id: delayCmd
+    input: root.apiHeader
     onFinished: function(code, out) {
       var name = root._singleTestName
       root._singleTestName = ""
@@ -795,6 +802,7 @@ Item {
 
   Cmd {
     id: groupDelayCmd
+    input: root.apiHeader
     onFinished: function(code, out) {
       var names = root._groupTestNames
       root._groupTestNames = []
@@ -851,6 +859,7 @@ Item {
 
   Cmd {
     id: apiActionCmd
+    input: root.apiHeader
     onFinished: function(code, out, err) {
       // Only a selection changes the egress path, so only a selection is
       // allowed to spend the panel's one event-driven trace call.
@@ -909,10 +918,11 @@ Item {
   Process {
     id: trafficProcess
     running: false
+    stdinEnabled: true
     // Not apiArgs(): that carries a --max-time, which would sever the stream
     // on a timer instead of keeping it open for as long as the panel is.
-    command: ["curl", "-fsS", "-N", "-H", "Authorization: Bearer " + root.apiSecret,
-      "http://" + root.apiAddress + "/traffic"]
+    command: ["curl", "-fsS", "-N", "-H", "@-", "http://" + root.apiAddress + "/traffic"]
+    onStarted: { write(root.apiHeader); stdinEnabled = false }
     stdout: SplitParser {
       onRead: function(line) {
         var traffic = Model.parseTraffic(line)
@@ -923,6 +933,7 @@ Item {
       }
     }
     onExited: {
+      stdinEnabled = true
       root.downloadRate = 0
       root.uploadRate = 0
       if (root.trafficWanted) trafficRetry.restart()

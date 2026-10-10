@@ -106,10 +106,9 @@ command_status() {
 command_api_info() {
   omi_require_core
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || omi_error "Omihomo is not initialized" 1
-  local address secret
+  local address
   address=$(omi_api_address)
-  secret=$(omi_api_secret)
-  jq -cn --arg address "$address" --arg secret "$secret" '{address: $address, secret: $secret}'
+  omi_api_secret | jq -cR --arg address "$address" '{address: $address, secret: .}'
 }
 
 case ${1:-} in

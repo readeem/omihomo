@@ -601,6 +601,8 @@ EOF
   local output
   output=$(run_cli status)
   assert_json_field "$output" state degraded
+  assert_file_contains "$TEST_ROOT/curl-auth.log" 'Authorization: Bearer test-secret'
+  assert_eq "$(run_cli api-info)" '{"address":"127.0.0.1:9090","secret":"test-secret"}'
 }
 
 # mihomo names the interface after `tun.device`, defaulting to `Meta`, so the
