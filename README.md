@@ -13,7 +13,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 [![Bar widget](https://img.shields.io/badge/plugin-bar%20widget-bb9af7)](manifest.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-9ece6a)](LICENSE)
 
-![Omihomo's main panel, connections log, and rules editor open over the Omarchy desktop](preview.png)
+![Omihomo's configs, connections, and rules views open over the Omarchy desktop](preview.png)
 
 </div>
 
@@ -33,13 +33,13 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 
 <table>
   <tr>
-    <td align="center" width="33%"><img src="assets/screenshots/main.png" alt="Main panel with status, configs, and groups"><br><sub>Status, configs, and groups</sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/configs.png" alt="Configs view with the traffic graph, groups, and latency"><br><sub>Traffic, groups, and latency</sub></td>
     <td align="center" width="33%"><img src="assets/screenshots/subscriptions.png" alt="Subscriptions with quota and expiry"><br><sub>Subscriptions with quota and expiry</sub></td>
-    <td align="center" width="33%"><img src="assets/screenshots/connections.png" alt="Connections log with open and closed stacks"><br><sub>Connections log</sub></td>
+    <td align="center" width="33%"><img src="assets/screenshots/connections.png" alt="Connections view with process-to-config flows and the log"><br><sub>Flows and the connections log</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/screenshots/rules.png" alt="Rules view adding a rule"><br><sub>Your rules and the subscription's</sub></td>
-    <td align="center"><img src="assets/screenshots/manage.png" alt="Settings with autostart, Tailscale, and acceleration"><br><sub>Autostart, Tailscale, and TUN acceleration</sub></td>
+    <td align="center"><img src="assets/screenshots/rules.png" alt="Rules view testing a hostname against the rules"><br><sub>Rule tester and your rules</sub></td>
+    <td align="center"><img src="assets/screenshots/settings.png" alt="Settings with mode, TUN, autostart, and Tailscale"><br><sub>Mode, TUN, autostart, and Tailscale</sub></td>
     <td></td>
   </tr>
 </table>
