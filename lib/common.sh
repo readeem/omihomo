@@ -221,11 +221,7 @@ omi_backfill_override() {
 
 omi_write_default_override() {
   local destination=$1 secret
-  if command -v openssl >/dev/null 2>&1; then
-    secret=$(openssl rand -hex 16)
-  else
-    secret=$(date +%s%N | sha256sum | cut -c1-32)
-  fi
+  secret=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
   cat >"$destination" <<EOF
 config:
   external-controller: 127.0.0.1:9090
@@ -354,15 +350,16 @@ omi_apply_tailscale_dropin() {
 
 # TUN needs the core to run as root (ADR-0006): mihomo shells out to resolvectl
 # for systemd-resolved, and only a uid 0 caller skips polkit. That is true when
-# the binary is owned by root and carries both the setuid and setgid bits.
+# the binary is owned by root and setuid, and this user may execute it. A core
+# that any other account can execute is a local privilege escalation, so it
+# counts as broken and surfaces as a repair action.
 omi_tun_permissions_ok() {
   local binary owner group mode
   binary=$(omi_mihomo_bin)
   [[ -n $binary && -x $binary ]] || return 1
   read -r owner group mode < <("$OMIHOMO_STAT" -c '%u %g %a' "$binary" 2>/dev/null) || return 1
   [[ $owner == 0 && $group == 0 ]] || return 1
-  # stat's %a is octal, so a leading 6 is setuid (4) plus setgid (2).
-  [[ $mode == 6??? ]]
+  (((8#$mode & 04000) && !(8#$mode & 01)))
 }
 
 # Errors are machine-readable by default, because the panel parses stderr as
@@ -640,7 +637,10 @@ omi_merge_runtime() {
         "nameserver": env(OMIHOMO_PROXY_NAMESERVERS_YAML)
       }
     }) as $defaults |
-    ($defaults * $base * $config) as $merged |
+    ($base | with_entries(select(.key | test("^(external-.*|secret|ntp)$") | not)) |
+      del(.["proxy-providers", "rule-providers"][] | select(.type != "file") | .path)
+    ) as $content |
+    ($defaults * $content * $config) as $merged |
     (($merged.rules // []) | map(select(. as $rule | ($filter | contains([$rule]) | not)))) as $base_rules |
     ($base_rules + $append) as $rest |
     (($merged."proxy-groups" // []) | map(select(.name != "GLOBAL"))) as $groups |

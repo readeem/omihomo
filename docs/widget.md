@@ -107,7 +107,9 @@ reason the core is degraded. Autostart is
 `systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
 stays in-panel because it is one privileged call with no build, and from the panel that call is a
 `pkexec` dialog; a degraded core is surfaced on the manage cell in the controls rather than by
-growing them. Uninstall hands the removal to
+growing them. A core whose root permissions are missing, or still open to other accounts as
+installs before the owner-only grant left them, also turns the bar icon urgent, and both warnings
+clear on the first status read after the repair. Uninstall hands the removal to
 `omarchy-launch-floating-terminal-with-presentation`, because package removal needs sudo. It arms
 on the first activation and only runs on the second, because it also deletes the state directory;
 Esc or moving the cursor off the row cancels.
