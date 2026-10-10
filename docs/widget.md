@@ -6,7 +6,7 @@ plugin folder is loaded from there.
 | File | Role |
 | --- | --- |
 | `manifest.json` | Plugin id `omihomo`, one bar-widget entry point, one setting |
-| `Panel.qml` | Bar button, main popup, connections, rules and manage views, and every row component |
+| `Panel.qml` | Bar button, the popup's header, tabs, five views, and every row component |
 | `Service.qml` | All state: CLI calls, mihomo API calls, polling, and actions |
 | `Model.js` | Pure parsing and formatting, tested by `tests/model_test.js` |
 | `OmihomoIcon.qml` | The bar mark, drawn natively rather than shipped as an SVG |
@@ -45,113 +45,122 @@ configs, connections, and latency results; a stop, restart, or subscription swit
 
 ## Panel
 
-Every view is 420px wide. The main popup carries, top to bottom:
+Every view is the same 420px surface at a fixed height, so switching tabs never moves or resizes
+the popup. Top to bottom it carries:
 
-1. **Hero** — active subscription, resolved status, and the on/off switch for the core.
-2. **Status readout** — the six fields settled in ticket #5: one status indicator with its
-   detail on the hero, then `Group › Config`, throughput, uptime, and egress IP with latency.
-   Egress is the only field that costs a network call, so it is fetched on panel open, on a
-   config, group, or subscription change, and on a click — never on a timer. It always goes through the
-   core's mixed port.
-3. **Configs** — the browsed group's configs in a capped list, with a filter, per-config and
-   whole-group latency tests, and best-effort parameters. Only a `Selector` group can be
-   chosen from; the rest are read-only because they pick for themselves. Picking a config in
-   the primary group is the one thing done every session, so it sits directly under the readout.
-4. **Groups** — subscription groups, with the primary one marked. Mihomo's `GLOBAL` system
-   group stays hidden because Omihomo generates and manages it. Selecting a group browses it,
-   which is what the config list above shows. An empty list always says why — no active
-   subscription, a stopped core, an unreachable controller, or a subscription that declares no
-   groups — because a bare header reads as a panel that lost its data rather than one with none.
-5. **Subscriptions** — activate, update, remove, and an inline add form that asks only for a
-   URL, since the subscription names itself. With no subscriptions the URL field is the section;
-   once there is one, it hides behind an add row.
-6. **Controls** — one line pinned to the bottom of the popup: mode and TUN on the left, because
-   they are state changed in place, and rules, connections, and manage on the right, because they
-   open a view. Each cell is its own cursor target and carries its key in a tooltip. Everything
-   above it scrolls; the footer does not, so the controls are reachable from anywhere in a long
-   panel.
+1. **Header** — active subscription, resolved status (`ON · rule mode · TUN`), and the on/off
+   switch for the core. On the configs and subscriptions views it adds the current rates, a graph of
+   the last minute of `/traffic`, and a readout of uptime, egress IP, and latency. Egress is the
+   only field that costs a network call, so it is fetched on panel open, on a config, group, or
+   subscription change, and on a click — never on a timer. It always goes through the core's mixed
+   port. The other views fold the header into one line to leave room for their lists.
+2. **Tabs** — Configs, Subs, Rules, and Conns, each with its key and a count, and a gear for the
+   settings view. The Subs tab shows `!` while a subscription action has failed.
+3. **The view** — one of the five below. Each view scrolls at most one list; its edges fade and its
+   scroll bar stays visible while there is more to see.
+4. **Key hints** — the keys that matter in this view. Each hint is also a button.
 
-Configuration parameters are deliberately thin. Direct configs expose their type, UDP support,
-liveness, and last delay through `GET /proxies/<name>`. Provider-backed configs are listed inside
-their group's `all` array, so the panel tests them through `GET /group/<name>/delay` and does not
-assume a top-level resource exists. Neither endpoint exposes address, port, or credentials, and
-[the provider research](research/2026-08-18-mihomo-proxy-provider-configs.md) ruled out mapping a
-runtime name back to its provider entry. The panel renders what mihomo states and nothing else.
+An error is shown next to the thing that caused it — under the subscription that failed to update,
+under the rule form, in the settings list — whenever that is on screen, and under the header
+otherwise, so it is never out of sight. `Service.errorScope` records where each one belongs.
 
-The **connections view** is the same popup, over a log rather than a live list. `GET /connections`
+The **configs view** is the browsed group as chips, the primary one marked with a dot, and its
+configs in one list with a latency pill and a test button each. A pill takes more of the urgent
+colour the slower the config is, and all of it on a timeout; the legend under the list says so and
+holds the whole-group test with how long ago it last ran. Only a `Selector` group can be chosen
+from; the rest pick for themselves and are read-only. An empty view always says why — no active
+subscription, a stopped core, an unreachable controller, or a subscription that declares no groups.
+
+Config details stay out of the list on purpose. Direct configs expose their type, UDP support,
+liveness, and last delay through `GET /proxies/<name>`, but provider-backed configs are only listed
+inside their group's `all` array, so the panel tests them through `GET /group/<name>/delay` and
+does not assume a top-level resource exists. Neither endpoint exposes address, port, or
+credentials, and [the provider research](research/2026-08-18-mihomo-proxy-provider-configs.md)
+ruled out mapping a runtime name back to its provider entry.
+
+The **subscriptions view** is one card per subscription — activate, update, and remove, with its
+quota as a bar and its expiry — and an add field that asks only for a URL, since the subscription
+names itself. Removing asks for a second confirmation on the card.
+
+The **rules view** opens on a tester: type a domain, a URL, or an IP and the list lights the rule
+that would catch it, marks the ones above it as passed, and fades the ones below. It walks the
+rules in mihomo's order, your prepended rules first, and judges what a host string can tell:
+domain, suffix, keyword, IPv4 CIDR, private GeoIP, and the final match. A rule that depends on
+anything else — a DNS answer, a rule set, a geo database, the process — is marked `?`, and the
+verdict says how many such rules sat above the hit, because the core may stop at one of them. A bar
+under the tester shows how the rules divide between targets. Your rules are editable and deletable,
+and the add form under the list covers the four types from ticket #7; the subscription's rules
+follow, read-only. `n` opens the view with the form taking keys from anywhere in the panel.
+
+The **connections view** is the same popup over a log rather than a live list. `GET /connections`
 only states what is open right now, so `Service.qml` keeps its own record: every poll is diffed
 against the one before it, and an id that has stopped appearing is retained as a closed entry with
-the last figures it reported. The view then stacks that log by process, destination, and state —
-Firefox's four open sockets to `github.com` are one row reading `×4`, and the ones it has finished
-with are a second, dimmed row. Open stacks sort above closed ones, newest first within each, so a
-poll only ever updates a row in place or puts a new one at the top; nothing flashes and nothing
-disappears from under the cursor.
+the last figures it reported. The view draws open traffic as process → config flows, each as thick
+as the bytes it carried, with the pair under the cursor lit; past six processes or four configs the
+smallest fold into `other`. Below it, the log stacks by process, destination, and state — Firefox's
+four open sockets to `github.com` are one row reading `×4`, and the ones it has finished with are a
+second, dimmed row. A bar behind each row is its bytes on a log scale. Open stacks sort above
+closed ones, newest first within each, so a poll only ever updates a row in place or puts a new
+one at the top; nothing flashes and nothing disappears from under the cursor.
 
 Open and closed are carried by a leading `●`/`○` and by brightness, not by hue: the panel has a
-foreground, a dim, and an urgent, and no colour to spare for a third state. Activating an open
-stack closes every connection in it, in one `curl` with several URLs; activating a closed one drops
-it from the log, which is the only place it exists. Closed entries are capped at 200, oldest first,
-and the whole log is discarded when the core stops.
+foreground, a dim, an accent, and an urgent, and no colour to spare for another state. Activating
+an open stack closes every connection in it, in one `curl` with several URLs; activating a closed
+one drops it from the log, which is the only place it exists. Closed entries are capped at 200,
+oldest first, and the whole log is discarded when the core stops.
 
-The **rules view** holds what used to be the panel's last two sections: your rules with an add
-form over the four types from ticket #7, and below them the subscription's own rules, dimmed and
-read-only. It is a view rather than a section because a subscription ships hundreds of rules and
-none of them are read in a normal session. `n` still means "new rule": from the main panel it
-opens the view with the form already up.
-
-The **manage view** holds the operations that outlive a session: autostart, TUN acceleration,
-permission repair, and uninstall. Acceleration is `omihomo set tun-redirect`, which moves
-`auto-redirect` and the TUN stack together. It is off by default; turning it off is the repair for a core that reports
-`TUN acceleration cannot start on this machine`, and its cell is coloured while that is the
-reason the core is degraded. Autostart is
-`systemctl --user enable` behind `omihomo core autostart`, reported back by `status`. Repair
-stays in-panel because it is one privileged call with no build, and from the panel that call is a
-`pkexec` dialog; a degraded core is surfaced on the manage cell in the controls rather than by
-growing them. A core whose root permissions are missing, or still open to other accounts as
-installs before the owner-only grant left them, also turns the bar icon urgent, and both warnings
-clear on the first status read after the repair. Uninstall hands the removal to
-`omarchy-launch-floating-terminal-with-presentation`, because package removal needs sudo. It arms
-on the first activation and only runs on the second, because it also deletes the state directory;
-Esc or moving the cursor off the row cancels.
+The **settings view**, behind the gear, holds state that is changed rarely: mode and TUN, TUN
+acceleration, autostart, the Tailscale integration, permission repair, and uninstall. Acceleration
+is `omihomo set tun-redirect`, which moves `auto-redirect` and the TUN stack together. It is off by
+default; turning it off is the repair for a core that reports
+`TUN acceleration cannot start on this machine`, and its row says so while that is the reason the
+core is degraded. Autostart is `systemctl --user enable` behind `omihomo core autostart`, reported
+back by `status`. Repair stays in-panel because it is one privileged call with no build, and from
+the panel that call is a `pkexec` dialog. A core whose root permissions are missing, or still open
+to other accounts as installs before the owner-only grant left them, turns the gear and the bar
+icon urgent, and both warnings clear on the first status read after the repair. Uninstall hands
+the removal to `omarchy-launch-floating-terminal-with-presentation`, because package removal needs
+sudo. It arms on the first activation and only runs on the second, because it also deletes the
+state directory; Esc or moving the cursor off the button cancels.
 
 When the core is not installed the panel replaces its body with a single install action, which
 hands the AUR build to the same terminal for the same reason.
 
 ## Keys
 
-Navigation is one flat cursor over every visible row, so `j`/`k` walks the whole panel.
+Navigation is one flat cursor over the current view's rows, so `j`/`k` walks the view top to bottom.
 
 | Key | Action |
 | --- | --- |
+| `1` – `4` | Configs, Subs, Rules, Conns |
+| `M` | Settings, and back |
 | `j` / `k`, `↓` / `↑` | Move the cursor |
-| `h` / `l`, `←` / `→` | Change the value on the row (mode, rule type, rule target) |
+| `h` / `l`, `←` / `→` | Change the value on the row: group, mode, a switch, rule type, rule target |
 | `enter` / `space` | Activate the row |
-| `x` | Delete: subscription, connection stack, or rule (rules view) |
+| `x` | Delete: subscription (asks twice), rule, or connection stack |
 | `s` | Start or stop the core |
 | `t` | Toggle TUN |
 | `m` | Cycle mode |
 | `c` | Connections view |
-| `n` | Rules view, with the add-rule form open |
-| `M` | Manage view |
+| `n` | Rules view, with the add-rule form taking keys |
 | `r` | Refresh |
-| `a` | Add subscription |
-| `u` | Update the selected subscription |
-| `p` | Make the selected group primary |
-| `d` / `D` | Latency test the config / the whole group |
-| `/` | Filter configs |
-| `A` | Close every open connection (connections view); toggle TUN acceleration (manage view) |
-| `L` | Clear the connection log (connections view) |
 | `R` | Repair permissions |
-| `b` | Toggle autostart (manage view) |
-| `T` | Toggle the Tailscale integration (manage view, when tailscaled is installed) |
-| `P` | Toggle routing the tailnet through the proxy (manage view, when tailscaled is installed) |
+| `d` / `D` | Latency test the config / the whole group (configs) |
+| `g` | Next group (configs) |
+| `p` | Make the browsed group primary (configs) |
+| `/` | Filter configs (configs); focus the rule tester (rules) |
+| `u` | Update the selected subscription (subs) |
+| `a` | Add a subscription (subs) |
+| `A` | Close every open connection (conns); toggle TUN acceleration (settings) |
+| `L` | Clear the connection log (conns) |
+| `b` | Toggle autostart (settings) |
+| `T` | Toggle the Tailscale integration (settings, when tailscaled is installed) |
+| `P` | Toggle routing the tailnet through the proxy (settings, when tailscaled is installed) |
 | `i` | Install the core (only when it is missing) |
-| `esc` | Close the form, filter, or view; otherwise close the panel |
+| `esc` | Close the field, filter, or confirmation; otherwise go back to configs, then close the panel |
 
-In the connections view `c` goes back and in the manage view `M` does; the rules view leaves
-on Esc, since `n` opens its add form. `n` inside the rules view adds a rule. Close-all is `A`
-rather than the `X` its siblings would suggest, because `PanelKeyCatcher` claims both cases of
-`x` for its delete key and an uppercase one never reaches the panel.
+Close-all is `A` rather than the `X` its siblings would suggest, because `PanelKeyCatcher` claims
+both cases of `x` for its delete key and an uppercase one never reaches the panel.
 
 Every one of those is also reachable with the mouse. A focused text field owns `enter` and
 `esc` and blocks the panel's key handling until it loses focus.
