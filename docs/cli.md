@@ -297,7 +297,7 @@ showing `GLOBAL`, `DIRECT`, or `REJECT` as manual config choices. `set mode glob
 active subscription has no groups, and `set group GLOBAL` is rejected.
 
 `core autostart on|off` is `systemctl --user enable|disable` on the unit, and is what the panel's
-manage view toggles. Turning it on writes the unit first when it is missing, so autostart works on
+settings view toggles. Turning it on writes the unit first when it is missing, so autostart works on
 a core that has never been started.
 
 `core install` installs the AUR package and the required `go-yq`, `jq`, `curl`, and `nftables`

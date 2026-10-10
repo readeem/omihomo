@@ -105,6 +105,9 @@ Item {
 
   property double downloadRate: 0
   property double uploadRate: 0
+  // The last minute of `/traffic`, oldest first, one { down, up } per second.
+  property var trafficHistory: []
+  readonly property int trafficHistoryCap: 60
   property string egressIp: ""
   property int egressLatency: 0
   property bool traceTesting: false
@@ -117,12 +120,19 @@ Item {
   property var configTestResults: ({}) // config name -> { state, delay }
   property string _singleTestName: ""
   property var _groupTestNames: []
+  property string _groupTestName: ""
+  property var groupTestedAt: ({})     // group name -> ms of its last whole-group test
   property string pendingConfig: ""
   property string pendingSubscription: ""
 
   property string actionStatus: ""
   property string lastError: ""
   property int lastErrorCode: 0
+  // Where the failed action lives, so the panel can show the error next to it:
+  // "core", "configs", "rules", "conns", "settings", or "sub:<name>" ("sub:"
+  // for an add).
+  property string errorScope: ""
+  property string _subTarget: ""
   property string _coreAction: ""
   property string _overrideAction: ""
 
@@ -179,10 +189,11 @@ Item {
     proxiesLoaded = false
   }
 
-  function reportError(code, stderr) {
+  function reportError(code, stderr, scope) {
     var error = Model.cliError(stderr, code)
     lastError = error.message
     lastErrorCode = error.code
+    errorScope = scope || "core"
     actionStatus = ""
     statusClearTimer.restart()
   }
@@ -190,6 +201,7 @@ Item {
   function reportDone(message) {
     lastError = ""
     lastErrorCode = 0
+    errorScope = ""
     actionStatus = message || ""
     if (actionStatus !== "") statusClearTimer.restart()
   }
@@ -198,6 +210,7 @@ Item {
     actionStatus = ""
     lastError = ""
     lastErrorCode = 0
+    errorScope = ""
   }
 
   // ---- reads --------------------------------------------------------------
@@ -306,6 +319,7 @@ Item {
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
+      trafficHistory = []
       traceTesting = false
       _traceQueued = false
     }
@@ -327,6 +341,8 @@ Item {
     configTestResults = ({})
     _singleTestName = ""
     _groupTestNames = []
+    groupTestedAt = ({})
+    trafficHistory = []
   }
 
   function applyConfigs(raw) {
@@ -346,6 +362,7 @@ Item {
   // Called when the settle deadline passes with a change still unconfirmed.
   function abandonDesired() {
     if (!pendingDesired()) return
+    var scope = _desiredCoreRunning !== -1 ? "core" : "settings"
     _desiredCoreRunning = -1
     _desiredTunEnabled = -1
     _desiredTunRedirect = -1
@@ -353,7 +370,7 @@ Item {
     _desiredTailscaleEnabled = -1
     _desiredTailnetProxy = -1
     _desiredMode = ""
-    reportError(1, "mihomo did not reach the requested state")
+    reportError(1, "mihomo did not reach the requested state", scope)
   }
 
   // ---- writes -------------------------------------------------------------
@@ -486,6 +503,7 @@ Item {
   // mark pending: the name only exists once the fetch has come back.
   function addSubscription(url) {
     if (subActionCmd.running) return
+    _subTarget = ""
     reportDone("Fetching subscription…")
     subActionCmd.launch(cli(["sub", "add", url]))
   }
@@ -493,6 +511,7 @@ Item {
   function updateSubscription(name) {
     if (subActionCmd.running || name === "") return
     pendingSubscription = name
+    _subTarget = name
     reportDone("Updating " + name + "…")
     subActionCmd.launch(cli(["sub", "update", name]))
   }
@@ -500,6 +519,7 @@ Item {
   function activateSubscription(name) {
     if (subActionCmd.running || name === "") return
     pendingSubscription = name
+    _subTarget = name
     reportDone("Activating " + name + "…")
     subActionCmd.launch(cli(["sub", "activate", name]))
   }
@@ -507,6 +527,7 @@ Item {
   function removeSubscription(name) {
     if (subActionCmd.running || name === "") return
     pendingSubscription = name
+    _subTarget = name
     reportDone("")
     subActionCmd.launch(cli(["sub", "remove", name]))
   }
@@ -586,6 +607,7 @@ Item {
     var names = group && group.all ? group.all.slice() : []
     if (names.length === 0) return
     _groupTestNames = names
+    _groupTestName = name
     startConfigTests(names)
     // The controller tests the group's configs concurrently. Process keeps
     // that bulk request asynchronous from the panel's render loop.
@@ -805,9 +827,15 @@ Item {
     input: root.apiHeader
     onFinished: function(code, out) {
       var names = root._groupTestNames
+      var group = root._groupTestName
       root._groupTestNames = []
+      root._groupTestName = ""
       if (names.length === 0) return
       root.finishConfigTests(names, code === 0 ? Model.parseGroupDelay(out) : {})
+      var tested = {}
+      for (var name in root.groupTestedAt) tested[name] = root.groupTestedAt[name]
+      tested[group] = Date.now()
+      root.groupTestedAt = tested
     }
   }
 
@@ -819,7 +847,7 @@ Item {
       if (code !== 0) {
         if (action === "core") root._desiredCoreRunning = -1
         else if (action === "autostart") root._desiredAutostartEnabled = -1
-        root.reportError(code, err)
+        root.reportError(code, err, action === "core" ? "core" : "settings")
       }
       else root.reportDone("")
       root.settle()
@@ -830,7 +858,7 @@ Item {
     id: subActionCmd
     onFinished: function(code, out, err) {
       root.pendingSubscription = ""
-      if (code !== 0) root.reportError(code, err)
+      if (code !== 0) root.reportError(code, err, "sub:" + root._subTarget)
       else root.reportDone("")
       root.settle()
     }
@@ -847,7 +875,8 @@ Item {
         else if (action === "tunRedirect") root._desiredTunRedirect = -1
         else if (action === "tailscale") root._desiredTailscaleEnabled = -1
         else if (action === "tailnetProxy") root._desiredTailnetProxy = -1
-        root.reportError(code, err)
+        root.reportError(code, err, action === "group" ? "configs"
+          : (action === "ruleAdd" || action === "rule" ? "rules" : "settings"))
       }
       else {
         root.reportDone("")
@@ -867,7 +896,7 @@ Item {
       var wasSelection = root.pendingConfig !== ""
       if (code !== 0) {
         root.confirmSelection()
-        root.reportError(12, err)
+        root.reportError(12, err, wasSelection ? "configs" : "conns")
         root.noteApiFailure(code)
       }
       else {
@@ -930,6 +959,9 @@ Item {
         trafficRetry.attempt = 0
         root.downloadRate = traffic.down
         root.uploadRate = traffic.up
+        var history = root.trafficHistory.slice(1 - root.trafficHistoryCap)
+        history.push({ down: traffic.down, up: traffic.up })
+        root.trafficHistory = history
       }
     }
     onExited: {

@@ -21,12 +21,12 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 
 - **One-click core.** Start, stop, and install mihomo from the bar. The icon dims when the core is off.
 - **Subscriptions.** Paste a URL, and Omihomo imports it, names it, and refreshes it on the provider's schedule.
-- **Groups and configs.** Pick a config, latency-test one or a whole group, and choose the primary group.
-- **Live readout.** Throughput, uptime, and the egress IP with its round trip through the selected config.
-- **Connections log.** Open and recently closed connections, grouped by process and destination. Close one stack or all of them.
-- **Your rules first.** Add `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME` rules that apply before the subscription's own rules.
+- **Groups and configs.** Pick a config, latency-test one or a whole group, and choose the primary group. Latency is colour-coded.
+- **Live readout.** A traffic graph, uptime, and the egress IP with its round trip through the selected config.
+- **Connections log.** Traffic drawn as process → config flows, and open and recently closed connections grouped by process and destination. Close one stack or all of them.
+- **Your rules first.** Add `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME` rules that apply before the subscription's own rules, and test a domain or IP to see which rule catches it.
 - **TUN, mode, Tailscale.** Toggle TUN, cycle rule, global, and direct mode, and route the tailnet through the proxy.
-- **Keyboard first.** `j`/`k` walk the whole panel, and every action has a single-letter key.
+- **Keyboard first.** `1`–`4` switch views, `j`/`k` walk the view, and every action has a single-letter key.
 - **Scriptable.** Everything the panel does is also an `omihomo` CLI verb.
 
 ## Screenshots
@@ -39,7 +39,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
   </tr>
   <tr>
     <td align="center"><img src="assets/screenshots/rules.png" alt="Rules view adding a rule"><br><sub>Your rules and the subscription's</sub></td>
-    <td align="center"><img src="assets/screenshots/manage.png" alt="Manage view with autostart, Tailscale, and acceleration"><br><sub>Autostart, Tailscale, and TUN acceleration</sub></td>
+    <td align="center"><img src="assets/screenshots/manage.png" alt="Settings with autostart, Tailscale, and acceleration"><br><sub>Autostart, Tailscale, and TUN acceleration</sub></td>
     <td></td>
   </tr>
 </table>
@@ -71,12 +71,12 @@ opens a floating terminal for the AUR build, or run `omihomo core install` yours
 | Left click | Open the panel |
 | Right click | Start or stop the core |
 | Middle click | Refresh |
+| `1` – `4`, `M` | Configs, Subs, Rules, Conns, settings |
 | `j` / `k`, `enter` | Move, activate |
 | `s` / `t` / `m` | Core on/off, TUN, mode |
 | `a` / `n` | Add subscription, new rule |
 | `d` / `D` | Latency test a config, a whole group |
-| `c` / `M` | Connections view, manage view |
-| `/` | Filter configs |
+| `/` | Filter configs, test a rule |
 
 The full key map is in [docs/widget.md](docs/widget.md#keys), and every CLI verb is in
 [docs/cli.md](docs/cli.md).

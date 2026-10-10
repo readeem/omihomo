@@ -54,28 +54,25 @@ test("CLI errors carry the exit-code class", () => {
   assert.equal(silent.message, "Subscription fetch failed")
 })
 
-test("subscription detail shows quota, expiry, and staleness", () => {
-  const now = Date.parse("2026-08-18T12:00:00Z")
-  const detail = Model.subscriptionDetail({
+test("subscription usage shows quota and expiry", () => {
+  const usage = Model.subscriptionUsage({
     name: "home",
-    updatedAt: "2026-08-12T12:00:00Z",
     upload: 12000000000,
     download: 130000000000,
     total: 500000000000,
     expire: Date.parse("2027-03-12T00:00:00Z") / 1000
-  }, now)
-  assert.match(detail, /142 GB of 500 GB/)
-  assert.match(detail, /expires 12 Mar/)
-  assert.match(detail, /updated 6d ago/)
+  })
+  assert.equal(usage.fraction, 0.284)
+  assert.match(usage.text, /142 GB of 500 GB/)
+  assert.match(usage.text, /expires 12 Mar/)
 })
 
-test("a subscription with no userinfo shows only its staleness", () => {
-  const now = Date.parse("2026-08-18T12:00:00Z")
-  const detail = Model.subscriptionDetail({
-    name: "backup", updatedAt: "2026-08-18T09:00:00Z",
-    upload: null, download: null, total: null, expire: null
-  }, now)
-  assert.equal(detail, "updated 3h ago")
+test("a subscription with no userinfo has no quota bar", () => {
+  const usage = Model.subscriptionUsage({
+    name: "backup", upload: null, download: null, total: null, expire: null
+  })
+  assert.equal(usage.fraction, -1)
+  assert.equal(usage.text, "no quota reported")
 })
 
 test("rule validation mirrors the CLI's per-type rules", () => {
@@ -301,16 +298,55 @@ test("systemd's ActiveEnterTimestamp parses as local time", () => {
   assert.equal(Model.parseUnitTimestamp("n/a"), 0)
 })
 
-test("config parameters stay inside what mihomo actually states", () => {
-  const parameters = Model.configParameters({
-    name: "Tokyo 01", type: "Vmess", udp: true, xudp: false, tfo: false,
-    alive: true, history: [{ delay: 182 }],
-    server: "should-never-render", port: 443
-  })
-  const labels = parameters.map(p => p.label)
-  assert.deepEqual(labels, ["Type", "UDP", "Alive", "Latency"])
-  assert.equal(parameters[3].value, "182 ms")
-  assert.deepEqual(Model.configParameters(null), [])
+test("the rule tester stops at the first hit, mihomo's order", () => {
+  const rules = [
+    { type: "DOMAIN-SUFFIX", value: "github.com", target: "Proxy" },
+    { type: "RULE-SET", value: "streaming", target: "Streaming" },
+    { type: "DOMAIN-SUFFIX", value: "googlevideo.com", target: "Streaming" },
+    { type: "GEOIP", value: "private", target: "DIRECT" },
+    { type: "MATCH", value: "", target: "Proxy" }
+  ]
+  const video = Model.testRules(rules, "https://rr3.googlevideo.com:443/videoplayback?x=1")
+  assert.equal(video.host, "rr3.googlevideo.com")
+  assert.equal(video.hit, 2)
+  assert.deepEqual(video.verdicts, ["miss", "unknown", "hit"])
+  assert.equal(video.unknown, 1)
+
+  assert.equal(Model.testRules(rules, "10.2.3.4").hit, 3)
+  assert.equal(Model.testRules(rules, "example.org").hit, 4)
+  assert.equal(Model.testRules(rules, "notgithub.com").verdicts[0], "miss")
+  assert.equal(Model.testRules(rules, "  ").hit, -1)
+})
+
+test("IP rules on a hostname depend on the core's DNS answer", () => {
+  assert.equal(Model.ruleVerdict({ type: "IP-CIDR", value: "10.0.0.0/8" }, "example.org"), "unknown")
+  assert.equal(Model.ruleVerdict({ type: "IP-CIDR", value: "10.0.0.0/8" }, "10.9.9.9"), "hit")
+  assert.equal(Model.ruleVerdict({ type: "IP-CIDR", value: "192.168.0.0/16" }, "192.169.0.1"), "miss")
+  assert.equal(Model.ruleVerdict({ type: "DOMAIN-KEYWORD", value: "openai" }, "chat.openai.com"), "hit")
+  assert.equal(Model.ruleVerdict({ type: "PROCESS-NAME", value: "steam" }, "steampowered.com"), "unknown")
+})
+
+test("targets tally largest first", () => {
+  const tally = Model.ruleTargetTally([
+    { target: "DIRECT" }, { target: "Proxy" }, { target: "DIRECT" }, { target: "" }
+  ])
+  assert.deepEqual(tally, [{ target: "DIRECT", count: 2 }, { target: "Proxy", count: 1 }])
+})
+
+test("connection flows fold the smallest nodes into other", () => {
+  const stack = (process, chain, bytes, open) => ({ process, chain, download: bytes, upload: 0, open })
+  const flows = Model.connectionFlows([
+    stack("firefox", "London 05", 500, true),
+    stack("firefox", "Frankfurt 04", 300, true),
+    stack("steam", "DIRECT", 900, true),
+    stack("git", "Frankfurt 04", 50, true),
+    stack("code", "Frankfurt 04", 999999, false)
+  ], 2, 3)
+  assert.deepEqual(flows.sources.map(n => n.name), ["steam", "other"])
+  assert.equal(flows.sources[1].bytes, 850)
+  assert.deepEqual(flows.targets.map(n => n.name), ["DIRECT", "London 05", "Frankfurt 04"])
+  assert.deepEqual(flows.links[0], { source: "steam", target: "DIRECT", bytes: 900 })
+  assert.equal(flows.links.reduce((sum, link) => sum + link.bytes, 0), 1750)
 })
 
 test("formatting is decimal and compact", () => {

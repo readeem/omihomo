@@ -7,14 +7,14 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Omihomo's bar widget: a compact core-state icon, a main popup that carries
-// the operations of a normal session, and three secondary views over the same
-// surface for the ones that are not.
+// Omihomo's bar widget: a compact core-state icon and one popup. The popup is a
+// header that always shows the core and its traffic, four tabbed views over the
+// same surface — configs, subscriptions, rules, connections — and a settings
+// view behind the gear.
 //
-// Navigation is one flat cursor over `navRows` rather than a per-section state
-// machine: every visible row — control, subscription, group, config, rule,
-// form field — appears once in that list, so j/k walks the whole panel and a
-// section appearing or disappearing costs nothing but a rebuild.
+// Navigation is one flat cursor over the current view's `navRows`: every row the
+// view draws appears once in that list, so j/k walks it top to bottom and a row
+// appearing or disappearing costs nothing but a rebuild.
 Panel {
   id: root
 
@@ -22,33 +22,29 @@ Panel {
   ipcTarget: "dev.readeem.omihomo"
   manageIpc: false
 
-  // "main", "connections", "rules", or "manage". Every secondary view is the
-  // same popup at the same width, with its own rows and its own keys.
-  property string view: "main"
+  // "configs", "subs", "rules", "conns", or "settings".
+  property string view: "configs"
+  readonly property var tabViews: ["configs", "subs", "rules", "conns"]
 
   property bool cursorActive: false
   property int cursor: 0
 
   property string browseGroup: ""
   property bool filterOpen: false
-  property string expandedConfig: ""
   readonly property string configFilter: filterOpen ? configFilterField.text : ""
 
-  // With no subscriptions the URL field is the section, so it is always open;
-  // once there is one, the field hides behind the add row.
-  property bool subFormExplicit: false
-  readonly property bool subFormOpen: subFormExplicit || omihomo.subscriptions.length === 0
-  property bool ruleFormOpen: false
-  // Uninstall throws away subscriptions and the core, so the row asks twice.
+  // Removing a subscription and uninstalling the core both ask twice.
+  property string removeArmed: ""
   property bool uninstallArmed: false
   property int ruleTypeIndex: 0
   property int ruleTargetIndex: 0
 
   // Form values live in their fields: binding a TextField's `text` to panel
-  // state breaks the moment the user types into it, so the field is the
-  // source and the panel reads it.
-  readonly property string subFormUrl: subUrlRow.field.text
-  readonly property string ruleFormValue: ruleValueRow.field.text
+  // state breaks the moment the user types into it, so the field is the source
+  // and the panel reads it.
+  readonly property string subFormUrl: subUrlField.text.trim()
+  readonly property string ruleFormValue: ruleValueField.text
+  readonly property string ruleQuery: ruleTestField.text
 
   // The field currently taking keys, or null. While set, the key catcher is
   // blocked and the field owns Esc and Enter.
@@ -58,7 +54,11 @@ Panel {
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  readonly property color accent: Commons.Color.accent
   readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color faint: Qt.darker(foreground, 2.3)
+  readonly property color line: Util.alpha(foreground, 0.12)
+  readonly property color surface: Commons.Color.popups.background
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Commons.Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Commons.Color.accent) : "transparent"
@@ -73,15 +73,22 @@ Panel {
 
   readonly property bool liveReady: omihomo.apiReady
   // A degraded core with the redirect still on is the case the acceleration
-  // switch repairs, so that is when its cell is worth colouring.
+  // switch repairs, so that is when its row is worth colouring.
   readonly property bool tunRedirectBlocked: omihomo.coreState === "degraded"
     && omihomo.tunRedirectActive
+  readonly property bool compactHeader: view === "rules" || view === "conns" || view === "settings"
+
   readonly property var visibleGroups: Model.userGroups(omihomo.groups)
   readonly property string browsedGroup: Model.groupByName(visibleGroups, browseGroup)
     ? browseGroup : omihomo.primaryGroup
   readonly property var browsedGroupEntry: Model.groupByName(visibleGroups, browsedGroup)
   readonly property var visibleConfigs: browsedGroupEntry
     ? Model.filterNames(browsedGroupEntry.all, configFilter) : []
+  readonly property string testedText: {
+    var at = omihomo.groupTestedAt[browsedGroup]
+    return at ? "tested " + Model.relativeSince(at, nowMs) : "not tested yet"
+  }
+
   readonly property var ruleTargets: {
     var targets = ["DIRECT", "REJECT"]
     for (var i = 0; i < visibleGroups.length; i++) targets.push(visibleGroups[i].name)
@@ -91,15 +98,96 @@ Panel {
   readonly property string ruleTarget: ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))]
   readonly property string ruleFormError: Model.validateRule(ruleType, ruleFormValue, ruleTarget)
 
+  // Rules in the order mihomo walks them: ours that are prepended, then
+  // everything the core reports after them.
+  readonly property var ownHeadRules: omihomo.rules.filter(function(rule) { return rule.kind === "prepend" })
+  readonly property var effectiveRules: ownHeadRules.concat(omihomo.subscriptionRules)
+  readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery)
+  readonly property string ruleHitTarget: ruleTest.hit >= 0 ? effectiveRules[ruleTest.hit].target : ""
+  readonly property var ruleTally: Model.ruleTargetTally(effectiveRules)
+  // The rules view's one list: a heading, your rules, a heading, the
+  // subscription's. `eff` is the rule's place in `effectiveRules`, or -1 for
+  // one of yours that is appended or filtered rather than prepended.
+  readonly property var ruleEntries: {
+    var out = [{ kind: "head", title: "YOURS · " + omihomo.rules.length, note: "checked first" }]
+    var head = 0
+    var i
+    for (i = 0; i < omihomo.rules.length; i++) {
+      var rule = omihomo.rules[i]
+      out.push({ kind: "own", i: i, rule: rule, eff: rule.kind === "prepend" ? head++ : -1 })
+    }
+    out.push({
+      kind: "head",
+      title: (omihomo.activeSubscription !== "" ? omihomo.activeSubscription.toUpperCase() : "SUBSCRIPTION")
+        + " · " + omihomo.subscriptionRules.length,
+      note: "read-only"
+    })
+    for (i = 0; i < omihomo.subscriptionRules.length; i++)
+      out.push({ kind: "sub", i: i, rule: omihomo.subscriptionRules[i], eff: head + i })
+    return out
+  }
+
+  readonly property var flows: Model.connectionFlows(omihomo.connectionStacks, 6, 4)
+  readonly property double largestStack: {
+    var most = 0
+    for (var i = 0; i < omihomo.connectionStacks.length; i++) {
+      var stack = omihomo.connectionStacks[i]
+      most = Math.max(most, stack.download + stack.upload)
+    }
+    return most
+  }
+  readonly property int closedLogged: omihomo.connectionLog.length - omihomo.openConnectionCount
+
+  readonly property string statusText: {
+    var parts = [Model.stateLabel(omihomo.coreState).toUpperCase()]
+    if (omihomo.coreRunning) {
+      if (omihomo.effectiveMode !== "") parts.push(omihomo.effectiveMode + " mode")
+      if (omihomo.tunActive) parts.push("TUN")
+    }
+    if (omihomo.coreDetail !== "") parts.push(omihomo.coreDetail)
+    return parts.join(" · ")
+  }
   readonly property string uptimeText: omihomo.startedMs > 0 && omihomo.coreRunning
     ? Model.formatDuration(nowMs - omihomo.startedMs) : "—"
-  readonly property string configText: omihomo.primaryGroup === "" ? "—"
-    : omihomo.primaryGroup + " › " + (omihomo.currentConfig !== "" ? omihomo.currentConfig : "—")
   readonly property string egressText: omihomo.traceTesting ? "testing…"
-    : (omihomo.traceFailed ? "failed" : (omihomo.egressIp === "" ? "—"
-      : omihomo.egressIp + " · " + Model.formatDelay(omihomo.egressLatency)))
-  readonly property string throughputText: "↓ " + Model.formatRate(omihomo.downloadRate)
-    + "   ↑ " + Model.formatRate(omihomo.uploadRate)
+    : (omihomo.traceFailed ? "failed" : (omihomo.egressIp === "" ? "—" : omihomo.egressIp))
+  readonly property string latencyText: omihomo.traceTesting || omihomo.traceFailed ? "—"
+    : Model.formatDelay(omihomo.egressLatency)
+
+  // An error is shown next to whatever caused it when that is on screen, and
+  // under the header otherwise, so it is never out of sight.
+  readonly property bool errorInView: omihomo.lastError !== "" && (view === "subs"
+    ? omihomo.errorScope.indexOf("sub:") === 0 : omihomo.errorScope === view)
+  readonly property bool headerError: omihomo.lastError !== "" && !errorInView
+  readonly property string headerMessage: headerError ? omihomo.lastError : omihomo.actionStatus
+  readonly property bool subscriptionFailed: omihomo.lastError !== "" && omihomo.errorScope.indexOf("sub:") === 0
+
+  // Canvas styles are CSS strings; a QML colour would lose its alpha.
+  function css(c) {
+    return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + c.a + ")"
+  }
+
+  function errorAt(scope) {
+    return omihomo.lastError !== "" && omihomo.errorScope === scope
+  }
+
+  // Delay buckets for the latency pills and their legend, as how much of the
+  // urgent colour is mixed in.
+  function latencyHeat(ms) {
+    if (ms < 50) return 0.08
+    if (ms < 80) return 0.22
+    if (ms < 130) return 0.4
+    return 0.62
+  }
+
+  function shortRuleType(type) {
+    var t = String(type)
+    if (t === "DOMAIN-SUFFIX") return "suffix"
+    if (t === "DOMAIN-KEYWORD") return "keyword"
+    if (t === "IP-CIDR" || t === "IP-CIDR6") return "cidr"
+    if (t === "PROCESS-NAME") return "process"
+    return t.toLowerCase()
+  }
 
   // ---------------------------------------------------------------- cursor
 
@@ -110,50 +198,33 @@ Panel {
       rows.push({ s: "install" })
       return rows
     }
-    if (view === "connections") {
+    switch (view) {
+    case "configs":
+      if (liveReady) {
+        for (i = 0; i < visibleGroups.length; i++) rows.push({ s: "group", i: i })
+        for (i = 0; i < visibleConfigs.length; i++) rows.push({ s: "config", i: i })
+      }
+      break
+    case "subs":
+      for (i = 0; i < omihomo.subscriptions.length; i++) rows.push({ s: "sub", i: i })
+      rows.push({ s: "subUrl" }, { s: "subSubmit" })
+      break
+    case "rules":
+      rows.push({ s: "ruleTest" })
+      for (i = 0; i < omihomo.rules.length; i++) rows.push({ s: "rule", i: i })
+      for (i = 0; i < omihomo.subscriptionRules.length; i++) rows.push({ s: "srule", i: i })
+      rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" }, { s: "ruleSubmit" })
+      break
+    case "conns":
       for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
-      return rows
-    }
-    if (view === "manage") {
-      rows.push({ s: "autostart" })
+      break
+    case "settings":
+      rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" }, { s: "autostart" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
-      rows.push({ s: "tunRedirect" })
       if (!omihomo.permissionsOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
-      return rows
+      break
     }
-    if (view === "rules") {
-      for (i = 0; i < omihomo.rules.length; i++) rows.push({ s: "rule", i: i })
-      if (ruleFormOpen) {
-        rows.push({ s: "ruleType" })
-        rows.push({ s: "ruleValue" })
-        rows.push({ s: "ruleTarget" })
-        rows.push({ s: "ruleSubmit" })
-      } else {
-        rows.push({ s: "ruleAdd" })
-      }
-      return rows
-    }
-    rows.push({ s: "power" })
-    rows.push({ s: "trace" })
-    // Configs come before their groups: picking a config in the primary group
-    // is the one thing done every session, so it sits closest to the readout.
-    if (liveReady) {
-      for (i = 0; i < visibleConfigs.length; i++) rows.push({ s: "config", i: i })
-      for (i = 0; i < visibleGroups.length; i++) rows.push({ s: "group", i: i })
-    }
-    for (i = 0; i < omihomo.subscriptions.length; i++) rows.push({ s: "sub", i: i })
-    if (subFormOpen) {
-      rows.push({ s: "subUrl" })
-      rows.push({ s: "subSubmit" })
-    } else {
-      rows.push({ s: "subAdd" })
-    }
-    rows.push({ s: "mode" })
-    rows.push({ s: "tun" })
-    rows.push({ s: "rules" })
-    rows.push({ s: "connections" })
-    rows.push({ s: "manage" })
     return rows
   }
 
@@ -161,7 +232,13 @@ Panel {
   readonly property var cursorRow: cursor >= 0 && cursor < navRows.length ? navRows[cursor] : null
   // Leaving the row disarms it, so a confirm can never be inherited by whatever
   // the cursor lands on next.
-  onCursorRowChanged: if (uninstallArmed && (!cursorRow || cursorRow.s !== "uninstall")) uninstallArmed = false
+  onCursorRowChanged: {
+    if (uninstallArmed && (!cursorRow || cursorRow.s !== "uninstall")) uninstallArmed = false
+    if (removeArmed !== "") {
+      var sub = cursorRow && cursorRow.s === "sub" ? subscriptionAt(cursorRow.i) : null
+      if (!sub || sub.name !== removeArmed) removeArmed = ""
+    }
+  }
 
   // True when the keyboard cursor is on this exact row. Rows bind their
   // `hasCursor` to it, so mouse hover and j/k paint the same single highlight.
@@ -203,24 +280,17 @@ Panel {
   // h / l changes the value of a row that has one, instead of moving.
   function adjustCursorRow(delta) {
     if (!cursorRow) return
-    if (cursorRow.s === "mode") {
-      var index = Model.MODES.indexOf(omihomo.effectiveMode)
-      var next = (index < 0 ? 0 : index + delta + Model.MODES.length) % Model.MODES.length
-      omihomo.setMode(Model.MODES[next])
-    } else if (cursorRow.s === "tun") {
-      omihomo.toggleTun()
-    } else if (cursorRow.s === "autostart") {
-      omihomo.toggleAutostart()
-    } else if (cursorRow.s === "tailscale") {
-      omihomo.toggleTailscale()
-    } else if (cursorRow.s === "tailnetProxy") {
-      omihomo.toggleTailnetProxy()
-    } else if (cursorRow.s === "tunRedirect") {
-      omihomo.toggleTunRedirect()
-    } else if (cursorRow.s === "ruleType") {
-      ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
-    } else if (cursorRow.s === "ruleTarget") {
-      ruleTargetIndex = (ruleTargetIndex + delta + ruleTargets.length) % ruleTargets.length
+    switch (cursorRow.s) {
+    case "group":
+    case "config": cycleGroup(delta); break
+    case "mode": cycleMode(delta); break
+    case "tun": omihomo.toggleTun(); break
+    case "tunRedirect": omihomo.toggleTunRedirect(); break
+    case "autostart": omihomo.toggleAutostart(); break
+    case "tailscale": omihomo.toggleTailscale(); break
+    case "tailnetProxy": omihomo.toggleTailnetProxy(); break
+    case "ruleType": cycleRuleType(delta); break
+    case "ruleTarget": cycleRuleTarget(delta); break
     }
   }
 
@@ -228,118 +298,151 @@ Panel {
     if (!cursorRow) return
     switch (cursorRow.s) {
     case "install": installCore(); break
-    case "uninstall": uninstallCore(); break
-    case "power": omihomo.toggleCore(); break
-    case "trace": omihomo.refreshTrace(); break
-    case "mode": omihomo.setMode(Model.nextMode(omihomo.effectiveMode)); break
-    case "tun": omihomo.toggleTun(); break
-    case "rules": openRules(false); break
-    case "connections": openConnections(); break
+    case "group": browseGroupAt(cursorRow.i); break
+    case "config": chooseConfigAt(cursorRow.i); break
+    case "sub": activateSubscriptionAt(cursorRow.i); break
+    case "subUrl": beginEdit(subUrlField); break
+    case "subSubmit": submitSubForm(); break
+    case "ruleTest": beginEdit(ruleTestField); break
+    case "ruleType": cycleRuleType(1); break
+    case "ruleValue": beginEdit(ruleValueField); break
+    case "ruleTarget": cycleRuleTarget(1); break
+    case "ruleSubmit": submitRuleForm(); break
     case "conn": activateConnectionAt(cursorRow.i); break
-    case "manage": openManage(); break
+    case "mode": cycleMode(1); break
+    case "tun": omihomo.toggleTun(); break
+    case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "autostart": omihomo.toggleAutostart(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
-    case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "repair": omihomo.repairCore(); break
-    case "sub": activateSubscriptionAt(cursorRow.i); break
-    case "subAdd": openSubForm(); break
-    case "subUrl": beginEdit(subUrlRow.field); break
-    case "subSubmit": submitSubForm(); break
-    case "group": browseGroupAt(cursorRow.i); break
-    case "config": chooseConfigAt(cursorRow.i); break
-    case "ruleAdd": openRuleForm(); break
-    case "ruleType": ruleTypeIndex = (ruleTypeIndex + 1) % Model.RULE_TYPES.length; break
-    case "ruleValue": beginEdit(ruleValueRow.field); break
-    case "ruleTarget": ruleTargetIndex = (ruleTargetIndex + 1) % ruleTargets.length; break
-    case "ruleSubmit": submitRuleForm(); break
+    case "uninstall": uninstallCore(); break
     }
   }
 
   function deleteCursorRow() {
     if (!cursorRow) return
-    var target = null
     if (cursorRow.s === "sub") {
-      target = subscriptionAt(cursorRow.i)
-      if (target) omihomo.removeSubscription(target.name)
+      var sub = subscriptionAt(cursorRow.i)
+      if (sub) removeSubscription(sub.name)
     } else if (cursorRow.s === "rule") {
-      target = ruleAt(cursorRow.i)
-      if (target) omihomo.removeRule(target.index)
+      var rule = omihomo.rules[cursorRow.i]
+      if (rule) omihomo.removeRule(rule.index)
     } else if (cursorRow.s === "conn") {
       activateConnectionAt(cursorRow.i)
     }
   }
 
   function handleTextKey(key) {
-    var lower = key.toLowerCase()
-    if (view === "connections") {
-      // Not "X": PanelKeyCatcher takes both cases of x as its delete key, so
-      // an uppercase one never gets here.
-      if (key === "A") omihomo.closeAllConnections()
-      else if (key === "L") omihomo.clearConnectionLog()
-      else if (lower === "r") omihomo.refreshConnections()
-      else if (lower === "c") closeConnections()
-      return
-    }
-    if (view === "rules") {
-      if (lower === "n") openRuleForm()
-      else if (lower === "r") omihomo.refresh()
-      return
-    }
-    if (view === "manage") {
-      if (key === "M") closeManage()
-      else if (key === "R") omihomo.repairCore()
-      else if (lower === "b") omihomo.toggleAutostart()
-      else if (key === "T") omihomo.toggleTailscale()
-      else if (key === "P") omihomo.toggleTailnetProxy()
-      else if (key === "A") omihomo.toggleTunRedirect()
-      return
-    }
     if (!omihomo.installed) {
-      if (lower === "i") installCore()
+      if (key.toLowerCase() === "i") installCore()
+      return
+    }
+    var tab = ["1", "2", "3", "4"].indexOf(key)
+    if (tab >= 0) {
+      openView(tabViews[tab])
       return
     }
     switch (key) {
+    case "M": openView(view === "settings" ? "configs" : "settings"); return
     case "s": omihomo.toggleCore(); return
     case "t": omihomo.toggleTun(); return
-    case "m": omihomo.setMode(Model.nextMode(omihomo.effectiveMode)); return
-    case "c": openConnections(); return
-    case "M": openManage(); return
-    case "r": omihomo.refresh(); omihomo.refreshLive(); omihomo.refreshTrace(); return
-    case "a": openSubForm(); return
-    // `n` still means "new rule": it opens the rules view with the form
-    // already up, so the key costs the same two steps it always did.
-    case "n": openRules(true); return
+    case "m": cycleMode(1); return
+    case "c": openView("conns"); return
+    case "n": openRuleForm(); return
     case "R": omihomo.repairCore(); return
-    case "/": openFilter(); return
+    case "r": omihomo.refresh(); omihomo.refreshLive(); omihomo.refreshTrace(); return
     }
-    if (lower === "u") updateSelectedSubscription()
-    else if (lower === "p") makeSelectedGroupPrimary()
-    else if (key === "d") testSelectedConfig()
-    else if (key === "D") omihomo.testGroup(browsedGroup)
+    if (view === "configs") {
+      if (key === "d") testSelectedConfig()
+      else if (key === "D") omihomo.testGroup(browsedGroup)
+      else if (key === "g") cycleGroup(1)
+      else if (key === "p") omihomo.setPrimaryGroup(browsedGroup)
+      else if (key === "/") openFilter()
+    } else if (view === "subs") {
+      if (key === "u") updateSelectedSubscription()
+      else if (key === "a") { focusRow("subUrl"); beginEdit(subUrlField) }
+    } else if (view === "rules") {
+      if (key === "/") { focusRow("ruleTest"); beginEdit(ruleTestField) }
+    } else if (view === "conns") {
+      // Not "X": PanelKeyCatcher takes both cases of x as its delete key, so an
+      // uppercase one never gets here.
+      if (key === "A") omihomo.closeAllConnections()
+      else if (key === "L") omihomo.clearConnectionLog()
+    } else if (view === "settings") {
+      if (key === "A") omihomo.toggleTunRedirect()
+      else if (key === "b") omihomo.toggleAutostart()
+      else if (key === "T") omihomo.toggleTailscale()
+      else if (key === "P") omihomo.toggleTailnetProxy()
+    }
   }
 
   function handleEscape() {
     if (editing) { endEdit(); return }
+    if (removeArmed !== "") { removeArmed = ""; return }
     if (uninstallArmed) { uninstallArmed = false; return }
     if (filterOpen) { closeFilter(); return }
-    if (subFormExplicit) { subFormExplicit = false; return }
-    if (ruleFormOpen) { ruleFormOpen = false; return }
-    if (view === "connections") { closeConnections(); return }
-    if (view === "rules") { closeRules(); return }
-    if (view === "manage") { closeManage(); return }
+    if (view !== "configs") { openView("configs"); return }
     close()
+  }
+
+  // The hint bar is the same keys under a pointer.
+  function runHint(key) {
+    if (key === "enter") { cursorActive = true; activateCursor() }
+    else if (key === "x") { cursorActive = true; deleteCursorRow() }
+    else if (key === "esc") handleEscape()
+    else if (key === "j") moveCursor(0, 1)
+    else handleTextKey(key)
+  }
+
+  function hintsFor(name) {
+    switch (name) {
+    case "configs": return [
+      { keys: "↵", label: "select", key: "enter" }, { keys: "d", label: "test", key: "d" },
+      { keys: "D", label: "test all", key: "D" }, { keys: "g", label: "group", key: "g" },
+      { keys: "s", label: "core", key: "s" }]
+    case "subs": return [
+      { keys: "↵", label: "activate", key: "enter" }, { keys: "u", label: "update", key: "u" },
+      { keys: "a", label: "add", key: "a" }, { keys: "x", label: "remove", key: "x" },
+      { keys: "j k", label: "move", key: "j" }]
+    case "rules": return [
+      { keys: "/", label: "test", key: "/" }, { keys: "n", label: "new", key: "n" },
+      { keys: "x", label: "delete", key: "x" }, { keys: "j k", label: "move", key: "j" },
+      { keys: "esc", label: "back", key: "esc" }]
+    case "conns": return [
+      { keys: "↵", label: "close", key: "enter" }, { keys: "A", label: "close all", key: "A" },
+      { keys: "L", label: "clear log", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
+    case "settings": return [
+      { keys: "↵", label: "toggle", key: "enter" }, { keys: "m", label: "mode", key: "m" },
+      { keys: "t", label: "TUN", key: "t" }, { keys: "b", label: "login", key: "b" },
+      { keys: "M", label: "back", key: "M" }]
+    }
+    return []
   }
 
   // ---------------------------------------------------------------- actions
 
-  function subscriptionAt(index) {
-    var list = omihomo.subscriptions
-    return list.length === 0 ? null : list[Math.max(0, Math.min(index, list.length - 1))]
+  function openView(name) {
+    view = name
+    cursor = 0
+    cursorActive = false
+    removeArmed = ""
+    uninstallArmed = false
+    if (filterOpen) closeFilter()
+    if (name === "conns") omihomo.refreshConnections()
+    // The cursor starts on the selected config, so j/k moves from there.
+    if (name === "configs" && browsedGroupEntry) {
+      var at = visibleConfigs.indexOf(browsedGroupEntry.now)
+      if (at >= 0) {
+        focusRow("config", at)
+        cursorActive = false
+        Qt.callLater(function() { configList.positionViewAtIndex(at, ListView.Contain) })
+      }
+    }
   }
 
-  function ruleAt(index) {
-    var list = omihomo.rules
+  function subscriptionAt(index) {
+    var list = omihomo.subscriptions
     return list.length === 0 ? null : list[Math.max(0, Math.min(index, list.length - 1))]
   }
 
@@ -368,39 +471,53 @@ Panel {
     omihomo.updateSubscription(sub ? sub.name : omihomo.activeSubscription)
   }
 
+  // The first request arms the row; the second removes.
+  function removeSubscription(name) {
+    if (removeArmed !== name) {
+      removeArmed = name
+      return
+    }
+    removeArmed = ""
+    omihomo.removeSubscription(name)
+  }
+
   function browseGroupAt(index) {
     var group = visibleGroups[index]
     if (!group) return
     browseGroup = group.name
     configFilterField.text = ""
-    focusRow("group", index)
   }
 
-  function makeSelectedGroupPrimary() {
-    if (!cursorRow || cursorRow.s !== "group") return
-    var group = visibleGroups[cursorRow.i]
-    if (group) omihomo.setPrimaryGroup(group.name)
+  function cycleGroup(delta) {
+    if (visibleGroups.length === 0) return
+    var index = -1
+    for (var i = 0; i < visibleGroups.length; i++) if (visibleGroups[i].name === browsedGroup) index = i
+    browseGroupAt((index + delta + visibleGroups.length) % visibleGroups.length)
   }
 
-  // Enter on a config selects it; a group that picks for itself (URLTest,
-  // Fallback) has nothing to select, so the row expands its parameters instead.
+  function cycleMode(delta) {
+    var index = Model.MODES.indexOf(omihomo.effectiveMode)
+    var next = (index < 0 ? 0 : index + delta + Model.MODES.length) % Model.MODES.length
+    omihomo.setMode(Model.MODES[next])
+  }
+
+  function cycleRuleType(delta) {
+    ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
+  }
+
+  function cycleRuleTarget(delta) {
+    ruleTargetIndex = (ruleTargetIndex + delta + ruleTargets.length) % ruleTargets.length
+  }
+
+  // A group that picks for itself (URLTest, Fallback) has nothing to select.
   function chooseConfigAt(index) {
     var name = visibleConfigs[index]
-    if (!name) return
-    if (browsedGroupEntry && browsedGroupEntry.selectable) {
-      omihomo.selectConfig(browsedGroup, name)
-    } else {
-      expandedConfig = expandedConfig === name ? "" : name
-    }
+    if (name && browsedGroupEntry && browsedGroupEntry.selectable) omihomo.selectConfig(browsedGroup, name)
   }
 
   function testSelectedConfig() {
     if (cursorRow && cursorRow.s === "config") omihomo.testConfig(visibleConfigs[cursorRow.i])
     else if (omihomo.currentConfig !== "") omihomo.testConfig(omihomo.currentConfig)
-  }
-
-  function toggleConfigParameters(name) {
-    expandedConfig = expandedConfig === name ? "" : name
   }
 
   // The AUR build is interactive, so installation is handed to the first-party
@@ -413,95 +530,58 @@ Panel {
 
   // Uninstall removes packages and the core's root permissions, so it takes the
   // same terminal as the install: pacman's output and the sudo prompt need
-  // somewhere to go.
-  // The first activation only arms the row.
+  // somewhere to go. The first activation only arms the row.
   function uninstallCore() {
     if (!bar) return
-    if (!uninstallArmed) { uninstallArmed = true; return }
+    if (!uninstallArmed) {
+      focusRow("uninstall")
+      uninstallArmed = true
+      return
+    }
     bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(cliPath + " core uninstall"))
     close()
   }
 
-  function openConnections() {
-    view = "connections"
-    cursor = 0
-    cursorActive = false
-    omihomo.refreshConnections()
-  }
-
-  function closeConnections() {
-    view = "main"
-    cursor = 0
-    cursorActive = false
-  }
-
-  // Rules are their own view rather than a main-panel section: a subscription
-  // ships hundreds of them, and none of them are read in a normal session.
-  function openRules(withForm) {
-    view = "rules"
-    cursor = 0
-    cursorActive = false
-    ruleFormOpen = false
-    if (rulesFlick) rulesFlick.contentY = 0
-    if (withForm) openRuleForm()
-  }
-
-  function closeRules() {
-    view = "main"
-    cursor = 0
-    cursorActive = false
-    ruleFormOpen = false
-  }
-
-  // The manage view holds the operations that outlive a session: autostart,
-  // permission repair, and uninstall.
-  function openManage() {
-    view = "manage"
-    cursor = 0
-    cursorActive = false
-  }
-
-  function closeManage() {
-    view = "main"
-    cursor = 0
-    cursorActive = false
-    uninstallArmed = false
-  }
-
-  function openSubForm() {
-    subUrlRow.field.text = ""
-    subFormExplicit = true
-    Qt.callLater(function() { root.focusRow("subUrl"); root.beginEdit(subUrlRow.field) })
-  }
-
   function submitSubForm() {
-    if (subFormUrl === "") return
+    if (subFormUrl === "") {
+      focusRow("subUrl")
+      beginEdit(subUrlField)
+      return
+    }
     omihomo.addSubscription(subFormUrl)
-    subUrlRow.field.text = ""
-    subFormExplicit = false
+    subUrlField.text = ""
     endEdit()
   }
 
+  // `n` means "new rule" from anywhere: it opens the rules view with the
+  // pattern field taking keys.
   function openRuleForm() {
+    if (view !== "rules") openView("rules")
     omihomo.clearMessages()
-    ruleValueRow.field.text = ""
-    ruleFormOpen = true
-    Qt.callLater(function() { root.focusRow("ruleValue"); root.beginEdit(ruleValueRow.field) })
+    Qt.callLater(function() {
+      root.focusRow("ruleValue")
+      root.beginEdit(ruleValueField)
+    })
   }
 
   function submitRuleForm() {
-    if (ruleFormError !== "") return
+    if (ruleFormError !== "") {
+      focusRow("ruleValue")
+      beginEdit(ruleValueField)
+      return
+    }
     omihomo.addRule(ruleType, ruleFormValue, ruleTarget)
   }
 
   function openFilter() {
     configFilterField.text = ""
     filterOpen = true
-    Qt.callLater(function() { root.beginEdit(configFilterField) })
+    beginEdit(configFilterField)
   }
 
   function closeFilter() {
     filterOpen = false
+    configFilterField.text = ""
     endEdit()
   }
 
@@ -520,57 +600,20 @@ Panel {
     else if (editing === field) editing = null
   }
 
-  // ---------------------------------------------------------------- scrolling
-
-  function scrollItemIntoView(item, flick) {
-    if (!flick || !item) return
-    Qt.callLater(function() {
-      if (!item) return
-      var margin = Style.space(6)
-      var point = item.mapToItem(flick.contentItem, 0, 0)
-      var top = point.y
-      var bottom = top + item.height
-      var viewTop = flick.contentY
-      var viewBottom = viewTop + flick.height
-      var maxY = Math.max(0, flick.contentHeight - flick.height)
-      if (top < viewTop + margin) flick.contentY = Math.max(0, top - margin)
-      else if (bottom > viewBottom - margin) flick.contentY = Math.min(maxY, bottom + margin - flick.height)
-    })
-  }
-
-  // The control footer sits outside the main view's flickable, so its rows are
-  // always on screen and never scrolled to.
-  readonly property var pinnedSections: ["mode", "tun", "rules", "connections", "manage"]
-
-  // Main and rules are the two flickable views: the connection list owns its
-  // own scrolling and the manage view always fits. Within the main view the
-  // config list is its own ListView, and everything else lives in the
-  // view's flickable.
+  // Each view scrolls one list, so the cursor only ever has to bring a row of
+  // that list into view; everything else in a view is always on screen.
   function scrollCursorIntoView() {
     if (!cursorRow) return
-    if (view === "rules") {
-      scrollItemIntoView(rowAnchors[rowKey(cursorRow.s, cursorRow.i)] || null, rulesFlick)
-      return
+    var list = null
+    var index = cursorRow.i
+    switch (cursorRow.s) {
+    case "config": list = configList; break
+    case "sub": list = subList; break
+    case "rule": list = ruleList; index = 1 + cursorRow.i; break
+    case "srule": list = ruleList; index = 2 + omihomo.rules.length + cursorRow.i; break
+    case "conn": list = connList; break
     }
-    if (view !== "main") return
-    if (pinnedSections.indexOf(cursorRow.s) >= 0) return
-    if (cursorRow.s === "config") {
-      configList.currentIndex = cursorRow.i
-      scrollItemIntoView(configSection, panelFlick)
-    } else {
-      scrollItemIntoView(rowAnchors[rowKey(cursorRow.s, cursorRow.i)] || null, panelFlick)
-    }
-  }
-
-  // Rows register themselves so the cursor can scroll the panel to them. A row
-  // destroyed by a model change leaves a null behind, which reads as "nothing
-  // to scroll to" rather than a dangling item.
-  property var rowAnchors: ({})
-  function rowKey(section, index) {
-    return section + ":" + (index === undefined ? -1 : index)
-  }
-  function registerRowAnchor(key, item) {
-    rowAnchors[key] = item
+    if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
   }
 
   implicitWidth: button.implicitWidth
@@ -578,22 +621,13 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
-      cursorActive = false
-      cursor = 0
-      view = "main"
-      subFormExplicit = false
-      ruleFormOpen = false
-      filterOpen = false
-      uninstallArmed = false
+      openView("configs")
+      ruleValueField.text = ""
       editing = null
-      if (panelFlick) panelFlick.contentY = 0
-      if (rulesFlick) rulesFlick.contentY = 0
       omihomo.clearMessages()
       // The reads that opening triggers live in Service.onPanelOpenChanged,
       // which runs after this handler and after `panelOpen` is actually true.
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-    } else {
-      view = "main"
     }
   }
 
@@ -604,18 +638,12 @@ Panel {
     settings: root.settings
     cliPath: root.cliPath
     panelOpen: root.opened
-    connectionsOpen: root.opened && root.view === "connections"
-    onConfigChanged: root.omihomoConfigChanged()
+    connectionsOpen: root.opened && root.view === "conns"
+    onConfigChanged: omihomo.refreshTrace()
     onRuleAdded: {
-      root.ruleFormOpen = false
+      ruleValueField.text = ""
       root.endEdit()
     }
-  }
-
-  // A new config means a new egress path, which is one of the three events
-  // that are allowed to spend a network round trip on the IP and latency.
-  function omihomoConfigChanged() {
-    omihomo.refreshTrace()
   }
 
   Timer {
@@ -667,16 +695,10 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    // Every view is the same 420px surface, so switching between them never
-    // moves the popup out from under the pointer.
+    // One fixed surface for every view, so switching tabs never moves or
+    // resizes the popup under the pointer.
     contentWidth: panel.fittedContentWidth(Style.space(420))
-    // The main view asks for its scrolling body plus the pinned footer, so a
-    // short panel still ends right under the footer instead of padding to the cap.
-    contentHeight: panel.fittedContentHeight(root.view === "connections" ? connectionsColumn.implicitHeight
-      : root.view === "rules" ? rulesColumn.implicitHeight
-      : root.view === "manage" ? manageColumn.implicitHeight
-      : column.implicitHeight + (controlFooter.visible ? controlFooter.implicitHeight + Style.space(12) : 0),
-      Style.space(680))
+    contentHeight: panel.fittedContentHeight(Style.space(660))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -692,921 +714,1246 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) { root.handleTextKey(t) }
 
-      // ------------------------------------------------------ connections view
-
-      Column {
-        id: connectionsColumn
+      ColumnLayout {
         anchors.fill: parent
         spacing: Style.space(10)
-        visible: root.view === "connections"
 
-        Item {
-          width: parent.width
-          implicitHeight: Math.max(connectionsTitle.implicitHeight, connectionsTotals.implicitHeight)
+        // ---- header ---------------------------------------------------------
+        //
+        // Always the core: its subscription, state, switch, and traffic. The
+        // configs and subscriptions views get the full readout; the rest fold
+        // it into one line to leave room for their lists.
 
-          Text {
-            id: connectionsTitle
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Connections"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            font.bold: true
-          }
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
 
-          Text {
-            id: connectionsTotals
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            horizontalAlignment: Text.AlignRight
-            text: omihomo.openConnectionCount + " open · " + omihomo.connectionLog.length + " logged"
-              + "\n↓ " + Model.formatBytes(omihomo.connectionsDownload)
-              + "  ↑ " + Model.formatBytes(omihomo.connectionsUpload)
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        PanelSeparator { foreground: root.foreground }
-
-        Text {
-          visible: omihomo.connectionStacks.length === 0
-          width: parent.width
-          text: root.liveReady ? "Nothing logged yet." : "mihomo is not running."
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          horizontalAlignment: Text.AlignHCenter
-        }
-
-        ListView {
-          id: connectionList
-          width: parent.width
-          height: Math.min(contentHeight, Style.space(520))
-          spacing: Style.space(4)
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
-          interactive: contentHeight > height
-          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-          model: omihomo.connectionStacks
-          currentIndex: root.cursorRow && root.cursorRow.s === "conn" ? root.cursorRow.i : -1
-          onCurrentIndexChanged: if (currentIndex >= 0) Qt.callLater(keepCurrentVisible)
-          function keepCurrentVisible() {
-            if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
-          }
-
-          delegate: Item {
-            required property var modelData
-            required property int index
-
-            width: ListView.view.width
-            height: connectionRow.implicitHeight
-
-            ConnectionRow {
-              id: connectionRow
-              width: parent.width
-              stack: modelData
-              rowIndex: index
-            }
-          }
-        }
-
-        Text {
-          width: parent.width
-          text: "enter close · x close · A close all · L clear log · esc back"
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-      }
-
-      // ----------------------------------------------------------- manage view
-
-      Column {
-        id: manageColumn
-        anchors.fill: parent
-        spacing: Style.space(10)
-        visible: root.view === "manage"
-
-        Item {
-          width: parent.width
-          implicitHeight: Math.max(manageTitle.implicitHeight, manageState.implicitHeight)
-
-          Text {
-            id: manageTitle
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Manage"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            font.bold: true
-          }
-
-          Text {
-            id: manageState
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: Model.stateLabel(omihomo.coreState)
-            color: omihomo.coreState === "degraded" ? root.urgent : root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-        }
-
-        PanelSeparator { foreground: root.foreground }
-
-        Column {
-          width: parent.width
-          spacing: Style.space(4)
-
-          ActionRow {
-            width: parent.width
-            section: "autostart"
-            title: "Autostart"
-            subtitle: "Start mihomo when the session starts."
-            trailing: omihomo.autostartActive ? "on" : "off"
-            current: omihomo.autostartActive
-            onActivated: omihomo.toggleAutostart()
-          }
-
-          ActionRow {
-            width: parent.width
-            visible: omihomo.tailscalePresent
-            section: "tailscale"
-            title: "Tailscale"
-            subtitle: "Reach the tailnet's control plane and relays through mihomo. Needs the core running."
-            trailing: omihomo.tailscaleActive ? "on" : "off"
-            current: omihomo.tailscaleActive
-            onActivated: omihomo.toggleTailscale()
-          }
-
-          ActionRow {
-            width: parent.width
-            visible: omihomo.tailscalePresent
-            section: "tailnetProxy"
-            title: "Tailnet via proxy"
-            subtitle: "Send tailnet addresses to the proxy server instead of the local Tailscale. The server has to be on the tailnet."
-            trailing: omihomo.tailnetProxyActive ? "on" : "off"
-            current: omihomo.tailnetProxyActive
-            onActivated: omihomo.toggleTailnetProxy()
-          }
-
-          // The repair for a TUN that will not start on this machine. It is
-          // urgent only while the core is actually degraded by it; the rest of
-          // the time it is an ordinary speed-versus-compatibility switch.
-          ActionRow {
-            width: parent.width
-            section: "tunRedirect"
-            title: "TUN acceleration"
-            subtitle: "Routes TCP through an nftables table, which is faster but has to be the only one. Turn off if TUN will not start or carries no traffic."
-            trailing: omihomo.tunRedirectActive ? "on" : "off"
-            current: omihomo.tunRedirectActive
-            urgentTrailing: root.tunRedirectBlocked
-            onActivated: omihomo.toggleTunRedirect()
-          }
-
-          ActionRow {
-            width: parent.width
-            visible: !omihomo.permissionsOk
-            section: "repair"
-            title: "Repair permissions"
-            subtitle: "The mihomo binary is missing the root permissions TUN needs, or other accounts can run it as root."
-            trailing: "R"
-            urgentTrailing: true
-            onActivated: omihomo.repairCore()
-          }
-
-          ActionRow {
-            width: parent.width
-            section: "uninstall"
-            title: root.uninstallArmed ? "Confirm uninstall" : "Uninstall mihomo"
-            subtitle: root.uninstallArmed
-              ? "Activate again to remove it. Esc cancels."
-              : "Removes the core, its permissions, the unit, and saved subscriptions."
-            urgentTrailing: root.uninstallArmed
-            trailing: root.uninstallArmed ? "confirm" : ""
-            onActivated: root.uninstallCore()
-          }
-        }
-
-        Text {
-          width: parent.width
-          text: "enter activate · b autostart"
-            + (omihomo.tailscalePresent ? " · T tailscale · P tailnet" : "")
-            + " · A acceleration"
-            + (omihomo.permissionsOk ? "" : " · R repair")
-            + " · esc back"
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-      }
-
-      // ------------------------------------------------------------ main view
-      //
-      // The main view is the only one split in two: everything scrolls except
-      // the control footer, which is pinned to the bottom of the popup so mode,
-      // TUN, and the three views are reachable from anywhere in a long panel.
-
-      Item {
-        id: mainView
-        anchors.fill: parent
-        visible: root.view === "main"
-
-        Flickable {
-          id: panelFlick
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.top: parent.top
-          anchors.bottom: controlFooter.visible ? controlFooter.top : parent.bottom
-          anchors.bottomMargin: controlFooter.visible ? Style.space(12) : 0
-          contentWidth: width
-          contentHeight: column.implicitHeight
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
-          flickableDirection: Flickable.VerticalFlick
-          interactive: contentHeight > height
-          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-          Column {
-            id: column
-            width: panelFlick.width
+          RowLayout {
+            Layout.fillWidth: true
             spacing: Style.space(12)
 
-            // ---- hero -------------------------------------------------------
-
-            Item {
-              id: header
-              width: parent.width
-              implicitHeight: hero.implicitHeight
-              readonly property bool ringVisible: root.at("power")
-
-              PanelHero {
-                id: hero
-                width: parent.width
-                title: omihomo.activeSubscription !== "" ? omihomo.activeSubscription : "Omihomo"
-                meta: omihomo.coreDetail !== "" ? Model.stateLabel(omihomo.coreState) + " · " + omihomo.coreDetail
-                  : Model.stateLabel(omihomo.coreState)
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                iconOpacity: omihomo.coreActive ? 1.0 : 0.5
-                iconComponent: Component {
-                  OmihomoIcon {
-                    iconSize: Style.font.display
-                    color: omihomo.coreActive ? root.foreground : root.dim
-                    crossed: omihomo.installed && !omihomo.coreActive
-                  }
-                }
-
-                trailingControl: Component {
-                  ToggleSwitch {
-                    id: powerSwitch
-                    visible: omihomo.installed
-                    checked: omihomo.coreActive
-                    busy: omihomo.busy
-                    hasCursor: header.ringVisible
-                    foreground: hero.foreground
-                    onHovered: function(on) { if (on) root.focusRow("power") }
-                    onToggled: omihomo.toggleCore()
-
-                    PanelToolTip {
-                      visible: powerSwitch.containsMouse
-                      text: omihomo.coreActive ? "Stop mihomo" : "Start mihomo"
-                      fontFamily: hero.fontFamily
-                    }
-                  }
-                }
-              }
+            OmihomoIcon {
+              iconSize: Style.space(24)
+              color: omihomo.coreActive ? root.foreground : root.dim
+              crossed: omihomo.installed && !omihomo.coreActive
             }
 
-            Text {
-              visible: omihomo.actionStatus !== "" || omihomo.lastError !== ""
-              width: parent.width
-              text: omihomo.actionStatus !== "" ? omihomo.actionStatus : omihomo.lastError
-              color: omihomo.lastError !== "" && omihomo.actionStatus === "" ? root.urgent : root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            // ---- core is not installed --------------------------------------
-
-            Column {
-              visible: !omihomo.installed
-              width: parent.width
-              spacing: Style.space(10)
-
-              Text {
-                width: parent.width
-                text: "The mihomo core is not installed. Installing builds it from the AUR, so it "
-                  + "runs in a terminal."
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                wrapMode: Text.WordWrap
-              }
-
-              ActionRow {
-                width: parent.width
-                section: "install"
-                title: "Install mihomo"
-                trailing: "i"
-                onActivated: root.installCore()
-              }
-            }
-
-            // ---- status readout ---------------------------------------------
-
-            Column {
-              visible: omihomo.installed
-              width: parent.width
+            ColumnLayout {
+              Layout.fillWidth: true
               spacing: Style.space(2)
 
-              StatRow { width: parent.width; label: "CONFIG"; value: root.configText }
-              StatRow { width: parent.width; label: "TRAFFIC"; value: root.throughputText }
-              StatRow { width: parent.width; label: "UPTIME"; value: root.uptimeText }
-              StatRow {
-                width: parent.width
-                label: "EGRESS"
-                section: "trace"
-                value: root.egressText
-                faded: omihomo.traceFailed && !omihomo.traceTesting
-                onActivated: omihomo.refreshTrace()
+              Text {
+                Layout.fillWidth: true
+                text: omihomo.activeSubscription !== "" ? omihomo.activeSubscription : "Omihomo"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
               }
-            }
 
-            // ---- configs and groups -------------------------------------------
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(6)
 
-            PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
-
-            Column {
-              id: configSection
-              visible: omihomo.installed && root.liveReady && root.browsedGroupEntry !== null
-              width: parent.width
-              spacing: Style.space(4)
-
-              Item {
-                width: parent.width
-                implicitHeight: configHeader.implicitHeight
-
-                PanelSectionHeader {
-                  id: configHeader
-                  anchors.left: parent.left
-                  text: root.browsedGroup.toUpperCase()
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
+                Rectangle {
+                  implicitWidth: Style.space(6)
+                  implicitHeight: Style.space(6)
+                  radius: width / 2
+                  color: omihomo.coreState === "degraded" ? root.urgent
+                    : (omihomo.coreRunning ? root.accent : root.faint)
                 }
 
                 Text {
-                  anchors.right: parent.right
-                  anchors.verticalCenter: configHeader.verticalCenter
-                  text: root.visibleConfigs.length + (root.browsedGroupEntry
-                    && root.visibleConfigs.length !== root.browsedGroupEntry.all.length
-                    ? " of " + root.browsedGroupEntry.all.length : "")
-                  color: root.dim
+                  Layout.fillWidth: true
+                  text: root.compactHeader && omihomo.coreRunning
+                    ? Model.stateLabel(omihomo.coreState).toLowerCase() + " · " + omihomo.effectiveMode
+                    : root.statusText
+                  color: omihomo.coreState === "degraded" ? root.urgent : root.dim
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
                 }
-              }
-
-              TextField {
-                id: configFilterField
-                visible: root.filterOpen
-                width: parent.width
-                foreground: root.foreground
-                placeholderText: "Filter configs"
-                verticalPadding: Style.space(4)
-                onAccepted: root.endEdit()
-                onActiveFocusChanged: root.fieldFocusChanged(configFilterField, activeFocus)
-                Keys.onEscapePressed: root.closeFilter()
-              }
-
-              ListView {
-                id: configList
-                width: parent.width
-                height: Math.min(contentHeight, Style.space(300))
-                spacing: Style.space(2)
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: contentHeight > height
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                model: root.visibleConfigs
-                onCurrentIndexChanged: if (currentIndex >= 0) Qt.callLater(keepCurrentVisible)
-                function keepCurrentVisible() {
-                  if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
-                }
-
-                delegate: Item {
-                  required property var modelData
-                  required property int index
-
-                  width: ListView.view.width
-                  height: configRow.implicitHeight
-
-                  ConfigRow {
-                    id: configRow
-                    width: parent.width
-                    configName: String(modelData)
-                    rowIndex: index
-                  }
-                }
-              }
-
-              Text {
-                width: parent.width
-                text: root.browsedGroupEntry && root.browsedGroupEntry.selectable
-                  ? "enter select · d test · D test group · / filter"
-                  : root.browsedGroup + " picks its own config · d test · D test group"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
               }
             }
 
             Column {
-              id: groupSection
-              visible: omihomo.installed
-              width: parent.width
-              spacing: Style.space(4)
+              visible: root.compactHeader && omihomo.installed
+              spacing: 0
 
-              PanelSectionHeader {
-                text: "GROUPS"
-                foreground: root.foreground
+              Text {
+                text: "↓ " + Model.formatRate(omihomo.downloadRate)
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                text: "↑ " + Model.formatRate(omihomo.uploadRate)
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            TrafficGraph {
+              visible: root.compactHeader && omihomo.installed
+              Layout.preferredWidth: Style.space(64)
+              Layout.preferredHeight: Style.space(24)
+            }
+
+            ToggleSwitch {
+              id: powerSwitch
+              visible: omihomo.installed
+              checked: omihomo.coreActive
+              busy: omihomo.busy
+              foreground: root.foreground
+              onToggled: omihomo.toggleCore()
+
+              PanelToolTip {
+                visible: powerSwitch.containsMouse
+                text: (omihomo.coreActive ? "Stop mihomo" : "Start mihomo") + " · s"
                 fontFamily: root.fontFamily
               }
+            }
+          }
 
-              // An empty list is never left to speak for itself: without this
-              // the section is a bare header, which reads as a panel that has
-              // lost its data rather than one that has none to show.
-              Text {
-                visible: !root.liveReady || (omihomo.proxiesLoaded && root.visibleGroups.length === 0)
-                width: parent.width
-                text: !root.liveReady
-                  ? (omihomo.activeSubscription === "" ? "Activate a subscription to browse groups."
-                    : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse groups."))
-                  : "This subscription declares no groups."
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-              }
+          RowLayout {
+            visible: !root.compactHeader && omihomo.installed
+            Layout.fillWidth: true
+            spacing: Style.space(12)
+
+            Text {
+              text: "↓ " + Model.formatRate(omihomo.downloadRate)
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              Layout.fillWidth: true
+              text: "↑ " + Model.formatRate(omihomo.uploadRate)
+              color: root.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+          }
+
+          TrafficGraph {
+            visible: !root.compactHeader && omihomo.installed
+            Layout.fillWidth: true
+            Layout.preferredHeight: Style.space(44)
+          }
+
+          RowLayout {
+            visible: !root.compactHeader && omihomo.installed
+            Layout.fillWidth: true
+            spacing: Style.space(8)
+
+            Readout { Layout.preferredWidth: parent.width * 0.27; label: "UPTIME"; value: root.uptimeText }
+            Readout {
+              Layout.fillWidth: true
+              label: "EGRESS"
+              value: root.egressText
+              faded: omihomo.traceFailed && !omihomo.traceTesting
+              tooltip: "Check again · r"
+              onActivated: omihomo.refreshTrace()
+            }
+            Readout { Layout.preferredWidth: parent.width * 0.27; label: "LATENCY"; value: root.latencyText }
+          }
+        }
+
+        Text {
+          visible: root.headerMessage !== ""
+          Layout.fillWidth: true
+          text: (root.headerError ? "▲ " : "") + root.headerMessage
+          color: root.headerError ? root.urgent : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
+
+        // ---- core is not installed -------------------------------------------
+
+        ColumnLayout {
+          visible: !omihomo.installed
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+          spacing: Style.space(10)
+
+          Text {
+            Layout.fillWidth: true
+            text: "The mihomo core is not installed. Installing builds it from the AUR, so it runs in a terminal."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          SmallButton {
+            text: "Install mihomo · i"
+            hasCursor: root.at("install")
+            onHovered: function(on) { if (on) root.focusRow("install") }
+            onClicked: root.installCore()
+          }
+
+          Item { Layout.fillHeight: true }
+        }
+
+        // ---- tabs -------------------------------------------------------------
+
+        RowLayout {
+          visible: omihomo.installed
+          Layout.fillWidth: true
+          spacing: Style.space(4)
+
+          ViewTab { target: "configs"; number: 1; label: "Configs"; count: root.browsedGroupEntry ? String(root.browsedGroupEntry.all.length) : "" }
+          ViewTab { target: "subs"; number: 2; label: "Subs"; count: root.subscriptionFailed ? "!" : String(omihomo.subscriptions.length); alert: root.subscriptionFailed }
+          ViewTab { target: "rules"; number: 3; label: "Rules"; count: String(root.effectiveRules.length) }
+          ViewTab { target: "conns"; number: 4; label: "Conns"; count: String(omihomo.openConnectionCount) }
+
+          CursorSurface {
+            id: gear
+            Layout.preferredWidth: Style.space(36)
+            Layout.fillHeight: true
+            current: root.view === "settings"
+            hasCursor: gearMouse.containsMouse
+            bordered: true
+            foreground: root.needsRepair || root.tunRedirectBlocked ? root.urgent : root.foreground
+            fill: root.hoverFill
+            currentFill: root.selectedFill
+
+            Text {
+              anchors.centerIn: parent
+              text: "󰒓"
+              color: gear.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.icon
+            }
+
+            MouseArea {
+              id: gearMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onContainsMouseChanged: if (containsMouse) root.cursorActive = false
+              onClicked: root.openView(root.view === "settings" ? "configs" : "settings")
+            }
+
+            PanelToolTip {
+              visible: gearMouse.containsMouse
+              text: root.needsRepair ? "Settings · needs repair · M" : "Settings · M"
+              fontFamily: root.fontFamily
+            }
+          }
+        }
+
+        // ---- views --------------------------------------------------------------
+
+        Item {
+          visible: omihomo.installed
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+
+          // ---- configs
+
+          ColumnLayout {
+            anchors.fill: parent
+            visible: root.view === "configs"
+            spacing: Style.space(8)
+
+            // An empty view always says why, because a bare list reads as a
+            // panel that lost its data rather than one with none to show.
+            Text {
+              visible: !root.liveReady || (omihomo.proxiesLoaded && root.visibleGroups.length === 0)
+              Layout.fillWidth: true
+              text: !root.liveReady
+                ? (omihomo.activeSubscription === "" ? "Add and activate a subscription in Subs to browse its configs."
+                  : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse configs."))
+                : "This subscription declares no groups."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              wrapMode: Text.WordWrap
+            }
+
+            Flow {
+              visible: root.liveReady
+              Layout.fillWidth: true
+              spacing: Style.space(6)
 
               Repeater {
                 model: root.liveReady ? root.visibleGroups : []
-                GroupRow {
+                GroupChip {
                   required property var modelData
                   required property int index
-                  width: groupSection.width
                   group: modelData
                   rowIndex: index
                 }
               }
             }
 
-            // ---- subscriptions ------------------------------------------------
-
-            PanelSeparator { visible: omihomo.installed; foreground: root.foreground }
-
-            Column {
-              id: subscriptionSection
-              visible: omihomo.installed
-              width: parent.width
-              spacing: Style.space(4)
-
-              PanelSectionHeader {
-                text: "SUBSCRIPTIONS"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              Repeater {
-                model: omihomo.subscriptions
-                SubscriptionRow {
-                  required property var modelData
-                  required property int index
-                  width: subscriptionSection.width
-                  subscription: modelData
-                  rowIndex: index
-                }
-              }
-
-              ActionRow {
-                visible: !root.subFormOpen
-                width: parent.width
-                section: "subAdd"
-                title: "Add subscription"
-                trailing: "a"
-                onActivated: root.openSubForm()
-              }
-
-              Column {
-                visible: root.subFormOpen
-                width: parent.width
-                spacing: Style.space(4)
-
-                FieldRow {
-                  id: subUrlRow
-                  width: parent.width
-                  section: "subUrl"
-                  label: "URL"
-                  placeholder: "https://…"
-                  onSubmitted: root.submitSubForm()
-                }
-
-                ActionRow {
-                  width: parent.width
-                  section: "subSubmit"
-                  title: "Fetch and add"
-                  trailing: root.subFormUrl === "" ? "incomplete" : "enter"
-                  onActivated: root.submitSubForm()
-                }
-              }
-            }
-          }
-        }
-
-        // ---- controls -----------------------------------------------------
-        //
-        // The panel ends on one line: the two pieces of state that are changed
-        // in place on the left, the three views that own everything else on the
-        // right. Repair lives in the manage view, so a degraded core or one that
-        // needs repair is surfaced on the cell that leads there.
-
-        Column {
-          id: controlFooter
-          visible: omihomo.installed
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.bottom: parent.bottom
-          spacing: Style.space(8)
-
-          PanelSeparator { foreground: root.foreground }
-
-          RowLayout {
-            width: parent.width
-            spacing: 0
-
-            ControlCell {
-              section: "mode"
-              label: "MODE"
-              value: omihomo.effectiveMode === "" ? "—" : omihomo.effectiveMode
-              tooltip: "Cycle mode · m"
-              onActivated: omihomo.setMode(Model.nextMode(omihomo.effectiveMode))
+            SectionLine {
+              visible: root.browsedGroupEntry !== null
+              Layout.fillWidth: true
+              title: root.browsedGroup.toUpperCase() + (root.browsedGroupEntry ? " · " + root.browsedGroupEntry.type.toUpperCase() : "")
+              note: root.browsedGroupEntry && !root.browsedGroupEntry.selectable ? "picks its own config"
+                : root.visibleConfigs.length + (root.browsedGroupEntry && root.visibleConfigs.length !== root.browsedGroupEntry.all.length
+                  ? " of " + root.browsedGroupEntry.all.length : "") + " configs"
             }
 
-            ControlCell {
-              section: "tun"
-              label: "TUN"
-              value: omihomo.tunActive ? "on" : "off"
-              dimValue: !omihomo.tunActive
-              tooltip: "Toggle TUN · t"
-              onActivated: omihomo.toggleTun()
-            }
-
-            Item { Layout.fillWidth: true; Layout.preferredHeight: 1 }
-
-            ControlCell {
-              section: "rules"
-              value: "rules"
-              label: String(omihomo.rules.length)
-              labelFirst: false
-              tooltip: "Your rules · n"
-              onActivated: root.openRules(false)
-            }
-
-            ControlCell {
-              section: "connections"
-              value: "conns"
-              label: String(omihomo.openConnectionCount)
-              labelFirst: false
-              tooltip: "Connections · c"
-              onActivated: root.openConnections()
-            }
-
-            ControlCell {
-              section: "manage"
-              value: "manage"
-              labelFirst: false
-              urgentValue: omihomo.coreState === "degraded" || root.needsRepair
-              tooltip: urgentValue ? "Needs repair · M" : "Manage · M"
-              onActivated: root.openManage()
-            }
-          }
-        }
-      }
-
-      // ------------------------------------------------------------ rules view
-
-      Flickable {
-        id: rulesFlick
-        anchors.fill: parent
-        contentWidth: width
-        contentHeight: rulesColumn.implicitHeight
-        clip: true
-        visible: root.view === "rules"
-        boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        Column {
-          id: rulesColumn
-          width: rulesFlick.width
-          spacing: Style.space(10)
-
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(rulesTitle.implicitHeight, rulesTotals.implicitHeight)
-
-            Text {
-              id: rulesTitle
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Rules"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-            }
-
-            Text {
-              id: rulesTotals
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              text: omihomo.rules.length + " yours · " + omihomo.subscriptionRules.length + " inherited"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-          }
-
-          PanelSeparator { foreground: root.foreground }
-
-          Column {
-            id: ruleSection
-            width: parent.width
-            spacing: Style.space(4)
-
-            PanelSectionHeader {
-              text: "YOUR RULES"
+            TextField {
+              id: configFilterField
+              visible: root.filterOpen
+              Layout.fillWidth: true
               foreground: root.foreground
-              fontFamily: root.fontFamily
+              placeholderText: "Filter configs"
+              verticalPadding: Style.space(4)
+              onAccepted: root.endEdit()
+              onActiveFocusChanged: root.fieldFocusChanged(configFilterField, activeFocus)
+              Keys.onEscapePressed: root.closeFilter()
             }
 
-            Text {
-              width: parent.width
-              text: "Checked before the subscription's."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+            ScrollList {
+              id: configList
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              spacing: Style.space(2)
+              model: root.liveReady ? root.visibleConfigs : []
 
-            Repeater {
-              model: omihomo.rules
-              RuleRow {
+              delegate: ConfigRow {
                 required property var modelData
                 required property int index
-                width: ruleSection.width
-                rule: modelData
+                width: configList.rowWidth
+                configName: String(modelData)
                 rowIndex: index
               }
             }
 
-            ActionRow {
-              visible: !root.ruleFormOpen
-              width: parent.width
-              section: "ruleAdd"
-              title: "Add rule"
-              trailing: "n"
-              onActivated: root.openRuleForm()
+            Text {
+              visible: root.errorAt("configs")
+              Layout.fillWidth: true
+              text: "▲ " + omihomo.lastError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
             }
 
-            Column {
-              visible: root.ruleFormOpen
-              width: parent.width
-              spacing: Style.space(4)
+            RowLayout {
+              visible: root.browsedGroupEntry !== null
+              Layout.fillWidth: true
+              spacing: Style.space(6)
 
-              ActionRow {
-                width: parent.width
-                section: "ruleType"
-                title: "Type"
-                trailing: root.ruleType
-                current: true
-                onActivated: root.ruleTypeIndex = (root.ruleTypeIndex + 1) % Model.RULE_TYPES.length
+              Text {
+                text: omihomo.pingTestsRunning ? "testing…" : root.testedText
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
               }
 
-              FieldRow {
-                id: ruleValueRow
-                width: parent.width
-                section: "ruleValue"
-                label: "VALUE"
-                placeholder: root.ruleType === "IP-CIDR" ? "10.0.0.0/8" : "example.com"
-                onSubmitted: root.submitRuleForm()
+              SmallButton {
+                text: "test all"
+                enabled: !omihomo.pingTestsRunning
+                onClicked: omihomo.testGroup(root.browsedGroup)
               }
 
-              ActionRow {
-                width: parent.width
-                section: "ruleTarget"
-                title: "Target"
-                trailing: root.ruleTarget
-                current: true
-                onActivated: root.ruleTargetIndex = (root.ruleTargetIndex + 1) % root.ruleTargets.length
+              Item { Layout.fillWidth: true }
+
+              Text {
+                text: "fast"
+                color: root.faint
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
               }
 
-              ActionRow {
-                width: parent.width
-                section: "ruleSubmit"
-                title: "Add rule"
-                trailing: root.ruleFormError !== "" ? root.ruleFormError
-                  : (omihomo.ruleSaving ? "saving…" : "enter")
-                urgentTrailing: root.ruleFormError !== ""
-                onActivated: root.submitRuleForm()
+              Repeater {
+                model: [30, 60, 100, 200]
+                Rectangle {
+                  required property var modelData
+                  implicitWidth: Style.space(14)
+                  implicitHeight: Style.space(8)
+                  radius: Math.min(Style.cornerRadius, 2)
+                  color: Qt.tint(Util.alpha(root.foreground, 0.08), Util.alpha(root.urgent, root.latencyHeat(modelData)))
+                }
+              }
+
+              Rectangle {
+                implicitWidth: Style.space(14)
+                implicitHeight: Style.space(8)
+                radius: Math.min(Style.cornerRadius, 2)
+                color: root.urgent
               }
 
               Text {
-                visible: omihomo.lastError !== ""
-                width: parent.width
-                text: omihomo.lastError
+                text: "slow"
+                color: root.faint
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
+
+          // ---- subscriptions
+
+          ColumnLayout {
+            anchors.fill: parent
+            visible: root.view === "subs"
+            spacing: Style.space(8)
+
+            SectionLine {
+              Layout.fillWidth: true
+              title: "SUBSCRIPTIONS"
+              note: omihomo.activeSubscription !== "" ? "active " + omihomo.activeSubscription : ""
+            }
+
+            Text {
+              visible: omihomo.subscriptions.length === 0
+              Layout.fillWidth: true
+              text: "No subscriptions yet. Paste a URL below."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+
+            ScrollList {
+              id: subList
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              spacing: Style.space(6)
+              model: omihomo.subscriptions
+
+              delegate: SubscriptionCard {
+                required property var modelData
+                required property int index
+                width: subList.rowWidth
+                subscription: modelData
+                rowIndex: index
+              }
+            }
+
+            SectionLine { Layout.fillWidth: true; title: "ADD" }
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(6)
+
+              TextField {
+                id: subUrlField
+                Layout.fillWidth: true
+                foreground: root.foreground
+                placeholderText: "Paste a subscription URL"
+                hasCursor: root.at("subUrl")
+                verticalPadding: Style.space(4)
+                onHoveredChanged: if (hovered) root.focusRow("subUrl")
+                onAccepted: root.submitSubForm()
+                onActiveFocusChanged: root.fieldFocusChanged(subUrlField, activeFocus)
+                Keys.onEscapePressed: root.endEdit()
+              }
+
+              SmallButton {
+                text: "+ add"
+                hasCursor: root.at("subSubmit")
+                onHovered: function(on) { if (on) root.focusRow("subSubmit") }
+                onClicked: root.submitSubForm()
+              }
+            }
+
+            Text {
+              visible: root.errorAt("sub:")
+              Layout.fillWidth: true
+              text: "▲ " + omihomo.lastError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+          }
+
+          // ---- rules
+
+          ColumnLayout {
+            anchors.fill: parent
+            visible: root.view === "rules"
+            spacing: Style.space(8)
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(8)
+
+              Text {
+                text: "TEST"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+
+              TextField {
+                id: ruleTestField
+                Layout.fillWidth: true
+                foreground: root.foreground
+                placeholderText: "domain, URL, or IP address"
+                hasCursor: root.at("ruleTest")
+                verticalPadding: Style.space(4)
+                onHoveredChanged: if (hovered) root.focusRow("ruleTest")
+                onAccepted: root.endEdit()
+                onActiveFocusChanged: root.fieldFocusChanged(ruleTestField, activeFocus)
+                Keys.onEscapePressed: root.endEdit()
+              }
+            }
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(6)
+
+              Text {
+                visible: root.ruleTest.hit >= 0
+                text: "→ " + root.ruleHitTarget
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+
+              Text {
+                Layout.fillWidth: true
+                text: root.ruleTest.host === "" ? "Type a domain or an IP to see which rule catches it."
+                  : (root.ruleTest.hit < 0 ? "No rule matches."
+                    : "rule " + (root.ruleTest.hit + 1) + " of " + root.effectiveRules.length
+                      + (root.ruleTest.unknown > 0 ? " · " + root.ruleTest.unknown + " above depend on DNS, rule sets, or the app" : ""))
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+              }
+            }
+
+            // Where the rules send traffic, one segment per target, with the
+            // tested host's target lit.
+            Row {
+              id: tallyBar
+              visible: root.ruleTally.length > 0
+              Layout.fillWidth: true
+              Layout.preferredHeight: Style.space(6)
+              spacing: Style.space(2)
+
+              Repeater {
+                model: root.ruleTally
+                Rectangle {
+                  required property var modelData
+                  required property int index
+                  width: Math.max(Style.space(2), (tallyBar.width - tallyBar.spacing * (root.ruleTally.length - 1))
+                    * modelData.count / root.effectiveRules.length)
+                  height: tallyBar.height
+                  radius: Math.min(Style.cornerRadius, 2)
+                  color: modelData.target === root.ruleHitTarget ? root.accent
+                    : Util.alpha(root.foreground, [0.45, 0.32, 0.22, 0.15][index] || 0.1)
+                }
+              }
+            }
+
+            Flow {
+              visible: root.ruleTally.length > 0
+              Layout.fillWidth: true
+              spacing: Style.space(10)
+
+              Repeater {
+                model: root.ruleTally.slice(0, 6)
+                Text {
+                  required property var modelData
+                  text: modelData.count + " " + modelData.target
+                  color: modelData.target === root.ruleHitTarget ? root.accent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+            }
+
+            ScrollList {
+              id: ruleList
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              model: root.ruleEntries
+
+              delegate: Item {
+                id: ruleEntry
+                required property var modelData
+                width: ruleList.rowWidth
+                height: modelData.kind === "head" ? ruleHead.implicitHeight + Style.space(8) : ruleRow.implicitHeight
+
+                SectionLine {
+                  id: ruleHead
+                  visible: ruleEntry.modelData.kind === "head"
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.bottom: parent.bottom
+                  anchors.bottomMargin: Style.space(2)
+                  title: ruleEntry.modelData.title || ""
+                  note: ruleEntry.modelData.note || ""
+                }
+
+                RuleRow {
+                  id: ruleRow
+                  visible: ruleEntry.modelData.kind !== "head"
+                  width: parent.width
+                  entry: ruleEntry.modelData
+                }
+              }
+            }
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(6)
+
+              SmallButton {
+                text: root.shortRuleType(root.ruleType) + " ▾"
+                tooltipText: "Rule type · h l"
+                hasCursor: root.at("ruleType")
+                onHovered: function(on) { if (on) root.focusRow("ruleType") }
+                onClicked: root.cycleRuleType(1)
+              }
+
+              TextField {
+                id: ruleValueField
+                Layout.fillWidth: true
+                foreground: root.foreground
+                placeholderText: root.ruleType === "IP-CIDR" ? "10.0.0.0/8"
+                  : (root.ruleType === "PROCESS-NAME" ? "process name" : "example.com")
+                hasCursor: root.at("ruleValue")
+                verticalPadding: Style.space(4)
+                onHoveredChanged: if (hovered) root.focusRow("ruleValue")
+                onAccepted: root.submitRuleForm()
+                onActiveFocusChanged: root.fieldFocusChanged(ruleValueField, activeFocus)
+                Keys.onEscapePressed: root.endEdit()
+              }
+
+              SmallButton {
+                text: "→ " + root.ruleTarget + " ▾"
+                tooltipText: "Target · h l"
+                hasCursor: root.at("ruleTarget")
+                onHovered: function(on) { if (on) root.focusRow("ruleTarget") }
+                onClicked: root.cycleRuleTarget(1)
+              }
+
+              SmallButton {
+                text: omihomo.ruleSaving ? "saving…" : "+ add"
+                enabled: !omihomo.ruleSaving
+                hasCursor: root.at("ruleSubmit")
+                onHovered: function(on) { if (on) root.focusRow("ruleSubmit") }
+                onClicked: root.submitRuleForm()
+              }
+            }
+
+            Text {
+              readonly property string message: root.ruleFormValue !== "" && root.ruleFormError !== ""
+                ? root.ruleFormError : (root.errorAt("rules") ? omihomo.lastError : "")
+              visible: message !== ""
+              Layout.fillWidth: true
+              text: "▲ " + message
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+          }
+
+          // ---- connections
+
+          ColumnLayout {
+            anchors.fill: parent
+            visible: root.view === "conns"
+            spacing: Style.space(8)
+
+            RowLayout {
+              Layout.fillWidth: true
+
+              Text {
+                Layout.fillWidth: true
+                text: "↓ " + Model.formatBytes(omihomo.connectionsDownload)
+                  + "  ↑ " + Model.formatBytes(omihomo.connectionsUpload) + " total"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                text: "process → config · width = bytes"
+                color: root.faint
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            FlowDiagram {
+              Layout.fillWidth: true
+              Layout.preferredHeight: Math.max(Style.space(44),
+                Style.space(22) * Math.max(root.flows.sources.length, root.flows.targets.length))
+            }
+
+            SectionLine {
+              Layout.fillWidth: true
+              title: "CONNECTIONS"
+              note: omihomo.openConnectionCount + " open · " + root.closedLogged + " closed"
+            }
+
+            Text {
+              visible: omihomo.connectionStacks.length === 0
+              Layout.fillWidth: true
+              text: root.liveReady ? "Nothing logged yet." : "mihomo is not running."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+
+            ScrollList {
+              id: connList
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              spacing: Style.space(2)
+              model: omihomo.connectionStacks
+
+              delegate: ConnectionRow {
+                required property var modelData
+                required property int index
+                width: connList.rowWidth
+                stack: modelData
+                rowIndex: index
+              }
+            }
+
+            Text {
+              visible: root.errorAt("conns")
+              Layout.fillWidth: true
+              text: "▲ " + omihomo.lastError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(6)
+
+              SmallButton {
+                text: "close all"
+                foreground: root.urgent
+                enabled: omihomo.openConnectionCount > 0
+                onClicked: omihomo.closeAllConnections()
+              }
+
+              SmallButton {
+                text: "clear log"
+                enabled: root.closedLogged > 0
+                onClicked: omihomo.clearConnectionLog()
+              }
+            }
+          }
+
+          // ---- settings
+
+          Flickable {
+            id: settingsFlick
+            anchors.fill: parent
+            visible: root.view === "settings"
+            contentWidth: width
+            contentHeight: settingsColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: settingsFlick.interactive ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded }
+
+            ColumnLayout {
+              id: settingsColumn
+              width: settingsFlick.width - (settingsFlick.interactive ? Style.space(10) : 0)
+              spacing: Style.space(4)
+
+              Text {
+                visible: root.errorAt("settings")
+                Layout.fillWidth: true
+                text: "▲ " + omihomo.lastError
                 color: root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
+              SectionLine { Layout.fillWidth: true; title: "ROUTING"; note: "applies immediately" }
+
+              SettingRow {
+                Layout.fillWidth: true
+                section: "mode"
+                title: "Mode"
+                keyHint: "m"
+                subtitle: "rule follows the rules; global sends everything to " + (omihomo.primaryGroup || "the proxy")
+                modeControl: true
+              }
+
+              SettingRow {
+                Layout.fillWidth: true
+                section: "tun"
+                title: "TUN"
+                keyHint: "t"
+                subtitle: "capture every app, not just the proxy port"
+                checked: omihomo.tunActive
+                onActivated: omihomo.toggleTun()
+              }
+
+              // The repair for a TUN that will not start on this machine. It is
+              // urgent only while the core is actually degraded by it.
+              SettingRow {
+                Layout.fillWidth: true
+                section: "tunRedirect"
+                title: "TUN acceleration"
+                keyHint: "A"
+                subtitle: root.tunRedirectBlocked ? "blocking TUN on this machine: turn it off"
+                  : "faster; turn off if TUN fails to start"
+                urgentSubtitle: root.tunRedirectBlocked
+                checked: omihomo.tunRedirectActive
+                onActivated: omihomo.toggleTunRedirect()
+              }
+
+              SectionLine { Layout.fillWidth: true; Layout.topMargin: Style.space(8); title: "SYSTEM" }
+
+              SettingRow {
+                Layout.fillWidth: true
+                section: "autostart"
+                title: "Start at login"
+                keyHint: "b"
+                subtitle: "start mihomo when the session starts"
+                checked: omihomo.autostartActive
+                onActivated: omihomo.toggleAutostart()
+              }
+
+              SettingRow {
+                Layout.fillWidth: true
+                visible: omihomo.tailscalePresent
+                section: "tailscale"
+                title: "Tailscale"
+                keyHint: "T"
+                subtitle: "keep the tailnet reachable under TUN"
+                checked: omihomo.tailscaleActive
+                onActivated: omihomo.toggleTailscale()
+              }
+
+              SettingRow {
+                Layout.fillWidth: true
+                visible: omihomo.tailscalePresent
+                section: "tailnetProxy"
+                title: "Tailnet via proxy"
+                keyHint: "P"
+                subtitle: "send tailnet addresses to the proxy server, which must be on the tailnet"
+                checked: omihomo.tailnetProxyActive
+                onActivated: omihomo.toggleTailnetProxy()
+              }
+
+              SectionLine { Layout.fillWidth: true; Layout.topMargin: Style.space(8); title: "MAINTENANCE" }
+
+              Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: Style.space(8)
+                text: "core " + Model.stateLabel(omihomo.coreState).toLowerCase() + " · "
+                  + (omihomo.permissionsOk ? "root grant owner-only" : "missing root permissions, or open to other accounts")
+                color: omihomo.permissionsOk ? root.dim : root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
+              RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: Style.space(8)
+                spacing: Style.space(6)
+
+                SmallButton {
+                  visible: !omihomo.permissionsOk
+                  text: "↻ repair permissions · R"
+                  foreground: root.urgent
+                  hasCursor: root.at("repair")
+                  onHovered: function(on) { if (on) root.focusRow("repair") }
+                  onClicked: omihomo.repairCore()
+                }
+
+                SmallButton {
+                  text: root.uninstallArmed ? "confirm uninstall" : "uninstall…"
+                  foreground: root.urgent
+                  hasCursor: root.at("uninstall")
+                  onHovered: function(on) { if (on) root.focusRow("uninstall") }
+                  onClicked: root.uninstallCore()
+                }
+
+                SmallButton {
+                  visible: root.uninstallArmed
+                  text: "cancel"
+                  onClicked: root.uninstallArmed = false
+                }
+              }
+
+              Text {
+                visible: root.uninstallArmed
+                Layout.fillWidth: true
+                Layout.leftMargin: Style.space(8)
+                text: "Removes the core, its permissions, the unit, and saved subscriptions."
+                color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
             }
           }
+        }
 
-          Column {
-            id: effectiveSection
-            visible: omihomo.subscriptionRules.length > 0
-            width: parent.width
-            spacing: Style.space(4)
+        // ---- key hints ------------------------------------------------------------
 
-            PanelSectionHeader {
-              text: "SUBSCRIPTION RULES"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
+        Row {
+          visible: omihomo.installed
+          Layout.fillWidth: true
+          spacing: Style.space(10)
+
+          Repeater {
+            model: root.hintsFor(root.view)
+            HintButton {
+              required property var modelData
+              keys: modelData.keys
+              label: modelData.label
+              onClicked: root.runHint(modelData.key)
             }
-
-            Repeater {
-              model: omihomo.subscriptionRules.slice(0, 40)
-              Text {
-                required property var modelData
-                width: effectiveSection.width
-                text: modelData.type + "  " + modelData.value + (modelData.value === "" ? "" : "  ") + "→ " + modelData.target
-                color: Qt.darker(root.dim, 1.25)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-              }
-            }
-
-            Text {
-              visible: omihomo.subscriptionRules.length > 40
-              width: parent.width
-              text: "+" + (omihomo.subscriptionRules.length - 40) + " more"
-              color: Qt.darker(root.dim, 1.25)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-          }
-
-          Text {
-            width: parent.width
-            text: "enter activate · x delete · n new rule · esc back"
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
           }
         }
       }
     }
   }
 
-  // ---------------------------------------------------------------- rows
+  // ---------------------------------------------------------------- pieces
 
-  // One row shape for everything the panel navigates: a title on the left, a
-  // value or key hint on the right, and the shared cursor chrome.
-  component ActionRow: CursorSurface {
-    id: actionRow
+  // A row the cursor can land on. Hover moves the cursor here, so mouse and
+  // keyboard paint the same single highlight.
+  component NavRow: CursorSurface {
+    id: navRow
 
     property string section: ""
     property int rowIndex: -1
-    property string title: ""
-    property string subtitle: ""
-    property string trailing: ""
-    property bool urgentTrailing: false
-    property bool faded: false
+    readonly property alias hovered: navMouse.containsMouse
 
     signal activated()
 
-    hasCursor: root.at(actionRow.section, actionRow.rowIndex < 0 ? undefined : actionRow.rowIndex)
+    hasCursor: root.at(navRow.section, navRow.rowIndex < 0 ? undefined : navRow.rowIndex)
     foreground: root.foreground
     fill: root.hoverFill
     currentFill: root.selectedFill
-    implicitHeight: rowLabels.implicitHeight + Style.spacing.lg
-
-    Component.onCompleted: if (actionRow.section !== "")
-      root.registerRowAnchor(root.rowKey(actionRow.section, actionRow.rowIndex < 0 ? undefined : actionRow.rowIndex), actionRow)
 
     MouseArea {
+      id: navMouse
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow(actionRow.section,
-        actionRow.rowIndex < 0 ? undefined : actionRow.rowIndex)
-      onClicked: actionRow.activated()
+      onContainsMouseChanged: if (containsMouse) root.focusRow(navRow.section,
+        navRow.rowIndex < 0 ? undefined : navRow.rowIndex)
+      onClicked: navRow.activated()
+    }
+  }
+
+  // The one scrolling list of a view. Its edges fade while there is more to
+  // scroll to, and the bar stays visible, so a cut-off list never looks complete.
+  component ScrollList: ListView {
+    id: scrollList
+
+    readonly property bool scrollable: contentHeight > height
+    readonly property real rowWidth: width - (scrollable ? Style.space(10) : 0)
+
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    interactive: scrollable
+    ScrollBar.vertical: ScrollBar { policy: scrollList.scrollable ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded }
+
+    Rectangle {
+      visible: scrollList.scrollable && !scrollList.atYBeginning
+      parent: scrollList
+      anchors.top: parent.top
+      anchors.left: parent.left
+      width: scrollList.rowWidth
+      height: Style.space(18)
+      z: 2
+      gradient: Gradient {
+        GradientStop { position: 0; color: root.surface }
+        GradientStop { position: 1; color: Util.alpha(root.surface, 0) }
+      }
     }
 
-    RowLayout {
+    Rectangle {
+      visible: scrollList.scrollable && !scrollList.atYEnd
+      parent: scrollList
+      anchors.bottom: parent.bottom
       anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(8)
-      anchors.rightMargin: Style.space(8)
-      spacing: Style.space(8)
+      width: scrollList.rowWidth
+      height: Style.space(18)
+      z: 2
+      gradient: Gradient {
+        GradientStop { position: 0; color: Util.alpha(root.surface, 0) }
+        GradientStop { position: 1; color: root.surface }
+      }
+    }
+  }
 
-      ColumnLayout {
-        id: rowLabels
-        Layout.fillWidth: true
-        spacing: 0
+  component SmallButton: Button {
+    bordered: true
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    fontSize: Style.font.bodySmall
+    horizontalPadding: Style.space(8)
+    verticalPadding: Style.space(3)
+    opacity: enabled ? 1 : 0.4
+  }
 
-        Text {
-          Layout.fillWidth: true
-          text: actionRow.title
-          color: actionRow.faded ? root.dim : root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-        }
+  component SectionLine: RowLayout {
+    id: sectionLine
 
-        Text {
-          Layout.fillWidth: true
-          visible: actionRow.subtitle !== ""
-          text: actionRow.subtitle
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+    property string title: ""
+    property string note: ""
+
+    spacing: Style.space(8)
+
+    Text {
+      text: sectionLine.title
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      font.letterSpacing: 1.2
+    }
+
+    Item { Layout.fillWidth: true }
+
+    Text {
+      visible: text !== ""
+      text: sectionLine.note
+      color: root.faint
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+
+  // A small outlined label: a badge on a subscription, a target on a rule or a
+  // connection.
+  component Tag: Rectangle {
+    id: tag
+
+    property string text: ""
+    property color tint: root.dim
+    property bool strong: false
+    property real maxWidth: Style.space(110)
+
+    implicitWidth: Math.min(tagMetrics.advanceWidth, maxWidth) + Style.space(10)
+    implicitHeight: tagText.implicitHeight + Style.space(2)
+    radius: Math.min(Style.cornerRadius, height / 2)
+    color: strong ? Util.alpha(tint, 0.16) : "transparent"
+    border.width: 1
+    border.color: Util.alpha(tint, strong ? 0.9 : 0.35)
+
+    TextMetrics {
+      id: tagMetrics
+      text: tag.text
+      font: tagText.font
+    }
+
+    Text {
+      id: tagText
+      anchors.centerIn: parent
+      width: Math.min(tagMetrics.advanceWidth, tag.maxWidth)
+      text: tag.text
+      color: tag.tint
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      elide: Text.ElideRight
+      horizontalAlignment: Text.AlignHCenter
+    }
+  }
+
+  component Radio: Item {
+    property bool checked: false
+    property bool pending: false
+
+    implicitWidth: Style.space(12)
+    implicitHeight: Style.space(12)
+
+    Rectangle {
+      anchors.fill: parent
+      radius: width / 2
+      color: "transparent"
+      border.width: Math.max(1, Style.space(1.5))
+      border.color: parent.checked || parent.pending ? root.accent : root.faint
+    }
+
+    Rectangle {
+      visible: parent.checked || parent.pending
+      anchors.centerIn: parent
+      width: parent.width / 2
+      height: width
+      radius: width / 2
+      color: parent.pending ? root.dim : root.accent
+    }
+  }
+
+  component Kbd: Rectangle {
+    property string text: ""
+
+    implicitWidth: Math.max(kbdText.implicitWidth + Style.space(8), Style.space(16))
+    implicitHeight: kbdText.implicitHeight + Style.space(2)
+    radius: Math.min(Style.cornerRadius, 4)
+    color: Util.alpha(root.foreground, 0.06)
+    border.width: 1
+    border.color: Util.alpha(root.foreground, 0.2)
+
+    Text {
+      id: kbdText
+      anchors.centerIn: parent
+      text: parent.text
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
+  component HintButton: Item {
+    id: hint
+
+    property string keys: ""
+    property string label: ""
+
+    signal clicked()
+
+    implicitWidth: hintRow.implicitWidth
+    implicitHeight: hintRow.implicitHeight
+
+    Row {
+      id: hintRow
+      spacing: Style.space(4)
+
+      Repeater {
+        model: hint.keys.split(" ")
+        Kbd {
+          required property var modelData
+          text: modelData
         }
       }
 
       Text {
-        visible: actionRow.trailing !== ""
-        text: actionRow.trailing
-        color: actionRow.urgentTrailing ? root.urgent : root.dim
+        anchors.verticalCenter: parent.verticalCenter
+        text: hint.label
+        color: hintMouse.containsMouse ? root.foreground : root.dim
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: Style.font.bodySmall
       }
+    }
+
+    MouseArea {
+      id: hintMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: hint.clicked()
     }
   }
 
-  // One cell of the control footer. State cells lead with their label
-  // ("MODE rule"); the cells that open a view lead with the value and trail a
-  // count ("rules 4"), so the two halves of the footer stay tellable apart.
-  component ControlCell: CursorSurface {
-    id: controlCell
+  component ViewTab: CursorSurface {
+    id: tab
 
-    property string section: ""
+    property string target: ""
+    property int number: 0
+    property string label: ""
+    property string count: ""
+    property bool alert: false
+
+    Layout.fillWidth: true
+    implicitHeight: Style.space(30)
+    current: root.view === tab.target
+    hasCursor: tabMouse.containsMouse
+    bordered: true
+    foreground: root.foreground
+    fill: root.hoverFill
+    currentFill: root.selectedFill
+
+    Row {
+      anchors.centerIn: parent
+      spacing: Style.space(5)
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: String(tab.number)
+        color: root.faint
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: tab.label
+        color: tab.current ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: tab.current
+      }
+
+      Rectangle {
+        visible: tab.count !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        implicitWidth: Math.max(countText.implicitWidth + Style.space(6), Style.space(14))
+        implicitHeight: countText.implicitHeight
+        radius: Math.min(Style.cornerRadius, height / 2)
+        color: tab.alert ? root.urgent : Util.alpha(root.foreground, 0.1)
+
+        Text {
+          id: countText
+          anchors.centerIn: parent
+          text: tab.count
+          color: tab.alert ? root.surface : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: tab.alert
+        }
+      }
+    }
+
+    MouseArea {
+      id: tabMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onContainsMouseChanged: if (containsMouse) root.cursorActive = false
+      onClicked: root.openView(tab.target)
+    }
+
+    PanelToolTip {
+      visible: tabMouse.containsMouse
+      text: tab.label + " · " + tab.number
+      fontFamily: root.fontFamily
+    }
+  }
+
+  // Label over value, one column of the header's readout.
+  component Readout: Item {
+    id: readout
+
     property string label: ""
     property string value: ""
-    property bool labelFirst: true
-    property bool dimValue: false
-    property bool urgentValue: false
+    property bool faded: false
     property string tooltip: ""
 
     signal activated()
 
-    hasCursor: root.at(controlCell.section)
-    foreground: root.foreground
-    fill: root.hoverFill
-    implicitWidth: cellRow.implicitWidth + Style.space(16)
-    implicitHeight: cellRow.implicitHeight + Style.spacing.md
+    implicitHeight: readoutColumn.implicitHeight
 
-    // No row anchor: the footer is pinned, so a cell is never scrolled to.
-
-    MouseArea {
-      id: cellMouse
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow(controlCell.section)
-      onClicked: controlCell.activated()
-    }
-
-    Row {
-      id: cellRow
-      anchors.centerIn: parent
-      spacing: Style.space(6)
-      layoutDirection: controlCell.labelFirst ? Qt.LeftToRight : Qt.RightToLeft
+    Column {
+      id: readoutColumn
+      width: parent.width
+      spacing: Style.space(2)
 
       Text {
-        visible: controlCell.label !== ""
-        anchors.verticalCenter: parent.verticalCenter
-        text: controlCell.label
+        text: readout.label
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1615,571 +1962,734 @@ Panel {
       }
 
       Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: controlCell.value
-        color: controlCell.urgentValue ? root.urgent : (controlCell.dimValue ? root.dim : root.foreground)
+        width: parent.width
+        text: readout.value
+        color: readout.faded ? root.dim : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
+        font.underline: readout.tooltip !== "" && readoutMouse.containsMouse
+        elide: Text.ElideRight
       }
     }
 
+    MouseArea {
+      id: readoutMouse
+      anchors.fill: parent
+      enabled: readout.tooltip !== ""
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: readout.activated()
+    }
+
     PanelToolTip {
-      visible: controlCell.tooltip !== "" && cellMouse.containsMouse
-      text: controlCell.tooltip
+      visible: readout.tooltip !== "" && readoutMouse.containsMouse
+      text: readout.tooltip
       fontFamily: root.fontFamily
     }
   }
 
-  // Label-and-value line of the status readout. `section` makes it a cursor
-  // target; the egress line is the only one that has an action behind it.
-  component StatRow: CursorSurface {
-    id: statRow
+  // The last minute of `/traffic`: download in the foreground colour, upload in
+  // the accent, both against the larger of the two.
+  component TrafficGraph: Canvas {
+    id: graph
 
-    property string label: ""
-    property string value: ""
-    property string section: ""
-    property bool faded: false
+    readonly property var samples: omihomo.trafficHistory
 
-    signal activated()
+    onSamplesChanged: requestPaint()
+    onWidthChanged: requestPaint()
+    onHeightChanged: requestPaint()
+    onVisibleChanged: if (visible) requestPaint()
 
-    hasCursor: statRow.section !== "" && root.at(statRow.section)
-    foreground: root.foreground
-    fill: root.hoverFill
-    implicitHeight: statValue.implicitHeight + Style.spacing.sm
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.reset()
+      var list = samples || []
+      var slots = Math.max(2, omihomo.trafficHistoryCap)
+      var step = width / (slots - 1)
+      var offset = slots - list.length
+      var peak = 1
+      var i
+      for (i = 0; i < list.length; i++) peak = Math.max(peak, list[i].down, list[i].up)
 
-    Component.onCompleted: if (statRow.section !== "") root.registerRowAnchor(root.rowKey(statRow.section), statRow)
+      ctx.strokeStyle = root.css(root.line)
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(0, height - 0.5)
+      ctx.lineTo(width, height - 0.5)
+      ctx.stroke()
+      if (list.length < 2) return
 
-    MouseArea {
-      anchors.fill: parent
-      enabled: statRow.section !== ""
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow(statRow.section)
-      onClicked: statRow.activated()
-    }
-
-    Text {
-      id: statLabel
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(64)
-      text: statRow.label
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.bold: true
-      font.letterSpacing: 1.2
-    }
-
-    Text {
-      id: statValue
-      anchors.left: statLabel.right
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      text: statRow.value
-      color: statRow.faded ? root.dim : root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.body
-      elide: Text.ElideRight
-    }
-  }
-
-  // A labelled text input the panel cursor can land on. The field owns its own
-  // text — Enter submits, Esc hands the keyboard back to the panel — and the
-  // cursor highlight follows the panel exactly like any other row.
-  component FieldRow: Item {
-    id: fieldRow
-
-    property string section: ""
-    property string label: ""
-    property string placeholder: ""
-    property alias field: input
-
-    signal submitted()
-
-    implicitHeight: input.implicitHeight
-
-    Component.onCompleted: root.registerRowAnchor(root.rowKey(fieldRow.section), fieldRow)
-
-    Text {
-      id: fieldLabel
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(64)
-      text: fieldRow.label
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.bold: true
-      font.letterSpacing: 1.2
-    }
-
-    TextField {
-      id: input
-      anchors.left: fieldLabel.right
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      foreground: root.foreground
-      placeholderText: fieldRow.placeholder
-      hasCursor: root.at(fieldRow.section)
-      verticalPadding: Style.space(4)
-      onAccepted: fieldRow.submitted()
-      onActiveFocusChanged: root.fieldFocusChanged(input, activeFocus)
-      Keys.onEscapePressed: root.endEdit()
-    }
-  }
-
-  component SubscriptionRow: CursorSurface {
-    id: subRow
-
-    property var subscription: null
-    property int rowIndex: 0
-    readonly property string subName: subscription ? String(subscription.name) : ""
-    readonly property bool pending: subName !== "" && omihomo.pendingSubscription === subName
-
-    hasCursor: root.at("sub", subRow.rowIndex)
-    current: subscription && subscription.active === true
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: Math.max(subLabels.implicitHeight, subUpdate.implicitHeight) + Style.spacing.lg
-
-    Component.onCompleted: root.registerRowAnchor(root.rowKey("sub", subRow.rowIndex), subRow)
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow("sub", subRow.rowIndex)
-      onClicked: root.activateSubscriptionAt(subRow.rowIndex)
-    }
-
-    RowLayout {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(8)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(8)
-
-      ColumnLayout {
-        id: subLabels
-        Layout.fillWidth: true
-        spacing: 0
-
-        Text {
-          Layout.fillWidth: true
-          text: subRow.subName
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: subRow.current
-          elide: Text.ElideRight
-        }
-
-        Text {
-          Layout.fillWidth: true
-          text: subRow.pending ? "working…" : Model.subscriptionDetail(subRow.subscription, root.nowMs)
-          visible: text !== ""
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+      function trace(key) {
+        ctx.beginPath()
+        for (var j = 0; j < list.length; j++) {
+          var x = (offset + j) * step
+          var y = height - 1 - (list[j][key] / peak) * (height - 3)
+          if (j === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
         }
       }
 
-      PanelActionButton {
-        id: subUpdate
-        iconText: "󰑐"
-        tooltipText: "Update"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        enabled: !subRow.pending
-        Layout.alignment: Qt.AlignVCenter
-        onClicked: omihomo.updateSubscription(subRow.subName)
-      }
-
-      PanelActionButton {
-        iconText: "󰅙"
-        tooltipText: "Remove"
-        foreground: root.foreground
-        hoverColor: root.urgent
-        fontFamily: root.fontFamily
-        Layout.alignment: Qt.AlignVCenter
-        onClicked: omihomo.removeSubscription(subRow.subName)
+      var series = [["down", root.foreground, 0.14], ["up", root.accent, 0.2]]
+      for (i = 0; i < series.length; i++) {
+        trace(series[i][0])
+        ctx.lineTo(width, height)
+        ctx.lineTo(offset * step, height)
+        ctx.closePath()
+        ctx.fillStyle = root.css(Util.alpha(series[i][1], series[i][2]))
+        ctx.fill()
+        trace(series[i][0])
+        ctx.strokeStyle = root.css(series[i][1])
+        ctx.lineWidth = 1.2
+        ctx.stroke()
       }
     }
   }
 
-  component GroupRow: CursorSurface {
-    id: groupRow
+  // Open traffic as process → config flows: one curve per pair, as thick as the
+  // bytes it carried, with the pair under the cursor in the accent.
+  component FlowDiagram: Canvas {
+    id: diagram
+
+    readonly property var flows: root.flows
+    readonly property var hot: {
+      var stack = root.cursorActive && root.cursorRow && root.cursorRow.s === "conn"
+        ? root.connectionAt(root.cursorRow.i) : null
+      return stack && stack.open ? { source: stack.process || "unknown", target: stack.chain || "DIRECT" } : null
+    }
+
+    onFlowsChanged: requestPaint()
+    onHotChanged: requestPaint()
+    onWidthChanged: requestPaint()
+    onHeightChanged: requestPaint()
+    onVisibleChanged: if (visible) requestPaint()
+
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.reset()
+      var sources = flows.sources
+      var targets = flows.targets
+      ctx.font = Style.font.bodySmall + "px \"" + root.fontFamily + "\""
+      ctx.textBaseline = "middle"
+      if (sources.length === 0) {
+        ctx.fillStyle = root.css(root.dim)
+        ctx.fillText("No open connections.", 0, height / 2)
+        return
+      }
+      var pad = Style.space(8)
+      var left = Style.space(86)
+      var right = width - Style.space(96)
+
+      function rowY(index, count) {
+        return count < 2 ? height / 2 : pad + index * (height - pad * 2) / (count - 1)
+      }
+      function indexOf(nodes, name) {
+        for (var n = 0; n < nodes.length; n++) if (nodes[n].name === name) return n
+        return -1
+      }
+      function fit(text, room) {
+        var out = text
+        if (ctx.measureText(out).width <= room) return out
+        while (out.length > 1 && ctx.measureText(out + "…").width > room) out = out.slice(0, -1)
+        return out + "…"
+      }
+      function isHot(source, target) {
+        return hot !== null && (source === undefined || source === hot.source)
+          && (target === undefined || target === hot.target)
+      }
+
+      var i
+      for (i = 0; i < flows.links.length; i++) {
+        var link = flows.links[i]
+        var y1 = rowY(indexOf(sources, link.source), sources.length)
+        var y2 = rowY(indexOf(targets, link.target), targets.length)
+        var middle = (left + right) / 2
+        ctx.beginPath()
+        ctx.moveTo(left + 4, y1)
+        ctx.bezierCurveTo(middle, y1, middle, y2, right - 4, y2)
+        ctx.lineWidth = Math.max(1.5, Math.min(12, 3.5 * Math.log(Math.max(1, link.bytes / 2e4)) / Math.LN10))
+        ctx.strokeStyle = root.css(isHot(link.source, link.target) ? root.accent : Util.alpha(root.foreground, 0.22))
+        ctx.stroke()
+      }
+
+      for (i = 0; i < sources.length; i++) {
+        var sy = rowY(i, sources.length)
+        ctx.fillStyle = root.css(isHot(sources[i].name, undefined) ? root.accent : root.foreground)
+        ctx.fillRect(left, sy - 7, 4, 14)
+        ctx.textAlign = "right"
+        ctx.fillText(fit(sources[i].name, left - 8), left - 6, sy)
+      }
+
+      ctx.textAlign = "left"
+      for (i = 0; i < targets.length; i++) {
+        var ty = rowY(i, targets.length)
+        ctx.fillStyle = root.css(isHot(undefined, targets[i].name) ? root.accent : root.foreground)
+        ctx.fillRect(right - 4, ty - 7, 4, 14)
+        ctx.fillText(fit(targets[i].name, width - right - 8), right + 6, ty - 5)
+        ctx.fillStyle = root.css(root.dim)
+        ctx.fillText(Model.formatBytes(targets[i].bytes), right + 6, ty + 7)
+      }
+    }
+  }
+
+  component GroupChip: NavRow {
+    id: chip
 
     property var group: null
-    property int rowIndex: 0
     readonly property string groupName: group ? String(group.name) : ""
     readonly property bool primary: groupName !== "" && groupName === omihomo.primaryGroup
-    readonly property bool browsed: groupName === root.browsedGroup
 
-    hasCursor: root.at("group", groupRow.rowIndex)
-    current: browsed
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: groupLabels.implicitHeight + Style.spacing.lg
+    section: "group"
+    current: groupName === root.browsedGroup
+    bordered: true
+    implicitWidth: chipRow.implicitWidth + Style.space(16)
+    implicitHeight: chipRow.implicitHeight + Style.space(8)
+    onActivated: root.browseGroupAt(chip.rowIndex)
 
-    Component.onCompleted: root.registerRowAnchor(root.rowKey("group", groupRow.rowIndex), groupRow)
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow("group", groupRow.rowIndex)
-      onClicked: root.browseGroupAt(groupRow.rowIndex)
-    }
-
-    RowLayout {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(8)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(8)
-
-      ColumnLayout {
-        id: groupLabels
-        Layout.fillWidth: true
-        spacing: 0
-
-        Text {
-          Layout.fillWidth: true
-          text: groupRow.groupName
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: groupRow.primary
-          elide: Text.ElideRight
-        }
-
-        Text {
-          Layout.fillWidth: true
-          text: (groupRow.group ? groupRow.group.type : "") + " · " + (groupRow.group ? groupRow.group.now : "")
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-      }
+    Row {
+      id: chipRow
+      anchors.centerIn: parent
+      spacing: Style.space(6)
 
       Text {
-        visible: groupRow.primary
-        text: "primary"
-        color: root.dim
+        anchors.verticalCenter: parent.verticalCenter
+        text: chip.groupName
+        color: chip.current ? root.foreground : root.dim
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: Style.font.bodySmall
       }
 
-      PanelActionButton {
-        visible: !groupRow.primary
-        iconText: "󰄬"
-        tooltipText: "Make primary"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        Layout.alignment: Qt.AlignVCenter
-        onClicked: omihomo.setPrimaryGroup(groupRow.groupName)
+      Rectangle {
+        visible: chip.primary
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(5)
+        height: width
+        radius: width / 2
+        color: root.accent
       }
+    }
+
+    PanelToolTip {
+      visible: chip.hovered
+      text: chip.primary ? "Primary group" : "Browse · p makes it primary"
+      fontFamily: root.fontFamily
     }
   }
 
-  component ConfigRow: CursorSurface {
+  component ConfigRow: NavRow {
     id: configRow
 
     property string configName: ""
-    property int rowIndex: 0
-    readonly property var entry: omihomo.configEntries[configRow.configName] || null
-    readonly property bool selected: root.browsedGroupEntry && root.browsedGroupEntry.now === configRow.configName
+    readonly property bool selected: root.browsedGroupEntry !== null && root.browsedGroupEntry.now === configRow.configName
     readonly property bool pending: omihomo.pendingConfig === configRow.configName
     readonly property string testState: omihomo.configTestState(configRow.configName)
     readonly property int delay: omihomo.configDelay(configRow.configName)
-    readonly property bool expanded: root.expandedConfig === configRow.configName
 
-    hasCursor: root.at("config", configRow.rowIndex)
+    section: "config"
     current: selected || pending
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: configColumn.implicitHeight + Style.spacing.md
+    implicitHeight: Style.space(28)
+    onActivated: root.chooseConfigAt(configRow.rowIndex)
 
-    MouseArea {
+    RowLayout {
       anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow("config", configRow.rowIndex)
-      onClicked: root.chooseConfigAt(configRow.rowIndex)
-    }
+      anchors.leftMargin: Style.space(8)
+      anchors.rightMargin: Style.space(4)
+      spacing: Style.space(8)
 
-    Column {
-      id: configColumn
+      Radio {
+        checked: configRow.selected
+        pending: configRow.pending && !configRow.selected
+      }
+
+      Text {
+        Layout.fillWidth: true
+        text: configRow.configName
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: configRow.selected
+        elide: Text.ElideRight
+      }
+
+      // The delay is the colour: the slower the config, the more of the urgent
+      // colour the pill takes, and a failure takes all of it.
+      Rectangle {
+        id: pill
+
+        readonly property bool failed: configRow.testState === "failed"
+        readonly property bool testing: configRow.testState === "testing"
+
+        implicitWidth: Math.max(pillText.implicitWidth + Style.space(12), Style.space(54))
+        implicitHeight: pillText.implicitHeight + Style.space(2)
+        radius: Math.min(Style.cornerRadius, height / 2)
+        color: pill.failed ? root.urgent
+          : (configRow.delay > 0 && !pill.testing
+            ? Qt.tint(Util.alpha(root.foreground, 0.08), Util.alpha(root.urgent, root.latencyHeat(configRow.delay)))
+            : "transparent")
+
+        Text {
+          id: pillText
+          anchors.centerIn: parent
+          text: pill.testing ? "···" : (pill.failed ? "timeout" : Model.formatDelay(configRow.delay))
+          color: pill.failed ? root.surface : (configRow.delay > 0 ? root.foreground : root.faint)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+
+          SequentialAnimation on opacity {
+            running: pill.testing
+            loops: Animation.Infinite
+            alwaysRunToEnd: true
+            NumberAnimation { from: 1; to: 0.3; duration: 450 }
+            NumberAnimation { from: 0.3; to: 1; duration: 450 }
+          }
+        }
+      }
+
+      PanelActionButton {
+        iconText: "󰓅"
+        tooltipText: "Test latency · d"
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        size: Style.space(20)
+        enabled: !omihomo.pingTestsRunning
+        onClicked: omihomo.testConfig(configRow.configName)
+      }
+    }
+  }
+
+  component SubscriptionCard: NavRow {
+    id: card
+
+    property var subscription: null
+    readonly property string subName: subscription ? String(subscription.name) : ""
+    readonly property bool active: !!subscription && subscription.active === true
+    readonly property bool pending: subName !== "" && omihomo.pendingSubscription === subName
+    readonly property bool failed: root.errorAt("sub:" + subName)
+    readonly property var usage: Model.subscriptionUsage(subscription)
+
+    section: "sub"
+    current: active
+    bordered: true
+    implicitHeight: cardColumn.implicitHeight + Style.space(14)
+    onActivated: root.activateSubscriptionAt(card.rowIndex)
+
+    ColumnLayout {
+      id: cardColumn
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(8)
       anchors.rightMargin: Style.space(6)
-      spacing: Style.space(2)
+      spacing: Style.space(6)
 
       RowLayout {
-        width: parent.width
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+
+        Radio { checked: card.active; pending: card.pending && !card.active }
+
+        Text {
+          Layout.fillWidth: true
+          text: card.subName
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: card.active
+          elide: Text.ElideRight
+        }
+
+        Tag {
+          text: card.pending ? "working…" : (card.failed ? "failed" : (card.active ? "active"
+            : "updated " + (Model.relativeTime(card.subscription ? card.subscription.updatedAt : "", root.nowMs) || "never")))
+          tint: card.failed ? root.urgent : (card.active ? root.accent : root.dim)
+          strong: card.active || card.failed
+        }
+
+        SmallButton {
+          text: card.pending ? "…" : "↻ update"
+          enabled: !card.pending
+          tooltipText: "Update · u"
+          onClicked: omihomo.updateSubscription(card.subName)
+        }
+
+        PanelActionButton {
+          iconText: "󰅙"
+          tooltipText: "Remove · x"
+          foreground: root.foreground
+          hoverColor: root.urgent
+          fontFamily: root.fontFamily
+          size: Style.space(20)
+          onClicked: root.removeSubscription(card.subName)
+        }
+      }
+
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+
+        Rectangle {
+          visible: card.usage.fraction >= 0
+          implicitWidth: Style.space(84)
+          implicitHeight: Style.space(4)
+          radius: Math.min(Style.cornerRadius, 2)
+          color: Util.alpha(root.foreground, 0.12)
+
+          Rectangle {
+            width: parent.width * Math.max(0, card.usage.fraction)
+            height: parent.height
+            radius: parent.radius
+            color: card.usage.fraction > 0.9 ? root.urgent : root.foreground
+          }
+        }
+
+        Text {
+          Layout.fillWidth: true
+          text: card.usage.text + (card.active ? " · updated "
+            + (Model.relativeTime(card.subscription ? card.subscription.updatedAt : "", root.nowMs) || "never") : "")
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          elide: Text.ElideRight
+        }
+      }
+
+      RowLayout {
+        visible: card.failed
+        Layout.fillWidth: true
         spacing: Style.space(8)
 
         Text {
           Layout.fillWidth: true
-          text: configRow.configName
-          color: root.foreground
+          text: "▲ " + omihomo.lastError
+          color: root.urgent
           font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: configRow.selected
-          elide: Text.ElideRight
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
         }
 
-        Text {
-          text: configRow.testState === "testing" ? "testing…"
-            : (configRow.testState === "failed" ? "failed" : Model.formatDelay(configRow.delay))
-          color: configRow.testState === "failed" ? root.urgent
-            : (configRow.delay > 0 && configRow.testState !== "testing" ? root.foreground : root.dim)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        PanelActionButton {
-          iconText: "󰓅"
-          tooltipText: "Test latency"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          size: Style.space(18)
-          enabled: !omihomo.pingTestsRunning
-          Layout.alignment: Qt.AlignVCenter
-          onClicked: omihomo.testConfig(configRow.configName)
-        }
-
-        PanelActionButton {
-          iconText: "󰋼"
-          tooltipText: "Parameters"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          size: Style.space(18)
-          Layout.alignment: Qt.AlignVCenter
-          onClicked: root.toggleConfigParameters(configRow.configName)
+        SmallButton {
+          text: "↻ retry"
+          foreground: root.urgent
+          onClicked: omihomo.updateSubscription(card.subName)
         }
       }
 
-      // Best effort by design: mihomo exposes what it knows about a running
-      // config, and research ticket #4 ruled out mapping a name back to its
-      // provider entry, so address and credentials are never guessed at.
-      Text {
-        visible: configRow.expanded
-        width: parent.width
-        text: {
-          var parameters = Model.configParameters(configRow.entry)
-          if (parameters.length === 0) return "No parameters available."
-          var parts = []
-          for (var i = 0; i < parameters.length; i++) parts.push(parameters[i].label + " " + parameters[i].value)
-          return parts.join(" · ")
+      RowLayout {
+        visible: root.removeArmed === card.subName
+        Layout.fillWidth: true
+        spacing: Style.space(6)
+
+        Text {
+          Layout.fillWidth: true
+          text: "Remove " + card.subName + "?"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          elide: Text.ElideRight
         }
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
+
+        SmallButton {
+          text: "keep"
+          onClicked: root.removeArmed = ""
+        }
+
+        SmallButton {
+          text: "remove · x"
+          foreground: root.urgent
+          onClicked: root.removeSubscription(card.subName)
+        }
       }
     }
   }
 
-  component RuleRow: CursorSurface {
+  // One step of the rule pipeline. With a host in the tester, rules above the
+  // hit say why they passed ("no", or "?" when only the core can tell), the hit
+  // is lit, and everything below it fades.
+  component RuleRow: NavRow {
     id: ruleRow
 
-    property var rule: null
-    property int rowIndex: 0
+    property var entry: ({})
+    readonly property var rule: entry.rule || null
+    readonly property bool own: entry.kind === "own"
+    readonly property bool testing: root.ruleTest.host !== ""
+    readonly property string verdict: entry.eff >= 0 && entry.eff < root.ruleTest.verdicts.length
+      ? root.ruleTest.verdicts[entry.eff] : ""
+    readonly property bool hit: testing && root.ruleTest.hit >= 0 && entry.eff === root.ruleTest.hit
+    readonly property bool below: testing && root.ruleTest.hit >= 0 && (entry.eff < 0 || entry.eff > root.ruleTest.hit)
 
-    hasCursor: root.at("rule", ruleRow.rowIndex)
-    foreground: root.foreground
-    fill: root.hoverFill
-    implicitHeight: Math.max(ruleText.implicitHeight, ruleDelete.implicitHeight) + Style.spacing.md
-
-    Component.onCompleted: root.registerRowAnchor(root.rowKey("rule", ruleRow.rowIndex), ruleRow)
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.ArrowCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow("rule", ruleRow.rowIndex)
-    }
+    section: own ? "rule" : "srule"
+    rowIndex: entry.i === undefined ? -1 : entry.i
+    current: hit
+    implicitHeight: Style.space(24)
+    opacity: below ? 0.4 : 1
 
     RowLayout {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(8)
-      anchors.rightMargin: Style.space(6)
+      anchors.fill: parent
+      anchors.leftMargin: Style.space(4)
+      anchors.rightMargin: Style.space(2)
       spacing: Style.space(8)
 
+      Item {
+        Layout.fillHeight: true
+        implicitWidth: Style.space(8)
+
+        Rectangle {
+          anchors.horizontalCenter: parent.horizontalCenter
+          width: 1
+          height: parent.height
+          color: root.line
+        }
+
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(ruleRow.hit ? 8 : 5)
+          height: width
+          radius: width / 2
+          color: ruleRow.hit ? root.accent : (ruleRow.verdict !== "" ? root.dim : root.faint)
+        }
+      }
+
       Text {
-        id: ruleText
-        Layout.fillWidth: true
-        text: ruleRow.rule
-          ? ruleRow.rule.type + "  " + ruleRow.rule.value + "  → " + ruleRow.rule.target
-          : ""
-        color: root.foreground
+        Layout.preferredWidth: Style.space(56)
+        text: root.shortRuleType(ruleRow.rule ? ruleRow.rule.type : "")
+        color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         elide: Text.ElideRight
       }
 
       Text {
-        visible: ruleRow.rule && ruleRow.rule.kind !== "prepend"
-        text: ruleRow.rule ? ruleRow.rule.kind : ""
-        color: root.dim
+        Layout.fillWidth: true
+        text: ruleRow.rule ? (ruleRow.rule.value !== "" ? ruleRow.rule.value : "everything else") : ""
+        color: ruleRow.own || ruleRow.hit ? root.foreground : root.dim
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: Style.font.bodySmall
+        elide: Text.ElideRight
       }
 
-      PanelActionButton {
-        id: ruleDelete
-        iconText: "󰅙"
-        tooltipText: "Delete rule"
-        foreground: root.foreground
-        hoverColor: root.urgent
-        fontFamily: root.fontFamily
-        size: Style.space(18)
-        Layout.alignment: Qt.AlignVCenter
-        onClicked: if (ruleRow.rule) omihomo.removeRule(ruleRow.rule.index)
+      Text {
+        visible: ruleRow.own && ruleRow.rule && ruleRow.rule.kind !== "prepend"
+        text: ruleRow.rule ? ruleRow.rule.kind : ""
+        color: root.faint
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
       }
+
+      Tag {
+        text: ruleRow.rule ? ruleRow.rule.target : ""
+        tint: ruleRow.hit ? root.accent : root.dim
+        strong: ruleRow.hit
+        maxWidth: Style.space(84)
+      }
+
+      Text {
+        Layout.preferredWidth: Style.space(22)
+        text: ruleRow.hit ? "hit" : (ruleRow.verdict === "miss" ? "no" : (ruleRow.verdict === "unknown" ? "?" : ""))
+        color: ruleRow.hit ? root.accent : root.faint
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Item {
+        implicitWidth: Style.space(18)
+        implicitHeight: Style.space(18)
+
+        PanelActionButton {
+          visible: ruleRow.own
+          anchors.fill: parent
+          iconText: "󰅙"
+          tooltipText: "Delete · x"
+          foreground: root.foreground
+          hoverColor: root.urgent
+          fontFamily: root.fontFamily
+          size: Style.space(18)
+          onClicked: if (ruleRow.rule) omihomo.removeRule(ruleRow.rule.index)
+        }
+      }
+    }
+
+    PanelToolTip {
+      visible: ruleRow.hovered && ruleRow.verdict === "unknown"
+      text: "Depends on a DNS answer, a rule set, or the app making the connection"
+      fontFamily: root.fontFamily
     }
   }
 
-  // At 420px a stack cannot state everything on one line, so the destination
-  // takes the first and its route, transfer, and age share the second: the
-  // route elides, the numbers never do. The leading mark and the brightness
-  // are what say open or closed, because the panel has a foreground, a dim,
-  // and an urgent, and no colour to spare for a third state.
-  component ConnectionRow: CursorSurface {
+  // One stack on one line. The bar behind it is the bytes it moved, on a log
+  // scale so a game download does not flatten every other row. The leading mark
+  // and the brightness say open or closed, because the panel has no colour to
+  // spare for a third state.
+  component ConnectionRow: NavRow {
     id: connectionRow
 
     property var stack: null
-    property int rowIndex: 0
-
     readonly property bool live: !!stack && stack.open
-    readonly property color labelColor: connectionRow.live ? root.foreground : root.dim
+    readonly property double bytes: stack ? stack.download + stack.upload : 0
 
-    hasCursor: root.at("conn", connectionRow.rowIndex)
-    foreground: root.foreground
-    fill: root.hoverFill
-    implicitHeight: connectionLabels.implicitHeight + Style.spacing.md
+    section: "conn"
+    implicitHeight: Style.space(24)
+    onActivated: root.activateConnectionAt(connectionRow.rowIndex)
 
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.focusRow("conn", connectionRow.rowIndex)
-      onClicked: root.activateConnectionAt(connectionRow.rowIndex)
+    Rectangle {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.margins: 1
+      width: (parent.width - 2) * Math.max(0.02, Math.min(1, root.largestStack > 5000 && connectionRow.bytes > 5000
+        ? Math.log(connectionRow.bytes / 5000) / Math.log(root.largestStack / 5000) : 0))
+      radius: Style.cornerRadius
+      color: Util.alpha(connectionRow.live ? root.foreground : root.faint, 0.07)
     }
 
     RowLayout {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(8)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(8)
+      anchors.fill: parent
+      anchors.leftMargin: Style.space(6)
+      anchors.rightMargin: Style.space(2)
+      spacing: Style.space(6)
 
       Text {
         text: connectionRow.live ? "●" : "○"
-        color: connectionRow.labelColor
+        color: connectionRow.live ? root.foreground : root.faint
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        Layout.alignment: Qt.AlignVCenter
-      }
-
-      ColumnLayout {
-        id: connectionLabels
-        Layout.fillWidth: true
-        spacing: 0
-
-        Text {
-          Layout.fillWidth: true
-          text: {
-            if (!connectionRow.stack) return ""
-            var stack = connectionRow.stack
-            return stack.process === "" ? stack.host : stack.process + " → " + stack.host
-          }
-          color: connectionRow.labelColor
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          elide: Text.ElideRight
-        }
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.space(8)
-
-          // A closed stack spends the slot the rule would have taken on when
-          // it closed, which is the thing you read a log for.
-          Text {
-            Layout.fillWidth: true
-            text: {
-              if (!connectionRow.stack) return ""
-              var stack = connectionRow.stack
-              var parts = []
-              if (stack.network !== "") parts.push(stack.network)
-              if (stack.chain !== "") parts.push(stack.chain)
-              if (connectionRow.live) {
-                if (stack.rule !== "") parts.push(stack.rule)
-              } else {
-                parts.push("closed " + Model.relativeSince(stack.closedAtMs, root.nowMs))
-              }
-              return parts.join(" · ")
-            }
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-
-          Text {
-            text: {
-              if (!connectionRow.stack) return ""
-              var stack = connectionRow.stack
-              var transfer = "↓ " + Model.formatBytes(stack.download)
-                + "  ↑ " + Model.formatBytes(stack.upload)
-              return connectionRow.live
-                ? transfer + " · " + Model.formatDuration(root.nowMs - stack.startMs)
-                : transfer
-            }
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
       }
 
       Text {
-        text: connectionRow.stack ? "×" + connectionRow.stack.count : ""
-        color: connectionRow.labelColor
+        Layout.maximumWidth: Style.space(96)
+        text: connectionRow.stack ? (connectionRow.stack.process || "unknown") : ""
+        color: connectionRow.live ? root.foreground : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
-        Layout.alignment: Qt.AlignVCenter
+        font.bold: connectionRow.live
+        elide: Text.ElideRight
+      }
+
+      Text {
+        visible: connectionRow.stack && connectionRow.stack.count > 1
+        text: connectionRow.stack ? "×" + connectionRow.stack.count : ""
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
+        Layout.fillWidth: true
+        text: connectionRow.stack ? connectionRow.stack.host : ""
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        elide: Text.ElideRight
+      }
+
+      Tag {
+        visible: text !== ""
+        text: connectionRow.stack ? connectionRow.stack.chain : ""
+        maxWidth: Style.space(80)
+      }
+
+      Text {
+        text: Model.formatBytes(connectionRow.bytes)
+        color: connectionRow.live ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
       }
 
       PanelActionButton {
         iconText: connectionRow.live ? "󰅙" : "󰩹"
-        tooltipText: connectionRow.live ? "Close connections" : "Remove from log"
+        tooltipText: connectionRow.live ? "Close · x" : "Remove from log · x"
         foreground: root.foreground
         hoverColor: root.urgent
         fontFamily: root.fontFamily
         size: Style.space(18)
-        Layout.alignment: Qt.AlignVCenter
         onClicked: root.activateConnectionAt(connectionRow.rowIndex)
+      }
+    }
+
+    // A closed stack spends the slot the rule would have taken on when it
+    // closed, which is the thing you read a log for.
+    PanelToolTip {
+      visible: connectionRow.hovered && !!connectionRow.stack
+      text: {
+        var stack = connectionRow.stack
+        if (!stack) return ""
+        var parts = []
+        if (stack.network !== "") parts.push(stack.network)
+        if (connectionRow.live) {
+          if (stack.rule !== "") parts.push(stack.rule)
+          parts.push(Model.formatDuration(root.nowMs - stack.startMs))
+        } else {
+          parts.push("closed " + Model.relativeSince(stack.closedAtMs, root.nowMs))
+        }
+        return parts.join(" · ")
+      }
+      fontFamily: root.fontFamily
+    }
+  }
+
+  // A labelled switch, or the mode selector. The whole row is the control, so
+  // the switch itself takes no clicks of its own.
+  component SettingRow: NavRow {
+    id: settingRow
+
+    property string title: ""
+    property string subtitle: ""
+    property string keyHint: ""
+    property bool urgentSubtitle: false
+    property bool checked: false
+    property bool modeControl: false
+
+    implicitHeight: settingColumn.implicitHeight + Style.space(12)
+    onActivated: if (settingRow.modeControl) root.cycleMode(1)
+
+    RowLayout {
+      anchors.fill: parent
+      anchors.leftMargin: Style.space(8)
+      anchors.rightMargin: Style.space(6)
+      spacing: Style.space(10)
+
+      ColumnLayout {
+        id: settingColumn
+        Layout.fillWidth: true
+        spacing: Style.space(2)
+
+        RowLayout {
+          spacing: Style.space(6)
+
+          Text {
+            text: settingRow.title
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Kbd { text: settingRow.keyHint; visible: text !== "" }
+        }
+
+        Text {
+          Layout.fillWidth: true
+          text: settingRow.subtitle
+          color: settingRow.urgentSubtitle ? root.urgent : root.faint
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
+      }
+
+      ToggleSwitch {
+        visible: !settingRow.modeControl
+        interactive: false
+        checked: settingRow.checked
+        foreground: root.foreground
+      }
+
+      ButtonGroup {
+        visible: settingRow.modeControl
+        options: Model.MODES
+        value: omihomo.effectiveMode
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        fontSize: Style.font.bodySmall
+        focusable: false
+        onChanged: function(value) { omihomo.setMode(value) }
       }
     }
   }

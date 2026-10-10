@@ -128,23 +128,25 @@ function parseSubscriptions(raw) {
   return out
 }
 
-// One dense line under a subscription name: what it has spent of its quota,
-// when it expires, and how stale the cache is. Missing fields drop out.
-function subscriptionDetail(sub, nowMs) {
-  if (!sub) return ""
+// What a subscription has spent of its quota and when it expires, for the
+// line under its name. `fraction` is -1 when the provider states no quota.
+function subscriptionUsage(sub) {
+  var out = { fraction: -1, text: "" }
+  if (!sub) return out
   var parts = []
   var used = number(sub.upload, 0) + number(sub.download, 0)
-  if (sub.total !== null && sub.total !== undefined && number(sub.total, 0) > 0) {
-    parts.push(formatBytes(used) + " of " + formatBytes(sub.total))
+  var total = number(sub.total, 0)
+  if (sub.total !== null && sub.total !== undefined && total > 0) {
+    out.fraction = Math.max(0, Math.min(1, used / total))
+    parts.push(formatBytes(used) + " of " + formatBytes(total))
   } else if (used > 0) {
     parts.push(formatBytes(used) + " used")
   }
   if (sub.expire !== null && sub.expire !== undefined && number(sub.expire, 0) > 0) {
     parts.push("expires " + formatDate(number(sub.expire, 0) * 1000))
   }
-  var age = relativeTime(sub.updatedAt, nowMs)
-  if (age !== "") parts.push("updated " + age)
-  return parts.join(" · ")
+  out.text = parts.length > 0 ? parts.join(" · ") : "no quota reported"
+  return out
 }
 
 function parseRules(raw) {
@@ -558,21 +560,167 @@ function apiRuleType(value) {
   return raw.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toUpperCase()
 }
 
-// Parameters mihomo actually states for a config. Address, port, and
-// credentials are deliberately absent: research ticket #4 found no reliable
-// mapping from a runtime name back to its provider entry, so Omihomo renders
-// only what it can resolve confidently.
-function configParameters(entry) {
-  var out = []
-  if (!entry || typeof entry !== "object") return out
-  if (text(entry.type) !== "") out.push({ label: "Type", value: text(entry.type) })
-  if (entry.udp !== undefined) out.push({ label: "UDP", value: entry.udp === true ? "yes" : "no" })
-  if (entry.xudp === true) out.push({ label: "XUDP", value: "yes" })
-  if (entry.tfo === true) out.push({ label: "TFO", value: "yes" })
-  if (entry.alive !== undefined) out.push({ label: "Alive", value: entry.alive === true ? "yes" : "no" })
-  var delay = historyDelay(entry)
-  if (delay > 0) out.push({ label: "Latency", value: formatDelay(delay) })
+// ---------------------------------------------------------------- rule tester
+
+var PRIVATE_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
+  "169.254.0.0/16", "100.64.0.0/10"]
+
+// A pasted URL, host:port, or bare host, reduced to the host mihomo matches on.
+function ruleQueryHost(query) {
+  return text(query).trim().toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/^[^@/]*@/, "")
+    .replace(/[/?#].*$/, "")
+    .replace(/:\d+$/, "")
+    .replace(/\.$/, "")
+}
+
+function ipv4Number(value) {
+  var m = text(value).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!m) return null
+  var n = 0
+  for (var i = 1; i <= 4; i++) {
+    var octet = number(m[i], 256)
+    if (octet > 255) return null
+    n = n * 256 + octet
+  }
+  return n
+}
+
+function inIpv4Cidr(ip, cidr) {
+  var parts = text(cidr).split("/")
+  var base = ipv4Number(parts[0])
+  var bits = parts.length > 1 ? number(parts[1], -1) : 32
+  if (base === null || bits < 0 || bits > 32) return false
+  var size = Math.pow(2, 32 - bits)
+  return Math.floor(ip / size) === Math.floor(base / size)
+}
+
+// One rule against one host: "hit", "miss", or "unknown" when the answer
+// depends on something a host string cannot tell — a rule set, a geo database,
+// the process, or a DNS lookup that only the core would make.
+function ruleVerdict(rule, host) {
+  var type = text(rule && rule.type).toUpperCase()
+  var value = text(rule && rule.value).toLowerCase()
+  var ip = ipv4Number(host)
+  switch (type) {
+  case "MATCH":
+  case "FINAL":
+    return "hit"
+  case "DOMAIN":
+    return ip === null ? (host === value ? "hit" : "miss") : "miss"
+  case "DOMAIN-SUFFIX":
+    if (ip !== null) return "miss"
+    return host === value || host.slice(-(value.length + 1)) === "." + value ? "hit" : "miss"
+  case "DOMAIN-KEYWORD":
+    return ip === null && host.indexOf(value) !== -1 ? "hit" : "miss"
+  case "IP-CIDR":
+  case "IP-CIDR6":
+    if (ip === null) return "unknown"
+    return type === "IP-CIDR" && inIpv4Cidr(ip, value) ? "hit" : "miss"
+  case "GEOIP":
+    if (ip === null) return "unknown"
+    if (value === "private" || value === "lan") {
+      for (var i = 0; i < PRIVATE_CIDRS.length; i++) if (inIpv4Cidr(ip, PRIVATE_CIDRS[i])) return "hit"
+      return "miss"
+    }
+    return "unknown"
+  }
+  return "unknown"
+}
+
+// Walks `rules` top to bottom the way mihomo does and stops at the first hit.
+// `verdicts` covers every rule up to and including it, so the list can mark
+// which ones were passed and which could not be judged from here.
+function testRules(rules, query) {
+  var host = ruleQueryHost(query)
+  var out = { host: host, hit: -1, verdicts: [], unknown: 0 }
+  if (host === "") return out
+  var list = rules && typeof rules.length === "number" ? rules : []
+  for (var i = 0; i < list.length; i++) {
+    var verdict = ruleVerdict(list[i], host)
+    out.verdicts.push(verdict)
+    if (verdict === "hit") {
+      out.hit = i
+      return out
+    }
+    if (verdict === "unknown") out.unknown++
+  }
   return out
+}
+
+// How many rules send traffic to each target, largest first.
+function ruleTargetTally(rules) {
+  var list = rules && typeof rules.length === "number" ? rules : []
+  var counts = {}
+  var order = []
+  for (var i = 0; i < list.length; i++) {
+    var target = text(list[i].target)
+    if (target === "") continue
+    if (counts[target] === undefined) {
+      counts[target] = 0
+      order.push(target)
+    }
+    counts[target]++
+  }
+  var out = []
+  for (var j = 0; j < order.length; j++) out.push({ target: order[j], count: counts[order[j]] })
+  out.sort(function(a, b) { return b.count - a.count })
+  return out
+}
+
+// Open traffic as process → config flows, for the connections diagram. Past
+// `maxSources` processes or `maxTargets` configs the smallest fold into one
+// "other" node, so the diagram always fits its box.
+function connectionFlows(stacks, maxSources, maxTargets) {
+  var list = stacks && typeof stacks.length === "number" ? stacks : []
+  var bySource = {}
+  var byTarget = {}
+  var links = {}
+  var i
+  for (i = 0; i < list.length; i++) {
+    var stack = list[i]
+    if (!stack.open) continue
+    var bytes = number(stack.download, 0) + number(stack.upload, 0)
+    var source = text(stack.process) || "unknown"
+    var target = text(stack.chain) || "DIRECT"
+    bySource[source] = (bySource[source] || 0) + bytes
+    byTarget[target] = (byTarget[target] || 0) + bytes
+    var key = source + "\u0000" + target
+    links[key] = (links[key] || 0) + bytes
+  }
+  var sources = topNodes(bySource, maxSources)
+  var targets = topNodes(byTarget, maxTargets)
+  var merged = {}
+  for (var key2 in links) {
+    var parts = key2.split("\u0000")
+    var s = sources.names[parts[0]] ? parts[0] : "other"
+    var t = targets.names[parts[1]] ? parts[1] : "other"
+    merged[s + "\u0000" + t] = (merged[s + "\u0000" + t] || 0) + links[key2]
+  }
+  var out = []
+  for (var key3 in merged) {
+    var pair = key3.split("\u0000")
+    out.push({ source: pair[0], target: pair[1], bytes: merged[key3] })
+  }
+  out.sort(function(a, b) { return b.bytes - a.bytes })
+  return { sources: sources.nodes, targets: targets.nodes, links: out }
+}
+
+function topNodes(totals, max) {
+  var nodes = []
+  for (var name in totals) nodes.push({ name: name, bytes: totals[name] })
+  nodes.sort(function(a, b) { return b.bytes - a.bytes })
+  var limit = Math.max(1, number(max, 6))
+  var names = {}
+  if (nodes.length > limit) {
+    var rest = 0
+    for (var i = limit - 1; i < nodes.length; i++) rest += nodes[i].bytes
+    nodes = nodes.slice(0, limit - 1)
+    nodes.push({ name: "other", bytes: rest })
+  }
+  for (var j = 0; j < nodes.length; j++) names[nodes[j].name] = true
+  return { nodes: nodes, names: names }
 }
 
 // ---------------------------------------------------------------- formatting
@@ -675,7 +823,7 @@ if (typeof module !== "undefined") {
     cliError: cliError,
     errorHint: errorHint,
     parseSubscriptions: parseSubscriptions,
-    subscriptionDetail: subscriptionDetail,
+    subscriptionUsage: subscriptionUsage,
     parseRules: parseRules,
     ruleParts: ruleParts,
     validateRule: validateRule,
@@ -701,7 +849,11 @@ if (typeof module !== "undefined") {
     parseApiRules: parseApiRules,
     stripOwnRules: stripOwnRules,
     apiRuleType: apiRuleType,
-    configParameters: configParameters,
+    ruleQueryHost: ruleQueryHost,
+    ruleVerdict: ruleVerdict,
+    testRules: testRules,
+    ruleTargetTally: ruleTargetTally,
+    connectionFlows: connectionFlows,
     formatBytes: formatBytes,
     formatRate: formatRate,
     formatDuration: formatDuration,
