@@ -67,7 +67,8 @@ otherwise, so it is never out of sight. `Service.errorScope` records where each 
 The **configs view** is the browsed group as chips, the primary one marked with a dot, and its
 configs in one list with a latency pill and a test button each. A pill takes more of the urgent
 colour the slower the config is, and all of it on a timeout; the legend under the list says so and
-holds the whole-group test with how long ago it last ran. Only a `Selector` group can be chosen
+holds the whole-group test with how long ago it last ran. Browsing a group that is not the primary one offers a
+`make primary` button next to its name. Only a `Selector` group can be chosen
 from; the rest pick for themselves and are read-only. An empty view always says why — no active
 subscription, a stopped core, an unreachable controller, or a subscription that declares no groups.
 

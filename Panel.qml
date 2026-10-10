@@ -423,6 +423,10 @@ Panel {
   // ---------------------------------------------------------------- actions
 
   function openView(name) {
+    if (editing) {
+      editing = null
+      endEdit()
+    }
     view = name
     cursor = 0
     cursorActive = false
@@ -614,6 +618,23 @@ Panel {
     case "conn": list = connList; break
     }
     if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
+    else if (view === "settings") scrollSettingIntoView(settingItems[cursorRow.s] || null)
+  }
+
+  // Settings rows register by section, so the cursor can bring one into view
+  // when the list is taller than the popup.
+  property var settingItems: ({})
+
+  function scrollSettingIntoView(item) {
+    if (!item) return
+    Qt.callLater(function() {
+      var top = item.mapToItem(settingsFlick.contentItem, 0, 0).y
+      var bottom = top + item.height
+      var maxY = Math.max(0, settingsFlick.contentHeight - settingsFlick.height)
+      if (top < settingsFlick.contentY) settingsFlick.contentY = Math.max(0, top)
+      else if (bottom > settingsFlick.contentY + settingsFlick.height)
+        settingsFlick.contentY = Math.min(maxY, bottom - settingsFlick.height)
+    })
   }
 
   implicitWidth: button.implicitWidth
@@ -632,6 +653,22 @@ Panel {
   }
 
   onNavRowsChanged: clampCursor()
+
+  // A failed subscription shows its error on its own card, so that card is
+  // brought into view rather than leaving the message scrolled away.
+  Connections {
+    target: omihomo
+    function onErrorScopeChanged() {
+      var scope = omihomo.errorScope
+      if (root.view !== "subs" || scope.indexOf("sub:") !== 0 || scope === "sub:") return
+      for (var i = 0; i < omihomo.subscriptions.length; i++) {
+        if ("sub:" + omihomo.subscriptions[i].name !== scope) continue
+        var index = i
+        Qt.callLater(function() { subList.positionViewAtIndex(index, ListView.Contain) })
+        return
+      }
+    }
+  }
 
   Service {
     id: omihomo
@@ -995,13 +1032,25 @@ Panel {
               }
             }
 
-            SectionLine {
+            RowLayout {
               visible: root.browsedGroupEntry !== null
               Layout.fillWidth: true
-              title: root.browsedGroup.toUpperCase() + (root.browsedGroupEntry ? " · " + root.browsedGroupEntry.type.toUpperCase() : "")
-              note: root.browsedGroupEntry && !root.browsedGroupEntry.selectable ? "picks its own config"
-                : root.visibleConfigs.length + (root.browsedGroupEntry && root.visibleConfigs.length !== root.browsedGroupEntry.all.length
-                  ? " of " + root.browsedGroupEntry.all.length : "") + " configs"
+              spacing: Style.space(8)
+
+              SectionLine {
+                Layout.fillWidth: true
+                title: root.browsedGroup.toUpperCase() + (root.browsedGroupEntry ? " · " + root.browsedGroupEntry.type.toUpperCase() : "")
+                note: root.browsedGroupEntry && !root.browsedGroupEntry.selectable ? "picks its own config"
+                  : root.visibleConfigs.length + (root.browsedGroupEntry && root.visibleConfigs.length !== root.browsedGroupEntry.all.length
+                    ? " of " + root.browsedGroupEntry.all.length : "") + " configs"
+              }
+
+              SmallButton {
+                visible: root.browsedGroup !== omihomo.primaryGroup
+                text: "make primary"
+                tooltipText: "The primary group's config is the current config · p"
+                onClicked: omihomo.setPrimaryGroup(root.browsedGroup)
+              }
             }
 
             TextField {
@@ -1565,9 +1614,14 @@ Panel {
               }
 
               RowLayout {
+                id: maintenanceRow
                 Layout.fillWidth: true
                 Layout.leftMargin: Style.space(8)
                 spacing: Style.space(6)
+                Component.onCompleted: {
+                  root.settingItems["repair"] = maintenanceRow
+                  root.settingItems["uninstall"] = maintenanceRow
+                }
 
                 SmallButton {
                   visible: !omihomo.permissionsOk
@@ -2639,6 +2693,7 @@ Panel {
 
     implicitHeight: settingColumn.implicitHeight + Style.space(12)
     onActivated: if (settingRow.modeControl) root.cycleMode(1)
+    Component.onCompleted: root.settingItems[settingRow.section] = settingRow
 
     RowLayout {
       anchors.fill: parent
