@@ -397,6 +397,38 @@ test_runtime_routes_global_through_the_primary_group() {
   assert_eq "$(yq -r '.mode' "$runtime")" global
 }
 
+# The core runs as root, so a subscription must not open its own way to
+# control it, such as a unix socket mihomo serves without the secret.
+test_a_subscription_cannot_open_its_own_controller() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'external-controller-unix: /tmp/open.sock\nexternal-controller-tls: 0.0.0.0:9443\nexternal-ui-url: https://example.test/ui.zip\nsecret: chosen\nproxies:\n  - name: Tokyo\n    type: direct'
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -r '[keys[] | select(test("^external-|-providers$"))] | join(",")' "$runtime")" external-controller
+  [[ $(yq -r '.secret' "$runtime") != chosen ]] || fail "the subscription chose the controller secret"
+}
+
+# Downloads land where mihomo picks, so a subscription cannot aim them at
+# Omihomo's own state, and it cannot have the root core set the system clock.
+test_a_subscription_cannot_aim_downloads_or_set_the_clock() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'ntp:\n  enable: true\n  write-to-system: true\n  server: ntp.example.test\nproxy-providers:\n  remote:\n    type: http\n    url: https://example.test/p\n    path: ./override.yaml\n  local:\n    type: file\n    path: ./providers/local.yaml\nrule-providers:\n  ads:\n    type: http\n    behavior: domain\n    url: https://example.test/r\n    path: ./runtime.yaml\nproxies:\n  - name: Tokyo\n    type: direct'
+
+  run_cli sub add https://example.test/subscription/work
+  run_cli sub activate work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -r '."proxy-providers".remote | has("path")' "$runtime")" false
+  assert_eq "$(yq -r '."rule-providers".ads | has("path")' "$runtime")" false
+  assert_eq "$(yq -r '."proxy-providers".local.path' "$runtime")" ./providers/local.yaml
+  assert_eq "$(yq -r 'has("ntp")' "$runtime")" false
+}
+
 test_global_mode_requires_a_subscription_group() {
   setup_test
   trap teardown_test RETURN
@@ -593,6 +625,8 @@ test_status_reports_whether_the_core_can_run_tun() {
   assert_eq "$(run_cli status | jq -r '.permissions_ok')" false
   export OMIHOMO_TEST_PERMISSIONS=yes
   assert_eq "$(run_cli status | jq -r '.permissions_ok')" true
+  export OMIHOMO_TEST_PERMISSIONS=world
+  assert_eq "$(run_cli status | jq -r '.permissions_ok')" false
 }
 
 test_status_reports_degraded_when_tun_device_is_missing() {
@@ -1502,6 +1536,8 @@ tests=(
   test_subscription_fetch_failure_uses_exit_code_21
   test_activation_merges_override_and_reloads_active_core
   test_runtime_routes_global_through_the_primary_group
+  test_a_subscription_cannot_open_its_own_controller
+  test_a_subscription_cannot_aim_downloads_or_set_the_clock
   test_global_mode_requires_a_subscription_group
   test_global_cannot_be_set_as_primary
   test_active_update_reloads_without_restarting_the_unit

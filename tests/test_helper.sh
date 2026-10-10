@@ -264,6 +264,8 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ ${OMIHOMO_TEST_PERMISSIONS:-no} == yes ]]; then
+  printf '0 0 4750\n'
+elif [[ ${OMIHOMO_TEST_PERMISSIONS:-no} == world ]]; then
   printf '0 0 6755\n'
 else
   printf '1000 1000 755\n'

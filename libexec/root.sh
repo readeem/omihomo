@@ -6,8 +6,15 @@ hook=/usr/share/libalpm/hooks/omihomo-permissions.hook
 # ADR-0002 granted file capabilities instead. Installs from that era still have
 # its hook and its xattr on the binary, so every grant path clears both.
 legacy_hook=/usr/share/libalpm/hooks/omihomo-capabilities.hook
-# setuid plus setgid root, which is what Koala Clash's packaging applies.
-mode=6755
+# setuid root, executable only by root and by the one account that installed
+# Omihomo: no other local account can run the core as root (ADR-0006).
+mode=4750
+
+owner=${SUDO_UID:-${PKEXEC_UID:-}}
+
+require_owner() {
+  [[ $owner =~ ^[0-9]+$ && $owner != 0 ]] || { printf 'run this through sudo or pkexec as the owning user\n' >&2; exit 1; }
+}
 
 install_hook() {
   /usr/bin/rm -f "$legacy_hook"
@@ -20,7 +27,7 @@ Target = usr/bin/mihomo
 
 [Action]
 When = PostTransaction
-Exec = /usr/bin/chmod $mode /usr/bin/mihomo
+Exec = /usr/bin/sh -c '/usr/bin/chmod $mode /usr/bin/mihomo && /usr/bin/setfacl -m u:$owner:rx /usr/bin/mihomo'
 EOF
 }
 
@@ -63,12 +70,15 @@ grant() {
   if [[ -x /usr/bin/setcap ]]; then
     /usr/bin/setcap -r "$binary" 2>/dev/null || true
   fi
+  /usr/bin/setfacl -b "$binary"
   /usr/bin/chown root:root "$binary"
   /usr/bin/chmod "$mode" "$binary"
+  /usr/bin/setfacl -m "u:$owner:rx" "$binary"
 }
 
 case ${1:-} in
   prepare)
+    require_owner
     conflict=()
     case ${2:-} in
       "") ;;
@@ -82,6 +92,7 @@ case ${1:-} in
     fi
     ;;
   repair)
+    require_owner
     binary=${2:-/usr/bin/mihomo}
     [[ $binary == /usr/bin/mihomo && -x $binary ]] || { printf 'mihomo binary not found\n' >&2; exit 1; }
     grant "$binary"
@@ -104,6 +115,7 @@ case ${1:-} in
     remove_tailscale_dropin
     reload_tailscaled || true
     if [[ -e /usr/bin/mihomo ]]; then
+      /usr/bin/setfacl -b /usr/bin/mihomo || true
       /usr/bin/chmod 755 /usr/bin/mihomo || true
       if [[ -x /usr/bin/setcap ]]; then
         /usr/bin/setcap -r /usr/bin/mihomo 2>/dev/null || true

@@ -137,8 +137,8 @@ A proxy manager needs more than a config file. This is everything Omihomo change
 | --- | --- | --- |
 | `mihomo-bin` package | AUR via `yay` | `core install` |
 | `go-yq`, `jq`, `nftables`, `curl` | pacman | `core install` |
-| setuid+setgid root on `/usr/bin/mihomo` | `chmod 6755` | `core install`, `core repair` |
-| pacman hook that reapplies those bits after a mihomo upgrade | `/usr/share/libalpm/hooks/omihomo-permissions.hook` | `core install`, `core repair` |
+| setuid root on `/usr/bin/mihomo`, executable only by you | `chmod 4750` plus an ACL for your user | `core install`, `core repair` |
+| pacman hook that reapplies both after a mihomo upgrade | `/usr/share/libalpm/hooks/omihomo-permissions.hook` | `core install`, `core repair` |
 | systemd user unit for the core | `~/.config/systemd/user/omihomo.service` | `core install` |
 | subscription refresh service and timer | `~/.config/systemd/user/omihomo-subscription-update.{service,timer}` | `core install`, first `core sync` after upgrade |
 | CLI symlink | `~/.local/bin/omihomo` | `core install` |
@@ -148,7 +148,10 @@ A proxy manager needs more than a config file. This is everything Omihomo change
 All root work lives in one file, [libexec/root.sh](libexec/root.sh), which accepts a fixed set of
 actions. It runs through `sudo` from a terminal and `pkexec` from the panel, and Omihomo installs no
 sudoers policy. mihomo runs setuid root because TUN needs it
-([ADR-0006](docs/adr/0006-tun-via-setuid-root.md)). Omihomo used file capabilities before
+([ADR-0006](docs/adr/0006-tun-via-setuid-root.md)), and only the account that installed Omihomo may
+execute it, so other local accounts cannot run it as root. A subscription's controller, NTP and download
+path settings are dropped, so it cannot control the core, overwrite Omihomo's state or set the
+clock. Omihomo used file capabilities before
 ([ADR-0002](docs/adr/0002-tun-via-file-capabilities.md)), and granting permissions still clears
 them.
 
@@ -176,7 +179,7 @@ Run `core uninstall` before removing the plugin. The uninstall verb lives in the
 so removing the plugin first leaves the unit and the setuid bits behind.
 
 `core uninstall` stops and deletes the core unit and the subscription refresh units, drops the
-setuid bits and the pacman hook, removes the tailscaled drop-in and the `~/.local/bin/omihomo`
+setuid bit, the ACL and the pacman hook, removes the tailscaled drop-in and the `~/.local/bin/omihomo`
 symlink, uninstalls `mihomo-bin`, and deletes `~/.local/share/omihomo`. It leaves `go-yq`, `jq`,
 `nftables`, and `curl` installed, since other software probably uses them.
 

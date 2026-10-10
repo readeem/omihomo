@@ -62,7 +62,9 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Commons.Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Commons.Color.accent) : "transparent"
-  readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)
+  readonly property bool needsRepair: omihomo.installed && !omihomo.permissionsOk
+  readonly property color barIconColor: needsRepair ? urgent
+    : (omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55))
 
   // The plugin invokes its own CLI by absolute path, derived from where this
   // file sits — no PATH lookup, so a stale copy can never be picked up.
@@ -872,9 +874,9 @@ Panel {
             visible: !omihomo.permissionsOk
             section: "repair"
             title: "Repair permissions"
-            subtitle: "The mihomo binary is missing the root permissions TUN needs."
+            subtitle: "The mihomo binary is missing the root permissions TUN needs, or other accounts can run it as root."
             trailing: "R"
-            urgentTrailing: omihomo.coreState === "degraded"
+            urgentTrailing: true
             onActivated: omihomo.repairCore()
           }
 
@@ -1231,8 +1233,8 @@ Panel {
         //
         // The panel ends on one line: the two pieces of state that are changed
         // in place on the left, the three views that own everything else on the
-        // right. Repair lives in the manage view, so a degraded core is surfaced
-        // on the cell that leads there.
+        // right. Repair lives in the manage view, so a degraded core or one that
+        // needs repair is surfaced on the cell that leads there.
 
         Column {
           id: controlFooter
@@ -1289,8 +1291,8 @@ Panel {
               section: "manage"
               value: "manage"
               labelFirst: false
-              urgentValue: omihomo.coreState === "degraded"
-              tooltip: omihomo.coreState === "degraded" ? "Needs repair · M" : "Manage · M"
+              urgentValue: omihomo.coreState === "degraded" || root.needsRepair
+              tooltip: urgentValue ? "Needs repair · M" : "Manage · M"
               onActivated: root.openManage()
             }
           }
