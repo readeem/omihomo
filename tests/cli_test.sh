@@ -56,6 +56,23 @@ test_first_subscription_added_becomes_active() {
   assert_eq "$(jq -r '[.[] | select(.active) | .name] | join(",")' <<<"$output")" work
 }
 
+test_state_is_private_to_its_owner() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  local data="$XDG_DATA_HOME/omihomo"
+
+  (umask 022 && run_cli sub add https://example.test/subscription/work)
+  assert_eq "$(/usr/bin/stat -c %a "$data")" 700
+  assert_eq "$(/usr/bin/stat -c %a "$data/override.yaml")" 600
+
+  chmod 755 "$data"
+  chmod 644 "$data/override.yaml"
+  (umask 022 && run_cli set mode rule)
+  assert_eq "$(/usr/bin/stat -c %a "$data")" 700
+  assert_eq "$(/usr/bin/stat -c %a "$data/override.yaml")" 600
+}
+
 # The subscription server picks the format from the User-Agent: an unrecognised
 # client is answered with a base64 share-link list that `mihomo -t` rejects.
 test_subscription_fetch_asks_as_a_clash_client() {
@@ -1467,6 +1484,7 @@ tests=(
   test_cli_runs_through_the_installed_symlink
   test_subscription_add_and_list_are_flat_json
   test_first_subscription_added_becomes_active
+  test_state_is_private_to_its_owner
   test_subscription_fetch_asks_as_a_clash_client
   test_subscription_takes_its_name_from_the_server
   test_unsafe_and_missing_titles_still_produce_a_usable_name

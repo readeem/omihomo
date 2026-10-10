@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+# The data directory holds the controller secret and subscription URLs.
+umask 077
 
 OMIHOMO_ROOT=${OMIHOMO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 DATA_HOME=${XDG_DATA_HOME:-${HOME}/.local/share}
@@ -63,6 +65,9 @@ OMIHOMO_DEFAULT_NAMESERVERS=(https://1.1.1.1/dns-query https://1.0.0.1/dns-query
 
 omi_init_layout() {
   mkdir -p "$OMIHOMO_DATA_DIR" "$OMIHOMO_CACHE_DIR" "$(dirname "$OMIHOMO_UNIT_FILE")"
+  # Older installs left state readable by others. The setuid core's root-owned
+  # files stay as they are, private behind the 0700 directory.
+  find "$OMIHOMO_DATA_DIR" -user "$(id -u)" -perm /077 -exec chmod go= -- {} +
   if [[ ! -f $OMIHOMO_SUBSCRIPTIONS_FILE ]]; then
     printf '[]\n' >"$OMIHOMO_SUBSCRIPTIONS_FILE"
   fi
