@@ -52,7 +52,7 @@ the popup. Top to bottom it carries:
    switch for the core. On the configs and subscriptions views it adds the current rates, a graph of
    the last minute of `/traffic`, and a readout of uptime, egress IP, and latency. Egress is the
    only field that costs a network call, so it is fetched on panel open, on a config, group, or
-   subscription change, and on a click — never on a timer. It always goes through the core's mixed
+   subscription change, and on a click on egress or latency — never on a timer. It always goes through the core's mixed
    port. The other views fold the header into one line to leave room for their lists.
 2. **Tabs** — Configs, Subs, Rules, and Conns, each with its key and a count, and a gear for the
    settings view. The Subs tab shows `!` while a subscription action has failed.
@@ -132,8 +132,8 @@ default; turning it off is the repair for a core that reports
 core is degraded. Autostart is `systemctl --user enable` behind `omihomo core autostart`, reported
 back by `status`. Repair stays in-panel because it is one privileged call with no build, and from
 the panel that call is a `pkexec` dialog. A core whose root permissions are missing, or still open
-to other accounts as installs before the owner-only grant left them, turns the gear and the bar
-icon urgent and puts a notice under the header on every other view; clicking it opens settings.
+to other accounts as installs before the owner-only grant left them, turns the gear urgent, puts
+an urgent dot on the bar icon, and puts a notice under the header on every other view; clicking it opens settings.
 All three clear on the first status read after the repair. Uninstall hands
 the removal to `omarchy-launch-floating-terminal-with-presentation`, because package removal needs
 sudo. It arms on the first activation and only runs on the second, because it also deletes the

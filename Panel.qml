@@ -54,8 +54,7 @@ Panel {
   readonly property real controlRadius: Math.min(Style.cornerRadius, Style.space(7))
   readonly property real cardRadius: Math.min(Style.cornerRadius, Style.space(10))
   readonly property bool needsRepair: omihomo.installed && !omihomo.permissionsOk
-  readonly property color barIconColor: needsRepair ? urgent
-    : (omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55))
+  readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)
 
   readonly property string pluginDir: decodeURIComponent(String(Qt.resolvedUrl(".")).replace(/^file:\/\//, ""))
   readonly property string cliPath: pluginDir + "bin/omihomo"
@@ -700,6 +699,7 @@ Panel {
           iconSize: Style.space(11)
           color: root.barIconColor
           crossed: omihomo.installed && !omihomo.coreActive
+          alertColor: root.needsRepair ? root.urgent : "transparent"
         }
       }
     }
@@ -885,7 +885,14 @@ Panel {
               tooltip: "Check again · r"
               onActivated: omihomo.refreshTrace()
             }
-            Readout { Layout.horizontalStretchFactor: 1; label: "LATENCY"; value: root.latencyText }
+            Readout {
+              Layout.horizontalStretchFactor: 1
+              label: "LATENCY"
+              value: root.latencyText
+              faded: omihomo.traceFailed && !omihomo.traceTesting
+              tooltip: "Check again · r"
+              onActivated: omihomo.refreshTrace()
+            }
           }
         }
 

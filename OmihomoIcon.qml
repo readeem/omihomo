@@ -13,6 +13,8 @@ Canvas {
   property color color: Commons.Color.foreground
   // The core is installed but not running.
   property bool crossed: false
+  // Something needs the user's attention; shown as a dot in this colour.
+  property color alertColor: "transparent"
 
   width: iconSize
   height: iconSize
@@ -24,6 +26,7 @@ Canvas {
 
   onColorChanged: requestPaint()
   onCrossedChanged: requestPaint()
+  onAlertColorChanged: requestPaint()
   onWidthChanged: requestPaint()
   onVisibleChanged: if (visible) requestPaint()
 
@@ -44,17 +47,30 @@ Canvas {
     ctx.moveTo(c - r, c)
     ctx.lineTo(c + r, c)
     ctx.stroke()
-    if (!crossed) return
-    var bar = Math.max(2, width * 0.13)
-    var reach = c - bar / 2
-    ctx.beginPath()
-    ctx.moveTo(c - reach, c + reach)
-    ctx.lineTo(c + reach, c - reach)
-    ctx.globalCompositeOperation = "destination-out"
-    ctx.lineWidth = bar + stroke * 2
-    ctx.stroke()
-    ctx.globalCompositeOperation = "source-over"
-    ctx.lineWidth = bar
-    ctx.stroke()
+    if (crossed) {
+      var bar = Math.max(2, width * 0.13)
+      var reach = c - bar / 2
+      ctx.beginPath()
+      ctx.moveTo(c - reach, c + reach)
+      ctx.lineTo(c + reach, c - reach)
+      ctx.globalCompositeOperation = "destination-out"
+      ctx.lineWidth = bar + stroke * 2
+      ctx.stroke()
+      ctx.globalCompositeOperation = "source-over"
+      ctx.lineWidth = bar
+      ctx.stroke()
+    }
+    if (alertColor.a > 0) {
+      var dot = width * 0.17
+      ctx.globalCompositeOperation = "destination-out"
+      ctx.beginPath()
+      ctx.arc(width - dot, dot, dot + stroke, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalCompositeOperation = "source-over"
+      ctx.fillStyle = alertColor
+      ctx.beginPath()
+      ctx.arc(width - dot, dot, dot, 0, Math.PI * 2)
+      ctx.fill()
+    }
   }
 }
