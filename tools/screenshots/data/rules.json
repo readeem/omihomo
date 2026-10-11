@@ -1,0 +1,17 @@
+{"rules":[
+  {"type":"DomainSuffix","payload":"github.com","proxy":"Proxy"},
+  {"type":"DomainKeyword","payload":"openai","proxy":"US Only"},
+  {"type":"ProcessName","payload":"steam","proxy":"DIRECT"},
+  {"type":"IPCIDR","payload":"192.168.0.0/16","proxy":"DIRECT"},
+  {"type":"DomainSuffix","payload":"netflix.com","proxy":"Streaming"},
+  {"type":"DomainSuffix","payload":"nflxvideo.net","proxy":"Streaming"},
+  {"type":"DomainSuffix","payload":"youtube.com","proxy":"Streaming"},
+  {"type":"DomainSuffix","payload":"googlevideo.com","proxy":"Streaming"},
+  {"type":"DomainSuffix","payload":"spotify.com","proxy":"Streaming"},
+  {"type":"DomainKeyword","payload":"google","proxy":"Proxy"},
+  {"type":"DomainSuffix","payload":"telegram.org","proxy":"Proxy"},
+  {"type":"IPCIDR","payload":"10.0.0.0/8","proxy":"DIRECT"},
+  {"type":"IPCIDR","payload":"172.16.0.0/12","proxy":"DIRECT"},
+  {"type":"GeoIP","payload":"private","proxy":"DIRECT"},
+  {"type":"Match","payload":"","proxy":"Proxy"}
+]}

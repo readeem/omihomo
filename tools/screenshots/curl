@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Stands in for curl during a screenshot capture: a mihomo controller and the
+# egress check, answered from data/. Nothing leaves the machine.
+set -euo pipefail
+
+data=${OMIHOMO_SHOTS_DATA:?}
+state=${OMIHOMO_SHOTS_STATE:?}
+url=${!#}
+method=GET
+while (($#)); do
+  case $1 in
+    -H) [[ $2 != @- ]] || cat >/dev/null; shift 2 ;;
+    -X) method=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+case $method:$url in
+  GET:http://controller.test:9090/proxies) cat "$data/proxies.json" ;;
+  GET:http://controller.test:9090/configs) cat "$data/configs.json" ;;
+  GET:http://controller.test:9090/rules) cat "$data/rules.json" ;;
+  GET:http://controller.test:9090/group/Proxy/delay*) sleep 0.3; cat "$data/group-delay.json" ;;
+  GET:http://controller.test:9090/connections)
+    # The first read also lists the connections that close, so the log keeps
+    # them as closed from the second read on.
+    seen=0
+    [[ -e $state/connections-read ]] && seen=1
+    : >"$state/connections-read"
+    jq -sc --argjson now "$(date +%s)" --argjson seen "$seen" '
+      map(select($seen == 0 or (.closes | not)))
+      | { downloadTotal: 5100000000, uploadTotal: 412000000,
+          connections: map(.start = (($now - .age) | todate) | del(.age, .closes)) }
+    ' "$data/connections.jsonl"
+    ;;
+  GET:http://controller.test:9090/traffic)
+    cat "$data/traffic.jsonl"
+    # Hold the stream open like the controller does, until the shell exits.
+    while kill -0 "$PPID" 2>/dev/null; do sleep 0.5; done
+    ;;
+  GET:https://cloudflare.com/cdn-cgi/trace) printf 'ip=203.0.113.47\nloc=DE\n\n0.085\n' ;;
+  *) exit 22 ;;
+esac

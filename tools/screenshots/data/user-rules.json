@@ -1,0 +1,6 @@
+[
+  {"index":1,"kind":"prepend","rule":"DOMAIN-SUFFIX,github.com,Proxy"},
+  {"index":2,"kind":"prepend","rule":"DOMAIN-KEYWORD,openai,US Only"},
+  {"index":3,"kind":"prepend","rule":"PROCESS-NAME,steam,DIRECT"},
+  {"index":4,"kind":"prepend","rule":"IP-CIDR,192.168.0.0/16,DIRECT"}
+]

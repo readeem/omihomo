@@ -231,3 +231,31 @@ To see the widget run, start a nested Hyprland (`Hyprland -c <minimal config>`),
 `XDG_DATA_HOME`, `OMIHOMO_SYSTEMCTL`, `OMIHOMO_MIHOMO_BIN`, and `OMIHOMO_YQ`, and serve the
 controller endpoints from a local stub. That runs the real widget against a fake core without
 touching the live bar or the user's mihomo state.
+
+## Screenshots
+
+The README images are generated, never taken by hand:
+
+```sh
+tools/screenshots/capture            # rewrites preview.png and assets/screenshots/
+tools/screenshots/capture /tmp/shots # or writes them somewhere else
+```
+
+It renders the real `Panel.qml` offscreen in Quickshell at 2× and saves each view, then composes
+`preview.png` from the configs, connections, and rules views over the Tokyo Night wallpaper. Each
+view is 420×720 plus a one-pixel wallpaper edge; the preview is a 1600×900 desktop at 1.5×.
+
+Everything that could vary is pinned, so the same commit gives the same bytes:
+
+- `tools/screenshots/data/` is the invented subscription, configs, rules, connections, and
+  traffic. The fake `omihomo` and `curl` next to it answer the panel from those files, so no
+  request leaves the machine and the live core and state are never touched. Use only invented
+  names and documentation addresses (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) there.
+- `tools/screenshots/theme/` is the theme and font, read from a throwaway `HOME`. A `hyprctl`
+  stub keeps the running desktop's rounding and gaps out.
+- Times are relative to the run: uptime, update ages, and the latency test all read the same.
+
+`KeyboardPanel.qml` there replaces Omarchy's layer-shell window with the same card drawn in place,
+because offscreen Quickshell has no layer shell. The images still follow the installed Omarchy
+shell's `Commons` and `Ui`, the JetBrains Mono font, and the wallpaper from `omarchy-dev`, so
+an Omarchy update can change them.

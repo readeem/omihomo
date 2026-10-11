@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Recaptures the README screenshots from the real panel, fed fixed data.
+# Usage: tools/screenshots/capture [output-dir]   (default: the repository)
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$here/../.." && pwd)
+out=$(realpath -m "${1:-$root}")
+shell=/usr/share/omarchy/shell
+wallpaper=/usr/share/omarchy/themes/tokyo-night/backgrounds/0-winding-road.webp
+
+for need in qs jq "$shell/Commons" "$shell/Ui" "$wallpaper"; do
+  [[ -e $need ]] || command -v "$need" >/dev/null || { printf 'capture needs %s\n' "$need" >&2; exit 2; }
+done
+
+umask 077
+work=$(mktemp -d /tmp/omihomo-shots.XXXXXX)
+trap 'rm -rf -- "$work"' EXIT
+
+# A private HOME holds the theme and font, so nothing of the desktop running
+# this leaks into the images, and the fake bin directory shadows every command
+# that would reach the network, Hyprland or the real core.
+config=$work/config
+mkdir -p "$config/omihomo/bin" "$work/fakebin" "$work/state" "$work/out" \
+  "$work/home/.local/state/omarchy/current/theme" "$work/home/.config/fontconfig"
+cp "$root"/{Panel.qml,Service.qml,Model.js,OmihomoIcon.qml} "$config/omihomo/"
+cp "$here/capture.qml" "$config/shell.qml"
+cp -r "$shell/Commons" "$shell/Ui" "$config/"
+cp "$here/KeyboardPanel.qml" "$config/Ui/"
+cp "$here/omihomo" "$config/omihomo/bin/omihomo"
+cp "$here/curl" "$here/hyprctl" "$work/fakebin/"
+cp "$here"/theme/{colors.toml,shell.toml} "$work/home/.local/state/omarchy/current/theme/"
+cp "$here/theme/fonts.conf" "$work/home/.config/fontconfig/"
+
+log=$work/capture.log
+env -i PATH="$work/fakebin:/usr/bin" HOME="$work/home" TZ=UTC LANG=C.UTF-8 \
+  XDG_RUNTIME_DIR="$work" XDG_CONFIG_HOME="$work/home/.config" XDG_CACHE_HOME="$work/home/.cache" \
+  QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_SCALE_FACTOR=2 \
+  QT_QPA_PLATFORMTHEME= QT_QUICK_CONTROLS_STYLE=Fusion \
+  OMIHOMO_SHOTS_DATA="$here/data" OMIHOMO_SHOTS_STATE="$work/state" OMIHOMO_SHOTS_OUT="$work/out" \
+  OMIHOMO_SHOTS_STARTED=$(($(date +%s) - 12000)) OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
+  timeout 60s qs --no-color -p "$config" >"$log" 2>&1 || true
+
+grep -q CAPTURE_DONE "$log" || { cat "$log" >&2; printf 'capture failed\n' >&2; exit 1; }
+mkdir -p "$out/assets/screenshots"
+mv "$work/out/preview.png" "$out/"
+mv "$work"/out/*.png "$out/assets/screenshots/"
+printf 'wrote %s/preview.png and %s/assets/screenshots/\n' "$out" "$out"

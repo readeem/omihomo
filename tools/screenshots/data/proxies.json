@@ -1,0 +1,15 @@
+{"proxies":{
+  "GLOBAL":{"name":"GLOBAL","type":"Selector","now":"Proxy","all":["Proxy","Auto","Streaming","US Only","DIRECT"]},
+  "Proxy":{"name":"Proxy","type":"Selector","now":"Frankfurt 04","all":["Auto","Frankfurt 04","Amsterdam 02","London 05","Stockholm 02","New York 07","Tokyo 01","Singapore 03","DIRECT"]},
+  "Auto":{"name":"Auto","type":"URLTest","now":"Frankfurt 04","all":["Frankfurt 04","Amsterdam 02","London 05","Stockholm 02"]},
+  "Streaming":{"name":"Streaming","type":"Selector","now":"London 05","all":["London 05","Amsterdam 02","Frankfurt 04","DIRECT"]},
+  "US Only":{"name":"US Only","type":"Selector","now":"New York 07","all":["New York 07"]},
+  "DIRECT":{"name":"DIRECT","type":"Direct","history":[]},
+  "Frankfurt 04":{"name":"Frankfurt 04","type":"Vless","history":[{"delay":38}]},
+  "Amsterdam 02":{"name":"Amsterdam 02","type":"Vless","history":[{"delay":46}]},
+  "London 05":{"name":"London 05","type":"Vless","history":[{"delay":51}]},
+  "Stockholm 02":{"name":"Stockholm 02","type":"Vless","history":[{"delay":71}]},
+  "New York 07":{"name":"New York 07","type":"Vless","history":[{"delay":118}]},
+  "Tokyo 01":{"name":"Tokyo 01","type":"Vless","history":[{"delay":187}]},
+  "Singapore 03":{"name":"Singapore 03","type":"Vless","history":[]}
+}}

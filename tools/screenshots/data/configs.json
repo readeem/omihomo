@@ -1,0 +1,1 @@
+{"mode":"rule","mixed-port":7890,"tun":{"enable":true,"auto-route":true,"route-exclude-address":[]}}

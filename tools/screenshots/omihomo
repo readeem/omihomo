@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Stands in for bin/omihomo during a screenshot capture, answering from data/.
+set -euo pipefail
+
+data=${OMIHOMO_SHOTS_DATA:?}
+now=$(date +%s)
+
+case "${1:-} ${2:-}" in
+  "status "*)
+    jq -cn --arg uptime "$(date -u -d "@$OMIHOMO_SHOTS_STARTED" '+%a %Y-%m-%d %H:%M:%S UTC')" '{
+      state: "on", active_subscription: "Aerowave", primary_group: "Proxy",
+      tun_enabled: true, tun_redirect: false, autostart_enabled: true,
+      permissions_ok: true, hardening_pending: false,
+      tailscale_enabled: true, tailscale_present: true, tailnet_proxy: false,
+      uptime: $uptime
+    }'
+    ;;
+  "api-info "*) printf '{"address":"controller.test:9090","secret":"screenshot"}\n' ;;
+  "sub list")
+    jq -c --argjson now "$now" 'map(.updated_at = (($now - .updated_ago) | todate) | del(.updated_ago))' \
+      "$data/subscriptions.json"
+    ;;
+  "rule list") jq -c . "$data/user-rules.json" ;;
+  "rule injected") printf '[]\n' ;;
+  "core sync") ;;
+  *) printf '{"error":"not available in a screenshot capture","code":1}\n' >&2; exit 1 ;;
+esac
