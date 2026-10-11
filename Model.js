@@ -399,7 +399,7 @@ function parseConnections(raw, nowMs) {
       host: connectionHost(metadata),
       network: text(metadata.network).toUpperCase(),
       process: baseName(metadata.processPath) || text(metadata.process)
-        || (metadata.type === "Inner" ? "mihomo · internal" : ""),
+        || (metadata.type === "Inner" ? "mihomo" : ""),
       inboundType: text(metadata.type),
       sourceIP: text(metadata.sourceIP),
       sourcePort: number(metadata.sourcePort, 0),

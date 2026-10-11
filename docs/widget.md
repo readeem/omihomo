@@ -108,7 +108,7 @@ only states what is open right now, so `Service.qml` keeps its own record: every
 against the one before it, and an id that has stopped appearing is retained as a closed entry with
 the last figures it reported. The view draws open traffic as process → config flows.
 Labels use the process path or the API's process name; internal core
-connections are labeled `mihomo · internal`. For unidentified TUN traffic, a local socket lookup
+connections are labeled `mihomo`. For unidentified TUN traffic, a local socket lookup
 fills a name only when the source address is local and exactly one matching socket has an owner
 visible to the current account. Ambiguous and forwarded traffic remains unidentified. Each flow
 is as thick as the bytes it carried, with the pair under the cursor lit; past six processes or four configs the

@@ -225,7 +225,7 @@ test("connection labels use the API name and identify internal traffic", () => {
     { id: "internal", metadata: { type: "Inner" } }
   ])).items
   assert.equal(items[0].process, "firefox")
-  assert.equal(items[1].process, "mihomo · internal")
+  assert.equal(items[1].process, "mihomo")
 })
 
 test("socket lookup identifies only unambiguous local connections", () => {
