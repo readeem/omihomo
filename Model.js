@@ -830,6 +830,15 @@ function filterNames(names, query) {
   return out
 }
 
+var LEADING_EMOJI = /^((?:\uD83C[\uDDE6-\uDDFF]){2}|(?:\uD83C[\uDF00-\uDFFF]|\uD83D[\uDC00-\uDEFF]|\uD83E[\uDD00-\uDEFF]|[\u2600-\u27BF])\uFE0F?)\s+/
+
+// Splits a leading flag or emoji, and the space after it, off a name.
+function leadingEmoji(name) {
+  var s = text(name)
+  var m = LEADING_EMOJI.exec(s)
+  return m ? { mark: m[1], rest: s.slice(m[0].length) } : { mark: "", rest: s }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     RULE_TYPES: RULE_TYPES,
@@ -884,6 +893,7 @@ if (typeof module !== "undefined") {
     relativeSince: relativeSince,
     parseUnitTimestamp: parseUnitTimestamp,
     nextMode: nextMode,
-    filterNames: filterNames
+    filterNames: filterNames,
+    leadingEmoji: leadingEmoji
   }
 }

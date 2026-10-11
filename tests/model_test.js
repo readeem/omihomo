@@ -386,3 +386,11 @@ test("mode cycles through mihomo's three modes", () => {
   // An unknown mode lands on the first, rather than skipping past it.
   assert.equal(Model.nextMode(""), "rule")
 })
+
+test("a leading flag or emoji splits off a name with its space", () => {
+  assert.deepEqual(Model.leadingEmoji("🇩🇪 Германия #1-3 🚀"), { mark: "🇩🇪", rest: "Германия #1-3 🚀" })
+  assert.deepEqual(Model.leadingEmoji("🚀  Fast"), { mark: "🚀", rest: "Fast" })
+  assert.deepEqual(Model.leadingEmoji("☁️ Cloud"), { mark: "☁️", rest: "Cloud" })
+  assert.deepEqual(Model.leadingEmoji("🇩🇪Германия"), { mark: "", rest: "🇩🇪Германия" })
+  assert.deepEqual(Model.leadingEmoji("DIRECT"), { mark: "", rest: "DIRECT" })
+})

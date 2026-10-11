@@ -1686,7 +1686,7 @@ Panel {
     property bool pendingChoice: false
     property color restFill: "transparent"
     readonly property alias hovered: navMouse.containsMouse
-    readonly property color fadeFill: current ? Util.alpha(root.accent, hasCursor ? 0.3 : 0.2)
+    readonly property color fadeFill: current ? Util.alpha(root.accent, hasCursor ? 0.4 : 0.28)
       : (pendingChoice ? Util.alpha(root.accent, hasCursor ? 0.16 : 0.08) : Util.alpha(root.foreground, 0.1))
 
     signal activated()
@@ -1760,6 +1760,43 @@ Panel {
     renderType: Text.NativeRendering
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
+  }
+
+  component NameText: RowLayout {
+    id: name
+
+    property string text: ""
+    property color color: root.foreground
+    property int pixelSize: Style.font.bodySmall
+    property bool bold: false
+    readonly property var parts: Model.leadingEmoji(text)
+
+    spacing: markSlot.advanceWidth / 2
+
+    TextMetrics {
+      id: markSlot
+      font.family: root.fontFamily
+      font.pixelSize: name.pixelSize
+      text: "MM"
+    }
+
+    PanelText {
+      visible: name.parts.mark !== ""
+      Layout.minimumWidth: markSlot.advanceWidth
+      Layout.maximumWidth: markSlot.advanceWidth
+      text: name.parts.mark
+      color: name.color
+      font.pixelSize: name.pixelSize
+    }
+    PanelText {
+      id: nameRest
+      Layout.fillWidth: true
+      text: name.parts.rest
+      color: name.color
+      font.pixelSize: name.pixelSize
+      font.bold: name.bold
+      elide: Text.ElideRight
+    }
   }
 
   component SmallButton: Button {
@@ -1886,27 +1923,19 @@ Panel {
     property bool pill: true
     property real maxWidth: Style.space(110)
 
-    implicitWidth: Math.min(tagMetrics.advanceWidth, maxWidth) + Style.space(10)
+    implicitWidth: Math.min(tagText.implicitWidth, maxWidth) + Style.space(10)
     implicitHeight: tagText.implicitHeight + Style.space(2)
     radius: pill ? (Style.cornerRadius > 0 ? height / 2 : 0) : Math.min(root.controlRadius, Style.space(4))
     color: filled ? tint : "transparent"
     border.width: 1
     border.color: Util.alpha(tint, strong ? 0.9 : 0.35)
 
-    TextMetrics {
-      id: tagMetrics
-      text: tag.text
-      font: tagText.font
-    }
-
-    PanelText {
+    NameText {
       id: tagText
       anchors.centerIn: parent
-      width: Math.min(tagMetrics.advanceWidth, tag.maxWidth)
+      width: Math.min(implicitWidth, tag.maxWidth)
       text: tag.text
       color: tag.filled ? root.surface : tag.tint
-      elide: Text.ElideRight
-      horizontalAlignment: Text.AlignHCenter
     }
   }
 
@@ -2300,8 +2329,8 @@ Panel {
     implicitWidth: chipRow.implicitWidth + Style.space(20)
     implicitHeight: chipRow.implicitHeight + Style.space(8)
     radius: Style.cornerRadius > 0 ? height / 2 : 0
-    color: current ? root.foreground : (hasCursor ? root.hoverFill : "transparent")
-    borderSpec: Border.flat(hasCursor ? root.accent : (current ? root.foreground : root.outline), hasCursor ? 2 : 1)
+    color: current ? root.accent : (hasCursor ? root.hoverFill : "transparent")
+    borderSpec: Border.flat(hasCursor ? (current ? root.foreground : root.accent) : (current ? root.accent : root.outline), hasCursor ? 2 : 1)
     onActivated: root.browseGroupAt(chip.rowIndex)
 
     Row {
@@ -2321,7 +2350,7 @@ Panel {
         width: Style.space(5)
         height: width
         radius: width / 2
-        color: root.accent
+        color: chip.current ? root.surface : root.accent
       }
     }
 
@@ -2360,13 +2389,11 @@ Panel {
       anchors.rightMargin: Style.space(4)
       spacing: Style.space(8)
 
-      PanelText {
+      NameText {
         Layout.fillWidth: true
         text: configRow.configName
-        color: root.foreground
-        font.pixelSize: Style.font.body
-        font.bold: configRow.selected
-        elide: Text.ElideRight
+        pixelSize: Style.font.body
+        bold: configRow.selected
       }
       Rectangle {
         id: pill

@@ -65,7 +65,9 @@ under the rule form, in the settings list — whenever that is on screen, and un
 otherwise, so it is never out of sight. `Service.errorScope` records where each one belongs.
 
 The **configs view** is the browsed group as chips, the primary one marked with a dot, and its
-configs in one list with a latency pill and a test button each. The chosen config's row fades
+configs in one list with a latency pill and a test button each. A leading flag or emoji is drawn in a slot
+of its own two cells wide, because Qt sometimes lays a colour emoji out narrower once the popup has
+reopened, which glued it to the name. The chosen config's row fades
 from the accent colour, and a choice still waiting for the core fades more faintly. A pill takes
 more of the urgent colour the closer it is to the group's slowest measured delay, none at its
 fastest, and all of it on a timeout; the legend under the list says so and holds the whole-group test with how long ago it last ran. Browsing a group that is not the primary one offers a
