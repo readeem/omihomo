@@ -12,6 +12,13 @@ mode=4750
 
 owner=${SUDO_UID:-${PKEXEC_UID:-}}
 
+# The one grant, run by repair and by the pacman hook after every upgrade. It
+# drops the setuid bit first and sets it last, so a step that fails leaves a
+# core nobody runs as root rather than one others can. lib/common.sh checks the
+# hook for grant_version, so bumping it sends existing installs to repair.
+grant_version=2
+grant_command="/usr/bin/chmod 0750 /usr/bin/mihomo && /usr/bin/setfacl -b /usr/bin/mihomo && /usr/bin/chown root:root /usr/bin/mihomo && /usr/bin/setfacl -m u:$owner:rx /usr/bin/mihomo && /usr/bin/chmod $mode /usr/bin/mihomo"
+
 require_owner() {
   [[ $owner =~ ^[0-9]+$ && $owner != 0 ]] || { printf 'run this through sudo or pkexec as the owning user\n' >&2; exit 1; }
 }
@@ -19,6 +26,7 @@ require_owner() {
 install_hook() {
   /usr/bin/rm -f "$legacy_hook"
   /usr/bin/install -Dm644 /dev/stdin "$hook" <<EOF
+# omihomo grant $grant_version
 [Trigger]
 Operation = Install
 Operation = Upgrade
@@ -27,7 +35,7 @@ Target = usr/bin/mihomo
 
 [Action]
 When = PostTransaction
-Exec = /usr/bin/sh -c '/usr/bin/chmod $mode /usr/bin/mihomo && /usr/bin/setfacl -m u:$owner:rx /usr/bin/mihomo'
+Exec = /usr/bin/sh -c '$grant_command'
 EOF
 }
 
@@ -66,14 +74,10 @@ reload_tailscaled() {
 # A binary that carries file capabilities computes its privileges from them
 # rather than from the setuid bit, so they go before the bits go on.
 grant() {
-  local binary=$1
   if [[ -x /usr/bin/setcap ]]; then
-    /usr/bin/setcap -r "$binary" 2>/dev/null || true
+    /usr/bin/setcap -r /usr/bin/mihomo 2>/dev/null || true
   fi
-  /usr/bin/setfacl -b "$binary"
-  /usr/bin/chown root:root "$binary"
-  /usr/bin/chmod "$mode" "$binary"
-  /usr/bin/setfacl -m "u:$owner:rx" "$binary"
+  /usr/bin/sh -c "$grant_command"
 }
 
 case ${1:-} in
@@ -87,15 +91,14 @@ case ${1:-} in
     esac
     /usr/bin/pacman -S --needed --noconfirm "${conflict[@]}" go-yq jq nftables curl
     install_hook
-    if [[ -x /usr/bin/mihomo ]]; then
-      grant /usr/bin/mihomo
+    if [[ -e /usr/bin/mihomo ]]; then
+      grant
     fi
     ;;
   repair)
     require_owner
-    binary=${2:-/usr/bin/mihomo}
-    [[ $binary == /usr/bin/mihomo && -x $binary ]] || { printf 'mihomo binary not found\n' >&2; exit 1; }
-    grant "$binary"
+    [[ ${2:-/usr/bin/mihomo} == /usr/bin/mihomo && -e /usr/bin/mihomo ]] || { printf 'mihomo binary not found\n' >&2; exit 1; }
+    grant
     install_hook
     ;;
   tailscale)

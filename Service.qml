@@ -34,6 +34,8 @@ Item {
   property bool tunRedirect: false
   property bool autostartEnabled: false
   property bool permissionsOk: false
+  property bool hardeningPending: false
+  property int _syncAttempts: 0
   property bool tailscaleEnabled: false
   // Whether tailscaled is on this machine at all. The panel hides the row
   // rather than offering a toggle that can only fail.
@@ -171,7 +173,7 @@ Item {
   }
 
   function apiArgs(method, path, body) {
-    var args = ["curl", "-fsS", "--max-time", "6", "-H", "@-"]
+    var args = ["curl", "-fsS", "--max-time", "6", "--max-filesize", "16M", "-H", "@-"]
     if (method !== "GET") args.push("-X", method)
     if (body !== undefined && body !== "") args.push("-H", "Content-Type: application/json", "--data", body)
     args.push("http://" + apiAddress + path)
@@ -268,7 +270,7 @@ Item {
       return
     }
     _traceQueued = false
-    if (!traceCmd.relaunch(["curl", "-fsS", "--max-time", "8", "-w", "\n%{time_total}",
+    if (!traceCmd.relaunch(["curl", "-fsS", "--max-time", "8", "--max-filesize", "64K", "-w", "\n%{time_total}",
       "-x", "http://127.0.0.1:" + mixedPort, "https://cloudflare.com/cdn-cgi/trace"]))
       traceTesting = false
   }
@@ -304,6 +306,7 @@ Item {
     tunRedirect = status.tunRedirect
     autostartEnabled = status.autostartEnabled
     permissionsOk = status.permissionsOk
+    hardeningPending = status.hardeningPending
     tailscaleEnabled = status.tailscaleEnabled
     tailscalePresent = status.tailscalePresent
     tailnetProxy = status.tailnetProxy
@@ -406,8 +409,8 @@ Item {
   }
 
   function repairCore() {
-    if (permissionsOk) return
-    runCore(["core", "repair"], "Repairing permissions…", "repair")
+    if (permissionsOk && !hardeningPending) return
+    runCore(["core", "repair"], "Repairing…", "repair")
   }
 
   // Autostart is systemd's `enable`, so it goes through the CLI like the rest
@@ -517,7 +520,8 @@ Item {
     if (subActionCmd.running) return
     _subTarget = ""
     reportDone("Fetching subscription…")
-    subActionCmd.launch(cli(["sub", "add", url]))
+    subActionCmd.input = url + "\n"
+    if (!subActionCmd.launch(cli(["sub", "add"]))) subActionCmd.input = ""
   }
 
   function updateSubscription(name) {
@@ -721,7 +725,22 @@ Item {
 
   Cmd {
     id: syncCmd
-    onFinished: root.refresh(true)
+    onFinished: function(code, out, err) {
+      if (code !== 0) {
+        root.reportError(code, err, "core")
+        if (root._syncAttempts < 3) syncRetry.restart()
+      }
+      root.refresh(true)
+    }
+  }
+
+  Timer {
+    id: syncRetry
+    interval: 30000
+    onTriggered: {
+      root._syncAttempts += 1
+      syncCmd.launch(root.cli(["core", "sync"]))
+    }
   }
 
   Cmd {
@@ -912,6 +931,7 @@ Item {
   Cmd {
     id: subActionCmd
     onFinished: function(code, out, err) {
+      input = ""
       root.pendingSubscription = ""
       if (code !== 0) root.reportError(code, err, "sub:" + root._subTarget)
       else root.reportDone("")

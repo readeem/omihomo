@@ -53,7 +53,8 @@ Panel {
   readonly property color outline: Util.alpha(foreground, 0.22)
   readonly property real controlRadius: Math.min(Style.cornerRadius, Style.space(7))
   readonly property real cardRadius: Math.min(Style.cornerRadius, Style.space(10))
-  readonly property bool needsRepair: omihomo.installed && !omihomo.permissionsOk
+  readonly property bool needsRepair: omihomo.installed && (!omihomo.permissionsOk || omihomo.hardeningPending)
+  readonly property string repairLabel: omihomo.permissionsOk ? "apply security update" : "repair permissions"
   readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)
 
   readonly property string pluginDir: decodeURIComponent(String(Qt.resolvedUrl(".")).replace(/^file:\/\//, ""))
@@ -147,7 +148,7 @@ Panel {
   readonly property bool headerError: omihomo.lastError !== "" && !errorInView
   readonly property bool repairNotice: needsRepair && view !== "settings" && !headerError && omihomo.actionStatus === ""
   readonly property string headerMessage: headerError ? omihomo.lastError
-    : (repairNotice ? "mihomo's root permissions need repair · R" : omihomo.actionStatus)
+    : (repairNotice ? (omihomo.permissionsOk ? "mihomo needs a security update · R" : "mihomo's root permissions need repair · R") : omihomo.actionStatus)
   readonly property bool subscriptionFailed: omihomo.lastError !== "" && omihomo.errorScope.indexOf("sub:") === 0
 
   function css(c) {
@@ -206,7 +207,7 @@ Panel {
     case "settings":
       rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" }, { s: "autostart" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
-      if (!omihomo.permissionsOk) rows.push({ s: "repair" })
+      if (root.needsRepair) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       break
     }
@@ -1674,8 +1675,8 @@ Panel {
                   PanelText {
                     Layout.fillWidth: true
                     Layout.leftMargin: Style.space(8)
-                    text: "core " + Model.stateLabel(omihomo.coreState).toLowerCase() + " · " + (omihomo.permissionsOk ? "root grant owner-only" : "missing root permissions, or open to other accounts")
-                    color: omihomo.permissionsOk ? root.dim : root.urgent
+                    text: "core " + Model.stateLabel(omihomo.coreState).toLowerCase() + " · " + (!omihomo.permissionsOk ? "missing root permissions, or open to other accounts" : (omihomo.hardeningPending ? "running core predates the current security rules" : "root grant owner-only"))
+                    color: root.needsRepair ? root.urgent : root.dim
                     wrapMode: Text.WordWrap
                   }
 
@@ -1690,11 +1691,11 @@ Panel {
                     }
 
                     SmallButton {
-                      text: omihomo.permissionsOk ? "✓ permissions ok" : "repair permissions"
-                      iconText: omihomo.permissionsOk ? "" : "󰑐"
-                      enabled: !omihomo.permissionsOk
-                      tooltipText: "Repair permissions · R"
-                      foreground: omihomo.permissionsOk ? root.foreground : root.urgent
+                      text: root.needsRepair ? root.repairLabel : "✓ permissions ok"
+                      iconText: root.needsRepair ? "󰑐" : ""
+                      enabled: root.needsRepair
+                      tooltipText: "Repair · R"
+                      foreground: root.needsRepair ? root.urgent : root.foreground
                       hasCursor: root.at("repair")
                       onHovered: function(on) { if (on) root.focusRow("repair") }
                       onClicked: omihomo.repairCore()
@@ -1844,6 +1845,7 @@ Panel {
 
   component PanelText: Text {
     renderType: Text.NativeRendering
+    textFormat: Text.PlainText
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
   }

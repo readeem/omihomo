@@ -127,7 +127,7 @@ systemctl --user enable --now omihomo-subscription-update.timer
 
 <br>
 
-A subscription without an inbound gets `mixed-port: 7890`. Omihomo sets DNS to `redir-host` mode,
+The core listens on `mixed-port: 7890` on loopback; a subscription cannot open ports or listeners. Omihomo sets DNS to `redir-host` mode,
 with Cloudflare DNS-over-HTTPS through the primary proxy group. Proxy-server and DNS-server
 hostnames resolve through direct Cloudflare DoH, so connecting to the proxy never depends on the
 proxy itself. Resolver settings and DNS modes you set in `override.yaml` take precedence.
@@ -155,9 +155,10 @@ All root work lives in one file, [libexec/root.sh](libexec/root.sh), which accep
 actions. It runs through `sudo` from a terminal and `pkexec` from the panel, and Omihomo installs no
 sudoers policy. mihomo runs setuid root because TUN needs it
 ([ADR-0006](docs/adr/0006-tun-via-setuid-root.md)), and only the account that installed Omihomo may
-execute it, so other local accounts cannot run it as root. A subscription's controller, NTP and download
-path settings are dropped, so it cannot control the core, overwrite Omihomo's state or set the
-clock. Omihomo used file capabilities before
+execute it, so other local accounts cannot run it as root. A subscription contributes only proxies, groups,
+rules, providers and resolver settings, fetched over HTTPS and validated by an unprivileged copy of
+the core, so it cannot control the core, open listeners, change host networking, overwrite
+Omihomo's state or set the clock. Omihomo used file capabilities before
 ([ADR-0002](docs/adr/0002-tun-via-file-capabilities.md)), and granting permissions still clears
 them.
 

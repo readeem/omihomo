@@ -420,6 +420,14 @@ test("targets tally largest first", () => {
   assert.deepEqual(tally, [{ target: "DIRECT", count: 2 }, { target: "Proxy", count: 1 }])
 })
 
+test("remote names that shadow object prototypes stay plain data", () => {
+  const parsed = Model.parseProxies('{"proxies":{"__proto__":{"type":"Vless"}}}')
+  assert.deepEqual(Object.keys(parsed.configs), ["__proto__"])
+  assert.deepEqual(Model.ruleTargetTally([{ target: "constructor" }]), [{ target: "constructor", count: 1 }])
+  const flows = Model.connectionFlows([{ process: "constructor", chain: "DIRECT", download: 5, upload: 0, open: true }], 4, 4)
+  assert.deepEqual(flows.sources, [{ name: "constructor", bytes: 5 }])
+})
+
 test("connection flows fold the smallest nodes into other", () => {
   const stack = (process, chain, bytes, open) => ({ process, chain, download: bytes, upload: 0, open })
   const flows = Model.connectionFlows([

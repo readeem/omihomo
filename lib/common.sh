@@ -20,8 +20,19 @@ OMIHOMO_YQ=${OMIHOMO_YQ:-yq}
 OMIHOMO_CURL=${OMIHOMO_CURL:-curl}
 OMIHOMO_SYSTEMCTL=${OMIHOMO_SYSTEMCTL:-systemctl}
 OMIHOMO_STAT=${OMIHOMO_STAT:-stat}
+OMIHOMO_GETFACL=${OMIHOMO_GETFACL:-getfacl}
+OMIHOMO_HOOK_FILE=${OMIHOMO_HOOK_FILE:-/usr/share/libalpm/hooks/omihomo-permissions.hook}
 OMIHOMO_NET_DIR=${OMIHOMO_NET_DIR:-/sys/class/net}
 OMIHOMO_RELOAD_TIMEOUT=${OMIHOMO_RELOAD_TIMEOUT:-20}
+# Subscriptions and validation are hostile input, so both are bounded: a
+# download or anything a validating core writes stops at this many KiB, and a
+# validation that runs longer than this many seconds counts as a rejection.
+OMIHOMO_MAX_FILE_KB=${OMIHOMO_MAX_FILE_KB:-65536}
+OMIHOMO_VALIDATE_TIMEOUT=${OMIHOMO_VALIDATE_TIMEOUT:-60}
+# Bumped whenever sanitizing changes what a running core may keep, so the next
+# sync restarts it on a runtime built by the current rules (see core_harden).
+OMIHOMO_HARDENING=1
+OMIHOMO_HARDENED_FILE=${OMIHOMO_DATA_DIR}/hardened
 # Subscription servers content-negotiate on User-Agent. A Clash-family agent
 # usually gets a full config, which Omihomo can preserve without wrapping it.
 OMIHOMO_USER_AGENT=${OMIHOMO_USER_AGENT:-clash.meta}
@@ -73,6 +84,7 @@ omi_init_layout() {
   fi
   if [[ ! -f $OMIHOMO_OVERRIDE_FILE ]]; then
     omi_write_default_override "$OMIHOMO_OVERRIDE_FILE"
+    printf '%s\n' "$OMIHOMO_HARDENING" >"$OMIHOMO_HARDENED_FILE"
   else
     omi_backfill_override "$OMIHOMO_OVERRIDE_FILE"
   fi
@@ -313,17 +325,20 @@ omi_mihomo_bin() {
     printf '%s\n' "$OMIHOMO_MIHOMO_BIN"
     return 0
   fi
-  command -v mihomo 2>/dev/null || true
+  # A core that lost its owner's execute access is still installed, and
+  # repair is what brings it back, so it has to stay findable.
+  command -v mihomo 2>/dev/null || { [[ ! -e /usr/bin/mihomo ]] || printf '/usr/bin/mihomo\n'; }
 }
 
 omi_core_installed() {
   local binary
   binary=$(omi_mihomo_bin)
-  [[ -n $binary && -x $binary ]]
+  [[ -n $binary && -e $binary ]]
 }
 
 omi_require_core() {
-  omi_core_installed || omi_error "mihomo is not installed" 10
+  omi_core_installed || omi_error "mihomo is not installed" 10 || return $?
+  [[ -x $(omi_mihomo_bin) ]] || omi_error "mihomo cannot be executed: run omihomo core repair" 1
 }
 
 omi_tailscaled_bin() {
@@ -352,14 +367,24 @@ omi_apply_tailscale_dropin() {
 # for systemd-resolved, and only a uid 0 caller skips polkit. That is true when
 # the binary is owned by root and setuid, and this user may execute it. A core
 # that any other account can execute is a local privilege escalation, so it
-# counts as broken and surfaces as a repair action.
+# counts as broken and surfaces as a repair action. That includes an ACL entry
+# naming any account or group besides this one, and a pacman hook from an older
+# grant, which would reapply that grant on the next upgrade.
 omi_tun_permissions_ok() {
-  local binary owner group mode
+  local binary owner group mode acl entry
   binary=$(omi_mihomo_bin)
   [[ -n $binary && -x $binary ]] || return 1
   read -r owner group mode < <("$OMIHOMO_STAT" -c '%u %g %a' "$binary" 2>/dev/null) || return 1
   [[ $owner == 0 && $group == 0 ]] || return 1
-  (((8#$mode & 04000) && !(8#$mode & 01)))
+  (((8#$mode & 04000) && !(8#$mode & 01))) || return 1
+  grep -qFx '# omihomo grant 2' "$OMIHOMO_HOOK_FILE" 2>/dev/null || return 1
+  acl=$("$OMIHOMO_GETFACL" -cpn -- "$binary" 2>/dev/null) || return 1
+  while IFS= read -r entry; do
+    case $entry in
+      '' | user::* | group::* | mask::* | other::--- | "user:$(id -u):"*) ;;
+      *) return 1 ;;
+    esac
+  done <<<"$acl"
 }
 
 # Errors are machine-readable by default, because the panel parses stderr as
@@ -424,11 +449,17 @@ EOF
 [Unit]
 Description=Refresh Omihomo subscriptions after an autostarted core starts
 After=$OMIHOMO_UNIT
+StartLimitIntervalSec=900
+StartLimitBurst=4
 
 [Service]
 Type=oneshot
 ExecStart=$OMIHOMO_ROOT/bin/omihomo sub update-on-start
 TimeoutStartSec=infinity
+# Exit 12 means the core never became ready. A failed download is final.
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=1
 EOF
 }
 
@@ -500,12 +531,25 @@ omi_api_secret() {
 omi_api_curl() {
   local path=$1 address
   address=$(omi_api_address)
-  "$OMIHOMO_CURL" -fsS -H @- "${@:2}" "http://${address}${path}" <<<"Authorization: Bearer $(omi_api_secret)"
+  "$OMIHOMO_CURL" -fsS --max-filesize "${OMIHOMO_MAX_FILE_KB}K" -H @- "${@:2}" "http://${address}${path}" <<<"Authorization: Bearer $(omi_api_secret)"
 }
 
 omi_api_reachable() {
   omi_unit_active || return 1
   omi_api_curl /version --max-time 2 >/dev/null
+}
+
+omi_await_controller() {
+  local attempt
+  for attempt in {1..40}; do
+    omi_api_reachable && return 0
+    sleep 0.5
+  done
+  omi_error "mihomo controller did not come back after a restart" 12
+}
+
+omi_hardening_pending() {
+  [[ $(cat -- "$OMIHOMO_HARDENED_FILE" 2>/dev/null) != "$OMIHOMO_HARDENING" ]]
 }
 
 # Omihomo names its adapter after itself, but the runtime is the config mihomo
@@ -630,6 +674,29 @@ OMIHOMO_INJECTED_RULES_YQ='(([
     "DOMAIN-SUFFIX,tailscale.io,GLOBAL"
   ] | map(select($override.omihomo.tailscale == true))) | map(select(strenv(OMIHOMO_PRIMARY_GROUP) != "")))'
 
+# What a subscription may contribute: proxies, groups, rules, and the DNS that
+# resolves them. Everything else, listeners, ports, LAN access, the firewall,
+# tunnels, controllers, the clock and geodata sources, belongs to the override.
+# A provider downloads over HTTPS, at most OMIHOMO_MAX_FILE_KB, into a path
+# mihomo picks, or reads the payload Omihomo cached for a raw subscription.
+# Key and certificate fields, which mihomo also reads as file paths, must hold
+# inline PEM. Nothing else on disk is reachable.
+OMIHOMO_SUBSCRIPTION_YQ='with_entries(select(.key | test("^(proxies|proxy-providers|proxy-groups|rules|rule-providers|sub-rules|mode|ipv6|unified-delay|tcp-concurrent|global-client-fingerprint|keep-alive-interval|keep-alive-idle|disable-keep-alive|hosts|sniffer|dns)$"))) |
+  del(.[] | select(key == "dns" or key == "proxy-providers" or key == "rule-providers") | select(tag != "!!map")) |
+  with(select(.dns | tag == "!!map"); .dns |= with_entries(select(.key | test("^(enable|ipv6|enhanced-mode|fake-ip-range|fake-ip-filter|fake-ip-filter-mode|nameserver|fallback|fallback-filter|default-nameserver|proxy-server-nameserver|direct-nameserver|direct-nameserver-follow-policy|nameserver-policy|respect-rules|use-hosts|use-system-hosts|prefer-h3|cache-algorithm)$")))) |
+  with(.[] | select(key == "proxy-providers" or key == "rule-providers"); . |= with_entries(select(
+    (.value.type == "http" and ((.value.url // "") | test("^https://"))) or
+    (.value.type == "file" and ((.value.path // "") | test("^[.]/providers/[0-9a-f]{64}([.][[:alnum:]]{6})?[.]yaml$"))) or
+    .value.type == "inline"))) |
+  del(.["proxy-providers", "rule-providers"][] | select(.type == "http") | .path) |
+  with(.[] | select(key == "proxy-providers" or key == "rule-providers") | .[] | select(.type == "http"); ."size-limit" = (strenv(OMIHOMO_MAX_FILE_KB) | to_number) * 1024) |
+  del((.proxies, ."proxy-providers") | .. | select(tag == "!!map") | .["private-key", "certificate", "ca"] | select(tag != "!!str" or (test("-----BEGIN") | not)))'
+
+# Writes the part of a full subscription config the core may run.
+omi_sanitize_subscription() {
+  OMIHOMO_MAX_FILE_KB=$OMIHOMO_MAX_FILE_KB omi_yq eval -P "$OMIHOMO_SUBSCRIPTION_YQ" "$1" >"$2"
+}
+
 omi_merge_runtime() {
   local source=$1 override=$2 destination=$3 primary
   primary=$(omi_resolve_primary_group "$source" "$override")
@@ -643,6 +710,7 @@ omi_merge_runtime() {
   OMIHOMO_DEFAULT_NAMESERVERS_YAML=$(omi_default_nameservers_yaml) \
   OMIHOMO_PROXY_NAMESERVERS_YAML=$(omi_default_nameservers_yaml GLOBAL) \
   OMIHOMO_CONNECTIVITY_HOST=$(omi_connectivity_check_host) \
+  OMIHOMO_MAX_FILE_KB=$OMIHOMO_MAX_FILE_KB \
     omi_yq eval-all -P '
     select(fileIndex == 0) as $base |
     select(fileIndex == 1) as $override |
@@ -661,9 +729,7 @@ omi_merge_runtime() {
         "nameserver": env(OMIHOMO_PROXY_NAMESERVERS_YAML)
       }
     }) as $defaults |
-    ($base | with_entries(select(.key | test("^(external-.*|secret|ntp)$") | not)) |
-      del(.["proxy-providers", "rule-providers"][] | select(.type != "file") | .path)
-    ) as $content |
+    ($base | '"$OMIHOMO_SUBSCRIPTION_YQ"') as $content |
     ($defaults * $content * $config) as $merged |
     (($merged.rules // []) | map(select(. as $rule | ($filter | contains([$rule]) | not)))) as $base_rules |
     ($base_rules + $append) as $rest |
@@ -695,11 +761,31 @@ omi_merge_runtime() {
   ' "$source" "$override" >"$destination"
 }
 
+# A copy of the core, owned by this user and without the setuid bit, for
+# parsing anything that came from a subscription. Root never reads it first.
+omi_unprivileged_core() {
+  local directory=$1
+  cp -- "$(omi_mihomo_bin)" "$directory/mihomo" && chmod 700 "$directory/mihomo" &&
+    printf '%s\n' "$directory/mihomo"
+}
+
+# `mihomo -t` is not a pure syntax check: GEOSITE and GEOIP rules load, and
+# download, geodata while parsing. So it runs unprivileged in a private staging
+# directory that starts with the core's geodata, under a time and size bound.
 omi_validate_yaml() {
-  local file=$1 binary
+  local file=$1 directory binary data status=0
   omi_require_core || return $?
-  binary=$(omi_mihomo_bin)
-  if ! "$binary" -t -f "$file" >/dev/null 2>&1; then
+  directory=$(mktemp -d "${OMIHOMO_DATA_DIR}/.validate.XXXXXX")
+  for data in GeoSite.dat GeoIP.dat geoip.metadb country.mmdb ASN.mmdb; do
+    [[ ! -r $OMIHOMO_DATA_DIR/$data ]] || ln -s "$OMIHOMO_DATA_DIR/$data" "$directory/$data"
+  done
+  if ! binary=$(omi_unprivileged_core "$directory") ||
+    ! (ulimit -f "$OMIHOMO_MAX_FILE_KB" && timeout "$OMIHOMO_VALIDATE_TIMEOUT" \
+      "$binary" -d "$directory" -t -f "$file") >/dev/null 2>&1; then
+    status=20
+  fi
+  rm -rf -- "$directory"
+  if ((status != 0)); then
     omi_error "mihomo rejected the YAML" 20
     return 20
   fi

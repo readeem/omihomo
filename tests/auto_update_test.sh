@@ -17,7 +17,7 @@ else
 fi
 EOF
   chmod +x "$TEST_ROOT/bin/date"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
 }
 
 age_subscription() {
@@ -76,7 +76,7 @@ test_manual_refresh_resets_the_deadline() {
 test_startup_refreshes_all_subscriptions_before_their_deadlines() {
   setup_refresh_test
   trap teardown_test RETURN
-  run_cli sub add https://example.test/subscription/second
+  run_cli sub add <<<https://example.test/subscription/second
   export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_NOW=1735732860
   run_cli sub update-on-start
@@ -95,10 +95,22 @@ test_startup_skips_refresh_when_autostart_is_disabled_or_core_is_stopped() {
   assert_eq "$(fetch_count)" 1
 }
 
+# Exit 12 is the one failure the startup unit restarts on.
+test_startup_asks_to_be_retried_when_the_core_never_becomes_ready() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes OMIHOMO_TEST_API_UNREACHABLE=yes
+  export OMIHOMO_STARTUP_READY_TIMEOUT=1
+  local status=0
+  run_cli sub update-on-start 2>/dev/null || status=$?
+  assert_eq "$status" 12
+  assert_eq "$(fetch_count)" 1
+}
+
 test_startup_failure_keeps_cache_and_refreshes_other_subscriptions() {
   setup_refresh_test
   trap teardown_test RETURN
-  run_cli sub add https://example.test/subscription/second
+  run_cli sub add <<<https://example.test/subscription/second
   local cache runtime status
   cache=$(<"$XDG_DATA_HOME/omihomo/cache/work.yaml")
   runtime=$(<"$XDG_DATA_HOME/omihomo/runtime.yaml")
@@ -226,7 +238,7 @@ test_concurrent_checks_only_refresh_once() {
 test_each_subscription_has_its_own_deadline() {
   setup_refresh_test
   trap teardown_test RETURN
-  run_cli sub add https://example.test/subscription/second
+  run_cli sub add <<<https://example.test/subscription/second
   age_subscription second
   run_cli sub update-due
   assert_eq "$(fetch_count)" 3
@@ -237,7 +249,7 @@ test_each_subscription_has_its_own_deadline() {
 test_a_failed_subscription_does_not_block_other_due_updates() {
   setup_refresh_test
   trap teardown_test RETURN
-  run_cli sub add https://example.test/subscription/second
+  run_cli sub add <<<https://example.test/subscription/second
   age_subscription
   age_subscription second
   export OMIHOMO_TEST_FETCH_FAIL_URL=https://example.test/subscription/work
@@ -293,7 +305,7 @@ test_import_persists_the_provider_interval() {
   trap teardown_test RETURN
   assert_eq "$(jq -r '.[0].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 6
   export OMIHOMO_TEST_INTERVAL_HEADER=$'pRoFiLe-UpDaTe-InTeRvAl:\t 24  '
-  run_cli sub add https://example.test/subscription/second
+  run_cli sub add <<<https://example.test/subscription/second
   assert_eq "$(jq -r '.[1].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 24
   age_subscription second 2024-12-31T13:00:00Z # 23 hours old
   run_cli sub update-due
@@ -307,7 +319,7 @@ test_absent_and_invalid_intervals_default_to_twelve_hours() {
   setup_refresh_test
   trap teardown_test RETURN
   export OMIHOMO_TEST_INTERVAL_HEADER=''
-  run_cli sub add https://example.test/subscription/second
+  run_cli sub add <<<https://example.test/subscription/second
   assert_eq "$(jq -r '.[1].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 12
   local header
   for header in '' 'Profile-Update-Interval:' 'Profile-Update-Interval: 0' 'Profile-Update-Interval: -6' \
@@ -404,6 +416,7 @@ test_slow_failures_do_not_starve_the_healthy_tail() {
 tests=(
   test_startup_refreshes_all_subscriptions_before_their_deadlines
   test_startup_skips_refresh_when_autostart_is_disabled_or_core_is_stopped
+  test_startup_asks_to_be_retried_when_the_core_never_becomes_ready
   test_startup_failure_keeps_cache_and_refreshes_other_subscriptions
   test_startup_refresh_restores_connection_state
   test_elapsed_time_survives_sessions_and_refreshes_at_six_hours

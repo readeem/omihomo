@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
-  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS OMIHOMO_TEST_PUT_FAIL OMIHOMO_TEST_TUN_STUCK OMIHOMO_TEST_TUN_FAIL OMIHOMO_TEST_CONNECTIVITY_URI
+  unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS OMIHOMO_TEST_PUT_FAIL OMIHOMO_TEST_TUN_STUCK OMIHOMO_TEST_TUN_FAIL OMIHOMO_TEST_CONNECTIVITY_URI OMIHOMO_TEST_ACL_EXTRA OMIHOMO_STARTUP_READY_TIMEOUT
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
   export HOME="$TEST_ROOT/home"
@@ -15,16 +15,22 @@ setup_test() {
   export PATH="$TEST_ROOT/bin:$REAL_PATH"
   export OMIHOMO_YQ=${OMIHOMO_TEST_YQ:-yq}
   export OMIHOMO_NET_DIR="$TEST_ROOT/net"
+  export OMIHOMO_HOOK_FILE="$TEST_ROOT/omihomo-permissions.hook"
+  printf '# omihomo grant 2\n' >"$OMIHOMO_HOOK_FILE"
   mkdir -p "$HOME" "$TEST_ROOT/bin" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$OMIHOMO_NET_DIR"
 
   cat >"$TEST_ROOT/bin/mihomo" <<'EOF'
 #!/usr/bin/env bash
-if [[ ${1:-} == -t ]]; then
-  file=${3:-}
+if [[ " $* " == *" -t "* ]]; then
+  file=${*: -1}
+  # The validator is a private copy, never the installed core.
+  [[ $0 == "$TEST_ROOT/bin/mihomo" ]] && exit 1
+  cat "$file" >>"$TEST_ROOT/mihomo-validated.yaml"
   grep -q INVALID "$file" && exit 1
   exit 0
 fi
 if [[ ${1:-} == -d ]]; then
+  [[ $0 == "$TEST_ROOT/bin/mihomo" ]] && exit 1
   file=${4:-}
   cp "$file" "$TEST_ROOT/mihomo-preflight.yaml"
   provider=$(yq -r '."proxy-providers".subscription.path' "$file")
@@ -56,8 +62,16 @@ data=
 method=GET
 compressed=no
 [[ "$*" != *Bearer* ]] || exit 99
+printf '%s\n' "$*" >>"$TEST_ROOT/curl-argv.log"
 while (($#)); do
   case $1 in
+    --config)
+      url=$(sed -n 's/^url = "\(.*\)"$/\1/p')
+      url=${url//\\\"/\"}
+      url=${url//\\\\/\\}
+      shift 2
+      ;;
+    --proto|--proto-redir|--max-filesize) shift 2 ;;
     -o) output=$2; shift 2 ;;
     -A) agent=$2; shift 2 ;;
     -D) headers=$2; shift 2 ;;
@@ -272,6 +286,15 @@ else
 fi
 EOF
   chmod +x "$TEST_ROOT/bin/stat"
+
+  # The ACL read, as root.sh's grant leaves it. OMIHOMO_TEST_ACL_EXTRA adds one
+  # more entry, as a drifted install might carry.
+  cat >"$TEST_ROOT/bin/getfacl" <<'EOF'
+#!/usr/bin/env bash
+printf 'user::rwx\nuser:%s:r-x\ngroup::r-x\nmask::r-x\nother::---\n' "$(id -u)"
+[[ -z ${OMIHOMO_TEST_ACL_EXTRA:-} ]] || printf '%s\n' "$OMIHOMO_TEST_ACL_EXTRA"
+EOF
+  chmod +x "$TEST_ROOT/bin/getfacl"
 }
 
 teardown_test() {

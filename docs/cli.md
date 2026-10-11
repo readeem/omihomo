@@ -12,7 +12,7 @@ omihomo core install|repair|start|stop|restart|sync|version
 omihomo core uninstall [--keep-data]
 omihomo core autostart on|off
 
-omihomo sub add <url>
+omihomo sub add            # reads the URL from stdin
 omihomo sub list
 omihomo sub remove <name>
 omihomo sub update <name>
@@ -77,8 +77,10 @@ cannot repeatedly prevent healthy later subscriptions from being checked.
 `sub update-on-start` refreshes all subscriptions regardless of their deadlines when autostart
 is enabled and the core is running. The core unit starts a separate oneshot service ordered after
 it, so startup does not wait for downloads and a refresh failure cannot stop the core. The command
-polls the controller up to twenty times, then uses the same refresh transactions as manual
-updates. Existing installs gain the startup service on their first `core sync` after upgrading.
+waits up to two minutes for the controller, then uses the same refresh transactions as manual
+updates. A core that never becomes ready exits `12`, and the unit retries that, and only that,
+every 30 seconds, up to four times in 15 minutes. Existing installs gain the startup service on
+their first `core sync` after upgrading.
 
 When the core is already running, rule writes hot-reload its config and leave the TUN adapter in
 place. A successful write means mihomo accepted the config; it does not prove that every existing
@@ -136,7 +138,7 @@ Exit codes are:
 when they cannot be observed. The stable object includes `state`, `status`, `detail`, `ip`, `latency`,
 `download`, `upload`, `config`, `uptime`, `active_subscription`, `primary_group`,
 `tun_enabled`, `tun_redirect`, `autostart_enabled`, `permissions_ok`, `tailscale_enabled`,
-`tailscale_present`, and `tailnet_proxy`. The IP, latency, throughput, and config
+`tailscale_present`, `tailnet_proxy`, and `hardening_pending`. The IP, latency, throughput, and config
 fields are nullable because those live API values remain panel-owned per ADR-0001.
 
 ## Files
@@ -149,12 +151,15 @@ subscriptions.json       array of {name, url, updated_at, update_interval_hours,
 override.yaml            global user-owned settings and rule lists
 runtime.yaml             merged YAML loaded by mihomo
 active                   active subscription name, one line
+hardened                 version of the sanitizing rules the runtime was last rebuilt under
 .lock                    shared write lock
 ```
 
-`sub add` takes only the URL. The subscription names itself: the name is the `profile-title`
+`sub add` reads the URL from stdin, so an access token in it never appears in a process list;
+curl and jq receive it the same way. Only `https://` URLs are accepted, and a redirect cannot
+leave HTTPS. The subscription names itself: the name is the `profile-title`
 response header, base64-decoded when it carries the `base64:` prefix, falling back to the
-`content-disposition` filename and then to the URL's host. Because that name is a server's to
+`content-disposition` filename and then to the URL's host, without any credentials before it. Because that name is a server's to
 write and Omihomo uses it as both a cache filename and a CLI argument, it is stripped of path
 separators and control characters, trimmed, and capped at 64 characters; a name already taken
 gets a numeric suffix. Adding a URL that is already on the list is an error. A subscription keeps
@@ -165,9 +170,13 @@ a different one. Omihomo accepts full Mihomo YAML and raw subscription formats s
 installed Mihomo version. It does not promise support for arbitrary converter formats.
 
 A mapping with a structural Mihomo key such as `proxies`, `proxy-providers`, `proxy-groups`,
-`rules`, `rule-providers`, `dns`, or `tun` is treated as a full config and cached unchanged after
-`mihomo -t` validation. Other content is preflighted through a file-backed provider in an isolated
-temporary core. This forces Mihomo to parse raw base64 and share-link lists without fetching the
+`rules`, `rule-providers`, `dns`, or `tun` is treated as a full config. It is sanitized first (see
+below) and the sanitized result is validated with `mihomo -t` and cached. Other content is
+preflighted through a file-backed provider in an isolated temporary core. Both run a private,
+non-setuid copy of the core as your user, in a staging directory, so no hostile document reaches
+root. Validation can load geodata, so the staging directory starts with the core's geodata, and
+a validation that runs past 60 seconds or writes more than 64 MiB counts as a rejection. Downloads
+stop at the same size. This forces Mihomo to parse raw base64 and share-link lists without fetching the
 URL twice or touching the running service. Rejected content exits with code `20` and leaves no
 subscription record or cache.
 
@@ -184,7 +193,13 @@ restoration. Existing HTTP wrappers become file-backed on their next successful 
 refuses to run without one. A later `sub add` never takes the slot from the active subscription;
 `sub activate` is the way to switch.
 
-Subscriptions without an inbound get `mixed-port: 7890`; their own ports take precedence.
+A subscription is remote input to a root process, so only an allowlist of it reaches the
+runtime: proxies, proxy groups, rules and sub-rules, providers, `hosts`, `sniffer`, a few
+connection tuning keys, and the resolver parts of `dns`. Ports, listeners, LAN access, the DNS
+listener, the firewall, tunnels, controllers, the clock and geodata sources all come from the
+override. HTTP providers must use `https://` and mihomo picks their path; a file provider is kept
+only when it is Omihomo's own raw-subscription wrapper. The runtime listens on `mixed-port: 7890`
+unless the override sets another port.
 The default override uses Cloudflare DNS-over-HTTPS at `1.1.1.1` and `1.0.0.1`, explicitly routed
 through `GLOBAL`. Omihomo points that group at the primary proxy group, so ordinary DNS follows
 the selected proxy rather than leaving directly or depending on traffic rules. Selecting DIRECT
@@ -217,8 +232,17 @@ the merge this plugin ships. Every command that writes state first re-derives it
 result differs from the file on disk it is validated, loaded into a running core, and replaces the
 file. `core sync` does only that, and the panel runs it each time the shell loads the widget, which
 covers plugin updates, shell restarts, and login. Without state it writes nothing.
-Sync is silent and best effort. A failed merge, validation, or reload preserves the previous
-runtime so the next sync or state-writing command can retry.
+That re-derivation is silent and best effort. A failed merge, validation, or reload preserves the
+previous runtime so the next sync or state-writing command can retry.
+
+A reload never closes the controllers a core opened at start, so when the sanitizing rules change
+(`hardened` is older than the CLI's), `core sync`, `core start` and `core repair` rebuild the runtime
+from the cache and restart a running core on it; a stopped core stays stopped. Mode and TUN come
+from the override and `store-selected` keeps selections across the restart. Until that succeeds,
+`status` reports `hardening_pending`, the command fails with the reason, the panel shows it as a
+repair and retries sync a few times. `core sync` also rewrites the managed units when this
+checkout's path changed, keeping enable state and drop-ins, and repoints the `~/.local/bin`
+symlink at it.
 
 Subscription updates prepare the candidate cache, metadata, and active runtime in temporary files.
 An active core receives `PUT /configs?force=true` before Omihomo replaces durable state. A failed
@@ -331,7 +355,9 @@ autostart choice. `yay --sudoloop` keeps that authorization alive while it insta
 package, and the pacman hook makes the binary setuid root inside that package transaction (see
 ADR-0006). Installation is terminal-only because pacman's output and the one setup password
 prompt need somewhere to go. `core repair` is the explicit reapplication path, and it also clears
-the file capabilities left behind by installs that predate ADR-0006.
+the file capabilities left behind by installs that predate ADR-0006. It asks for authorization
+only when the grant is actually broken, works on a core its owner can no longer execute, and then
+finishes a pending hardening restart.
 
 Installation also writes and enables `omihomo-subscription-update.service` and its timer.
 Existing installations gain these units through the first `core sync` after upgrading, when

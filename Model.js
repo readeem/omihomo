@@ -22,6 +22,11 @@ function number(value, fallback) {
   return isFinite(n) ? n : (fallback === undefined ? 0 : fallback)
 }
 
+// A dictionary keyed by remote names, so a name like `__proto__` stays data.
+function dict() {
+  return Object.create(null)
+}
+
 function parseJson(raw, fallback) {
   var body = text(raw).trim()
   if (body === "") return fallback
@@ -44,6 +49,7 @@ function defaultStatus() {
     tunRedirect: false,
     autostartEnabled: false,
     permissionsOk: false,
+    hardeningPending: false,
     tailscaleEnabled: false,
     tailscalePresent: false,
     tailnetProxy: false,
@@ -65,6 +71,7 @@ function parseStatus(raw) {
     tunRedirect: data.tun_redirect === true,
     autostartEnabled: data.autostart_enabled === true,
     permissionsOk: data.permissions_ok === true,
+    hardeningPending: data.hardening_pending === true,
     tailscaleEnabled: data.tailscale_enabled === true,
     tailscalePresent: data.tailscale_present === true,
     tailnetProxy: data.tailnet_proxy === true,
@@ -239,7 +246,7 @@ function parseProxies(raw) {
   var data = parseJson(raw, null)
   var proxies = data && typeof data === "object" ? data.proxies : null
   var groups = []
-  var configs = {}
+  var configs = dict()
   if (!proxies || typeof proxies !== "object") return { groups: groups, configs: configs }
   for (var name in proxies) {
     var entry = proxies[name]
@@ -340,7 +347,7 @@ function parseDelay(raw) {
 
 function parseGroupDelay(raw) {
   var data = parseJson(raw, null)
-  var out = {}
+  var out = dict()
   if (!data || typeof data !== "object") return out
   for (var name in data) out[name] = number(data[name], 0)
   return out
@@ -458,12 +465,12 @@ function mergeConnectionLog(log, items, nowMs, cap) {
   var now = number(nowMs, Date.now())
   var previous = log && typeof log.length === "number" ? log : []
   var fresh = items && typeof items.length === "number" ? items : []
-  var incoming = {}
+  var incoming = dict()
   var i
   for (i = 0; i < fresh.length; i++) incoming[fresh[i].id] = fresh[i]
 
   var out = []
-  var kept = {}
+  var kept = dict()
   for (i = 0; i < previous.length; i++) {
     var entry = previous[i]
     var update = incoming[entry.id]
@@ -503,7 +510,7 @@ function trimClosedConnections(log, limit) {
   for (i = 0; i < log.length; i++) if (!log[i].open) closed.push(log[i])
   if (closed.length <= limit) return log
   closed.sort(function(a, b) { return b.closedAtMs - a.closedAtMs })
-  var keep = {}
+  var keep = dict()
   for (i = 0; i < limit; i++) keep[closed[i].id] = true
   var out = []
   for (i = 0; i < log.length; i++) if (log[i].open || keep[log[i].id]) out.push(log[i])
@@ -517,7 +524,7 @@ function trimClosedConnections(log, limit) {
 // ever updates a row in place or puts a new one at the top.
 function stackConnections(log) {
   var list = log && typeof log.length === "number" ? log : []
-  var byKey = {}
+  var byKey = dict()
   var stacks = []
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
@@ -736,7 +743,7 @@ function testRules(rules, query, routing) {
 // How many rules send traffic to each target, largest first.
 function ruleTargetTally(rules) {
   var list = rules && typeof rules.length === "number" ? rules : []
-  var counts = {}
+  var counts = dict()
   var order = []
   for (var i = 0; i < list.length; i++) {
     var target = text(list[i].target)
@@ -758,9 +765,9 @@ function ruleTargetTally(rules) {
 // "other" node, so the diagram always fits its box.
 function connectionFlows(stacks, maxSources, maxTargets) {
   var list = stacks && typeof stacks.length === "number" ? stacks : []
-  var bySource = {}
-  var byTarget = {}
-  var links = {}
+  var bySource = dict()
+  var byTarget = dict()
+  var links = dict()
   var i
   for (i = 0; i < list.length; i++) {
     var stack = list[i]
@@ -775,7 +782,7 @@ function connectionFlows(stacks, maxSources, maxTargets) {
   }
   var sources = topNodes(bySource, maxSources)
   var targets = topNodes(byTarget, maxTargets)
-  var merged = {}
+  var merged = dict()
   for (var key2 in links) {
     var parts = key2.split("\u0000")
     var s = sources.names[parts[0]] ? parts[0] : "other"
@@ -796,7 +803,7 @@ function topNodes(totals, max) {
   for (var name in totals) nodes.push({ name: name, bytes: totals[name] })
   nodes.sort(function(a, b) { return b.bytes - a.bytes })
   var limit = Math.max(1, number(max, 6))
-  var names = {}
+  var names = dict()
   if (nodes.length > limit) {
     var rest = 0
     for (var i = limit - 1; i < nodes.length; i++) rest += nodes[i].bytes

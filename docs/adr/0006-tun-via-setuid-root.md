@@ -44,13 +44,17 @@ can execute the core can run it as root with a config of their choosing, so exec
 to the owning account: other local accounts cannot run it at all, and a core they could execute
 reads as broken and surfaces as a repair action. The owning account, or a process running as it,
 can still get root through the core without a password; that is the trust this design accepts.
-Since a subscription is remote input to a root process, the merge drops its `external-*`,
-`secret` and `ntp` keys and the `path` of its downloading providers: only the override decides how
-the core is controlled, a download cannot overwrite Omihomo's own state, and the core never sets
-the system clock for a subscription. The core writes its cache and geodata into the state
+Since a subscription is remote input to a root process, the merge keeps only an allowlist of it:
+proxies, groups, rules, providers and resolver settings. Listeners, ports, controllers, the
+firewall, the DNS listener, the clock and file paths stay with the override, providers download
+over HTTPS into paths mihomo picks, and validation runs a non-setuid copy of the core so root
+never parses a document first. Tightening these rules restarts a running core once, since a
+reload cannot close a controller it already opened. The core writes its cache and geodata into the state
 directory as root from now on; the directory stays user-owned, so uninstall still clears it. The
 grant stays revocable with `chmod a-s` and is checked on every status read, so a core that lost
-it surfaces as a repair action rather than as a failing toggle. The privileged moments are
-unchanged: install, `core repair`, uninstall, and a pacman `PostTransaction` hook that reapplies
-`chmod 4750` and the owner's ACL entry after every mihomo upgrade. Grant paths also run `setcap -r` first, because a binary
+it surfaces as a repair action rather than as a failing toggle. An ACL entry for any other
+account or group counts as broken too. The privileged moments are unchanged: install,
+`core repair`, uninstall, and a pacman `PostTransaction` hook that runs the same grant after every
+mihomo upgrade. The grant clears every ACL entry first and sets the setuid bit last, so a step
+that fails leaves a core nobody runs as root. Grant paths also run `setcap -r` first, because a binary
 that carries file capabilities computes its privileges from them instead of from the setuid bit.

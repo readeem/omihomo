@@ -30,7 +30,7 @@ test_subscription_add_and_list_are_flat_json() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local output
   output=$(run_cli sub list)
   [[ $(jq 'length' <<<"$output") == 1 ]] || fail "expected one subscription"
@@ -46,11 +46,11 @@ test_first_subscription_added_becomes_active() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   assert_json_field "$(run_cli sub list | jq '.[0]')" active true
   [[ -f "$XDG_DATA_HOME/omihomo/runtime.yaml" ]] || fail "activating must write the runtime"
 
-  run_cli sub add https://example.test/subscription/backup
+  run_cli sub add <<<https://example.test/subscription/backup
   local output
   output=$(run_cli sub list)
   assert_eq "$(jq -r '[.[] | select(.active) | .name] | join(",")' <<<"$output")" work
@@ -62,7 +62,7 @@ test_state_is_private_to_its_owner() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   local data="$XDG_DATA_HOME/omihomo"
 
-  (umask 022 && run_cli sub add https://example.test/subscription/work)
+  (umask 022 && run_cli sub add <<<https://example.test/subscription/work)
   assert_eq "$(/usr/bin/stat -c %a "$data")" 700
   assert_eq "$(/usr/bin/stat -c %a "$data/override.yaml")" 600
 
@@ -80,7 +80,7 @@ test_subscription_fetch_asks_as_a_clash_client() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   assert_eq "$(head -n 1 "$TEST_ROOT/curl-agent.log")" clash.meta
 }
 
@@ -90,7 +90,7 @@ test_subscription_takes_its_name_from_the_server() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_TITLE="base64:$(printf 'Omega Hangout' | base64)"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   assert_json_field "$(run_cli sub list | jq '.[0]')" name "Omega Hangout"
   [[ -f "$XDG_DATA_HOME/omihomo/cache/Omega Hangout.yaml" ]] || fail "cache is not named after the subscription"
 }
@@ -103,12 +103,12 @@ test_unsafe_and_missing_titles_still_produce_a_usable_name() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_TITLE='../../etc/passwd'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   assert_json_field "$(run_cli sub list | jq '.[0]')" name "etc passwd"
 
   unset OMIHOMO_TEST_TITLE
   export OMIHOMO_TEST_NO_TITLE=yes
-  run_cli sub add https://example.test/subscription/backup
+  run_cli sub add <<<https://example.test/subscription/backup
   assert_json_field "$(run_cli sub list | jq '.[1]')" name example.test
 }
 
@@ -118,15 +118,15 @@ test_repeated_titles_are_suffixed_and_repeated_urls_are_refused() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_TITLE=shared
 
-  run_cli sub add https://example.test/subscription/work
-  run_cli sub add https://example.test/subscription/backup
+  run_cli sub add <<<https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/backup
   local output
   output=$(run_cli sub list)
   assert_eq "$(jq -r '[.[].name] | join(",")' <<<"$output")" "shared,shared 2"
 
   local status
   set +e
-  run_cli sub add https://example.test/subscription/work 2>/dev/null
+  run_cli sub add <<<https://example.test/subscription/work 2>/dev/null
   status=$?
   set -e
   assert_eq "$status" 1
@@ -141,7 +141,7 @@ test_raw_subscription_is_cached_as_a_provider_wrapper() {
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
   local url='https://example.test/subscription/raw?token=a%2Bb&tag=x'
 
-  run_cli sub add "$url"
+  run_cli sub add <<<"$url"
 
   local cache="$XDG_DATA_HOME/omihomo/cache/raw.yaml"
   assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" file
@@ -164,7 +164,7 @@ test_base64_subscription_is_cached_as_a_provider_wrapper() {
   export OMIHOMO_TEST_TITLE=encoded
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
 
-  run_cli sub add https://example.test/subscription/encoded
+  run_cli sub add <<<https://example.test/subscription/encoded
 
   local cache="$XDG_DATA_HOME/omihomo/cache/encoded.yaml"
   assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" file
@@ -175,9 +175,9 @@ test_raw_update_replaces_the_provider_payload() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/active
+  run_cli sub add <<<https://example.test/subscription/active
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
-  run_cli sub add https://example.test/subscription/raw
+  run_cli sub add <<<https://example.test/subscription/raw
 
   local cache="$XDG_DATA_HOME/omihomo/cache/raw.yaml" previous current
   previous=$(yq -r '."proxy-providers".subscription.path' "$cache")
@@ -217,7 +217,7 @@ test_gzip_only_subscription_server_is_decoded() {
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
   export OMIHOMO_TEST_GZIP_ALWAYS=yes
 
-  run_cli sub add https://example.test/subscription/gzipped
+  run_cli sub add <<<https://example.test/subscription/gzipped
 
   local cache="$XDG_DATA_HOME/omihomo/cache/gzipped.yaml"
   assert_eq "$(yq -r '."proxy-providers".subscription.type' "$cache")" file
@@ -231,7 +231,7 @@ test_full_config_subscription_is_not_wrapped() {
   export OMIHOMO_TEST_TITLE=full
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/full-config.yaml"
 
-  run_cli sub add https://example.test/subscription/full
+  run_cli sub add <<<https://example.test/subscription/full
 
   local cache="$XDG_DATA_HOME/omihomo/cache/full.yaml"
   cmp -s "$REPO_ROOT/tests/fixtures/full-config.yaml" "$cache" || fail "full config changed during import"
@@ -246,7 +246,7 @@ test_provider_yaml_subscription_is_not_wrapped() {
   export OMIHOMO_TEST_TITLE=provider
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/provider.yaml"
 
-  run_cli sub add https://example.test/subscription/provider
+  run_cli sub add <<<https://example.test/subscription/provider
 
   local cache="$XDG_DATA_HOME/omihomo/cache/provider.yaml"
   cmp -s "$REPO_ROOT/tests/fixtures/provider.yaml" "$cache" || fail "provider YAML was wrapped"
@@ -262,7 +262,7 @@ test_garbage_subscription_leaves_no_partial_state() {
   stderr=$(mktemp)
 
   set +e
-  run_cli sub add https://example.test/subscription/garbage 2>"$stderr"
+  run_cli sub add <<<https://example.test/subscription/garbage 2>"$stderr"
   status=$?
   set -e
 
@@ -287,7 +287,7 @@ test_invalid_full_config_has_a_distinct_validation_error() {
   stderr=$(mktemp)
 
   set +e
-  run_cli sub add https://example.test/subscription/invalid-full 2>"$stderr"
+  run_cli sub add <<<https://example.test/subscription/invalid-full 2>"$stderr"
   status=$?
   set -e
 
@@ -303,8 +303,8 @@ test_raw_subscriptions_with_the_same_title_use_independent_provider_paths() {
   export OMIHOMO_TEST_TITLE=shared
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
 
-  run_cli sub add https://example.test/subscription/one
-  run_cli sub add https://example.test/subscription/two
+  run_cli sub add <<<https://example.test/subscription/one
+  run_cli sub add <<<https://example.test/subscription/two
 
   local first="$XDG_DATA_HOME/omihomo/cache/shared.yaml"
   local second="$XDG_DATA_HOME/omihomo/cache/shared 2.yaml"
@@ -318,7 +318,7 @@ test_invalid_subscription_update_keeps_previous_cache() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local cache="$XDG_DATA_HOME/omihomo/cache/work.yaml"
   local before
   before=$(<"$cache")
@@ -342,7 +342,7 @@ test_subscription_fetch_failure_uses_exit_code_21() {
   local stderr status
   stderr=$(mktemp)
   set +e
-  run_cli sub add https://example.test/subscription/work 2>"$stderr"
+  run_cli sub add <<<https://example.test/subscription/work 2>"$stderr"
   status=$?
   set -e
   assert_eq "$status" 21
@@ -354,7 +354,7 @@ test_activation_merges_override_and_reloads_active_core() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   cat >"$XDG_DATA_HOME/omihomo/override.yaml" <<'EOF'
 config:
   external-controller: 127.0.0.1:9090
@@ -384,7 +384,7 @@ test_runtime_routes_global_through_the_primary_group() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies:\n  - name: Tokyo\n    type: direct\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [Tokyo]\n  - name: Backup\n    type: select\n    proxies: [Tokyo]'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '."proxy-groups"[0].name' "$runtime")" GLOBAL
@@ -405,7 +405,7 @@ test_a_subscription_cannot_open_its_own_controller() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'external-controller-unix: /tmp/open.sock\nexternal-controller-tls: 0.0.0.0:9443\nexternal-ui-url: https://example.test/ui.zip\nsecret: chosen\nproxies:\n  - name: Tokyo\n    type: direct'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '[keys[] | select(test("^external-|-providers$"))] | join(",")' "$runtime")" external-controller
@@ -420,13 +420,50 @@ test_a_subscription_cannot_aim_downloads_or_set_the_clock() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'ntp:\n  enable: true\n  write-to-system: true\n  server: ntp.example.test\nproxy-providers:\n  remote:\n    type: http\n    url: https://example.test/p\n    path: ./override.yaml\n  local:\n    type: file\n    path: ./providers/local.yaml\nrule-providers:\n  ads:\n    type: http\n    behavior: domain\n    url: https://example.test/r\n    path: ./runtime.yaml\nproxies:\n  - name: Tokyo\n    type: direct'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '."proxy-providers".remote | has("path")' "$runtime")" false
   assert_eq "$(yq -r '."rule-providers".ads | has("path")' "$runtime")" false
-  assert_eq "$(yq -r '."proxy-providers".local.path' "$runtime")" ./providers/local.yaml
+  assert_eq "$(yq -r '."proxy-providers" | has("local")' "$runtime")" false
   assert_eq "$(yq -r 'has("ntp")' "$runtime")" false
+}
+
+# The override owns every inbound, the firewall and the DNS listener, and a
+# provider downloads over HTTPS. The first validation already sees the result.
+test_a_subscription_cannot_open_listeners_or_change_host_networking() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'allow-lan: true\nbind-address: "*"\nmixed-port: 1080\niptables:\n  enable: true\ntunnels:\n  - tcp,127.0.0.1:6553,example.test:53,Tokyo\nlisteners:\n  - name: open\n    type: mixed\n    listen: 0.0.0.0\n    port: 1081\ndns:\n  listen: 0.0.0.0:53\n  enhanced-mode: fake-ip\nproxy-providers:\n  plain:\n    type: http\n    url: http://example.test/p\n  secure:\n    type: http\n    url: https://example.test/p\nproxies:\n  - name: Tokyo\n    type: direct\n  - name: Key\n    type: ssh\n    server: example.test\n    private-key: ./override.yaml'
+
+  run_cli sub add <<<https://example.test/subscription/work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml" key
+  for key in allow-lan bind-address iptables tunnels listeners; do
+    assert_eq "$(yq -r "has(\"$key\")" "$runtime")" false
+    ! grep -q "^$key:" "$TEST_ROOT/mihomo-validated.yaml" || fail "the validator saw $key"
+  done
+  assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7890
+  assert_eq "$(yq -r '.dns | has("listen")' "$runtime")" false
+  assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
+  assert_eq "$(yq -r '."proxy-providers" | has("plain")' "$runtime")" false
+  assert_eq "$(yq -r '."proxy-providers".secure."size-limit"' "$runtime")" $((65536 * 1024))
+  assert_eq "$(yq -r '.proxies[] | select(.name == "Key") | has("private-key")' "$runtime")" false
+}
+
+test_subscriptions_require_https_and_keep_urls_out_of_argv() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+
+  if run_cli sub add <<<http://example.test/subscription/work 2>/dev/null; then
+    fail "a plaintext subscription URL was accepted"
+  fi
+  export OMIHOMO_TEST_TITLE=work
+  run_cli sub add <<<'https://example.test/subscription/work?token=s3cret'
+  run_cli sub update work
+  ! grep -q s3cret "$TEST_ROOT/curl-argv.log" || fail "the subscription token reached curl's arguments"
+  assert_file_contains "$TEST_ROOT/curl-argv.log" '--proto-redir =https'
 }
 
 test_global_mode_requires_a_subscription_group() {
@@ -434,7 +471,7 @@ test_global_mode_requires_a_subscription_group() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local stderr status
   stderr=$(mktemp)
@@ -464,7 +501,7 @@ test_active_update_reloads_without_restarting_the_unit() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_SUBSCRIPTION_BODY='proxies: []'
@@ -478,7 +515,7 @@ test_failed_active_raw_update_keeps_previous_cache_and_runtime() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local cache="$XDG_DATA_HOME/omihomo/cache/work.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
@@ -512,8 +549,8 @@ test_failed_active_activation_keeps_previous_subscription() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
-  run_cli sub add https://example.test/subscription/backup
+  run_cli sub add <<<https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/backup
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_API_UNREACHABLE=yes
@@ -532,7 +569,7 @@ test_running_core_rejects_removing_active_subscription() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   local stderr status
@@ -552,7 +589,7 @@ test_rule_filter_and_append_are_applied_to_runtime() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'rules:\n  - DOMAIN-SUFFIX,old.example,DIRECT\n  - DOMAIN-SUFFIX,keep.example,DIRECT'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli rule raw 'DOMAIN-SUFFIX,first.example,DIRECT'
   run_cli rule raw append 'DOMAIN-SUFFIX,last.example,DIRECT'
   run_cli rule raw filter 'DOMAIN-SUFFIX,old.example,DIRECT'
@@ -610,7 +647,7 @@ test_pretty_is_applied_by_dispatcher() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local output
   output=$(run_cli --pretty sub list)
   assert_file_contains <(printf '%s\n' "$output") 'name'
@@ -810,7 +847,7 @@ test_turning_tun_on_starts_an_inactive_unit_without_privilege() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_PERMISSIONS=yes
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   run_cli set tun on
 
@@ -825,7 +862,7 @@ test_turning_tun_on_reloads_an_active_unit_without_privilege() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_PERMISSIONS=yes
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
 
@@ -855,7 +892,7 @@ test_turning_tun_on_without_root_permissions_does_not_prompt() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local stderr status
   stderr=$(mktemp)
@@ -880,7 +917,7 @@ test_a_subscription_without_dns_or_an_inbound_gains_both() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '.dns.enable' "$runtime")" true
   assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 'https://1.1.1.1/dns-query#GLOBAL'
@@ -890,15 +927,15 @@ test_a_subscription_without_dns_or_an_inbound_gains_both() {
   assert_eq "$(yq -r '.dns."nameserver-policy"."+.ts.net"' "$runtime")" 100.100.100.100
 }
 
-test_a_subscription_uses_proxied_dns_and_keeps_its_inbound() {
+test_a_subscription_uses_proxied_dns_and_omihomos_inbound() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\nmixed-port: 7891\ndns:\n  enable: true\n  enhanced-mode: fake-ip\n  nameserver:\n    - 223.5.5.5\n  fallback:\n    - 8.8.8.8'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
-  assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7891
+  assert_eq "$(yq -r '."mixed-port"' "$runtime")" 7890
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
   assert_eq "$(yq -o=json -I=0 '.dns.nameserver' "$runtime")" '["https://1.1.1.1/dns-query#GLOBAL","https://1.0.0.1/dns-query#GLOBAL"]'
   assert_eq "$(yq -o=json -I=0 '.dns.fallback' "$runtime")" '[]'
@@ -910,7 +947,7 @@ test_the_core_always_names_the_process_behind_a_connection() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\nfind-process-mode: "off"'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -r '."find-process-mode"' "$runtime")" always
 
@@ -924,7 +961,7 @@ test_an_existing_override_gains_proxied_dns() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ndns:\n  enhanced-mode: fake-ip'
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   yq -i 'del(.config.dns."enhanced-mode", .config.dns.nameserver, .config.dns.fallback, .config.dns."default-nameserver", .config.dns."proxy-server-nameserver")' "$override"
@@ -948,7 +985,7 @@ test_explicit_resolvers_survive_sync_and_subscription_updates() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   yq -i '.config.dns.nameserver = ["https://9.9.9.9/dns-query#DIRECT"] |
@@ -970,7 +1007,7 @@ test_an_explicit_dns_mode_survives_subscription_updates() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ndns:\n  enhanced-mode: redir-host'
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   yq -i '.config.dns."enhanced-mode" = "fake-ip"' "$XDG_DATA_HOME/omihomo/override.yaml"
 
   run_cli sub update work
@@ -988,7 +1025,7 @@ test_the_connectivity_check_host_bypasses_fake_ip() {
   export OMIHOMO_TEST_CONNECTIVITY_URI=http://check.example.test:8080/nm-check.txt
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ndns:\n  enhanced-mode: fake-ip\n  fake-ip-filter:\n    - \'*.lan\''
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   assert_eq "$(yq -o=json -I=0 '.dns."fake-ip-filter"' "$runtime")" '["*.lan","check.example.test"]'
 }
@@ -1000,7 +1037,7 @@ test_no_connectivity_check_leaves_the_fake_ip_filter_alone() {
   export OMIHOMO_TEST_CONNECTIVITY_URI=
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   assert_eq "$(yq -r '.dns | has("fake-ip-filter")' "$XDG_DATA_HOME/omihomo/runtime.yaml")" false
 }
 
@@ -1009,7 +1046,7 @@ test_sync_reloads_a_runtime_built_by_an_older_merge() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_CONNECTIVITY_URI=
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_CONNECTIVITY_URI=http://check.example.test/nm-check.txt
 
@@ -1023,7 +1060,7 @@ test_sync_leaves_a_current_runtime_alone() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
 
   run_cli core sync
@@ -1036,7 +1073,7 @@ test_sync_retries_a_failed_reload() {
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_CONNECTIVITY_URI=
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
   cp "$runtime" "$TEST_ROOT/previous.yaml"
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
@@ -1070,7 +1107,7 @@ test_sync_without_state_writes_nothing() {
 start_tun_core() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_PERMISSIONS=yes
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli set tun on
   touch "$OMIHOMO_NET_DIR/omihomo"
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
@@ -1109,7 +1146,7 @@ test_a_reload_without_tun_is_a_single_config_load() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
 
   run_cli sub activate work
@@ -1183,7 +1220,7 @@ test_tun_routing_excludes_local_networks_by_default() {
   # A subscription that routes everything through the tunnel must not win.
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ntun:\n  route-exclude-address:\n    - 8.8.8.8/32'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   run_cli set tun on
 
@@ -1206,7 +1243,7 @@ test_tun_device_is_named_after_omihomo() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\ntun:\n  device: Meta'
 
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
 
   assert_eq "$(yq -r '.config.tun.device' "$XDG_DATA_HOME/omihomo/override.yaml")" omihomo
   assert_eq "$(yq -r '.tun.device' "$XDG_DATA_HOME/omihomo/runtime.yaml")" omihomo
@@ -1226,7 +1263,7 @@ test_tun_redirect_moves_the_stack_with_it() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
 
@@ -1255,7 +1292,7 @@ test_status_reports_tun_redirect_state() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
 
   assert_eq "$(run_cli status | jq -r '.tun_redirect')" false
   run_cli set tun-redirect on
@@ -1298,7 +1335,7 @@ test_an_override_without_exclusions_gains_them() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
@@ -1317,7 +1354,7 @@ test_exclusions_reaching_the_last_address_are_replaced() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   yq -i '.config.tun."route-exclude-address" = ["10.0.0.0/8", "224.0.0.0/3", "ff00::/8"]' "$override"
 
@@ -1337,7 +1374,7 @@ test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin() {
   export OMIHOMO_TAILSCALED_BIN="$TEST_ROOT/bin/mihomo"
   # The rules target GLOBAL, which only exists once a group can be primary.
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies:\n  - name: Tokyo\n    type: direct\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [Tokyo]'
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
 
@@ -1370,7 +1407,7 @@ test_tailnet_proxy_routes_the_tailnet_through_global() {
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TAILSCALED_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies:\n  - name: Tokyo\n    type: direct\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [Tokyo]'
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
 
@@ -1419,7 +1456,7 @@ test_status_reports_tailscale_presence_and_state() {
   assert_eq "$(jq -r '.tailscale_enabled' <<<"$output")" false
 
   export OMIHOMO_TAILSCALED_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   run_cli set tailscale on
   output=$(run_cli status)
@@ -1433,7 +1470,7 @@ test_an_override_without_tailscale_coexistence_gains_it() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
@@ -1452,13 +1489,103 @@ test_an_emptied_exclusion_list_is_left_alone() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   local override="$XDG_DATA_HOME/omihomo/override.yaml"
   yq -i '.config.tun."route-exclude-address" = []' "$override"
 
   run_cli rule raw 'DOMAIN-SUFFIX,keep.example,DIRECT'
 
   assert_eq "$(yq -o=json -I=0 '.config.tun."route-exclude-address"' "$override")" '[]'
+}
+
+test_permissions_reject_any_other_acl_entry() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_PERMISSIONS=yes
+
+  export OMIHOMO_TEST_ACL_EXTRA=user:4242:r-x
+  assert_eq "$(run_cli status | jq -r '.permissions_ok')" false
+  export OMIHOMO_TEST_ACL_EXTRA=group:100:r-x
+  assert_eq "$(run_cli status | jq -r '.permissions_ok')" false
+  unset OMIHOMO_TEST_ACL_EXTRA
+  printf '# omihomo grant 1\n' >"$OMIHOMO_HOOK_FILE"
+  assert_eq "$(run_cli status | jq -r '.permissions_ok')" false
+}
+
+test_repair_reaches_a_core_its_owner_cannot_execute() {
+  setup_test
+  trap teardown_test RETURN
+  install -m 600 "$TEST_ROOT/bin/mihomo" "$TEST_ROOT/locked-mihomo"
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/locked-mihomo"
+
+  local status
+  status=$(run_cli status)
+  [[ $(jq -r '.state' <<<"$status") != not-installed ]] || fail "a locked core reads as not installed"
+  assert_eq "$(jq -r .permissions_ok <<<"$status")" false
+  run_cli core repair
+  assert_file_contains "$TEST_ROOT/privileged.log" 'root.sh repair /usr/bin/mihomo'
+}
+
+# An install from before the sanitizer may run a core whose controllers a
+# subscription chose. Only a restart closes them, so sync restarts it once.
+test_hardening_restarts_a_running_core_once() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add <<<https://example.test/subscription/work
+  local data="$XDG_DATA_HOME/omihomo"
+  rm "$data/hardened"
+  yq -i '."external-controller-unix" = "/tmp/open.sock"' "$data/runtime.yaml"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  assert_eq "$(run_cli status | jq -r '.hardening_pending')" true
+
+  run_cli core sync
+
+  assert_eq "$(yq -r 'has("external-controller-unix")' "$data/runtime.yaml")" false
+  assert_eq "$(grep -c '^restart omihomo.service' "$TEST_ROOT/systemctl.log")" 1
+  assert_eq "$(run_cli status | jq -r '.hardening_pending')" false
+  run_cli core sync
+  assert_eq "$(grep -c '^restart omihomo.service' "$TEST_ROOT/systemctl.log")" 1
+}
+
+test_failed_hardening_stays_pending_and_fails_sync() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add <<<https://example.test/subscription/work
+  local data="$XDG_DATA_HOME/omihomo"
+  rm "$data/hardened"
+  yq -i '.proxies = [{"name": "INVALID", "type": "direct"}]' "$data/cache/work.yaml"
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+
+  if run_cli core sync 2>/dev/null; then
+    fail "a failed hardening reported success"
+  fi
+  assert_eq "$(run_cli status | jq -r '.hardening_pending')" true
+  ! grep -q '^restart' "$TEST_ROOT/systemctl.log" 2>/dev/null || fail "restarted on an unhardened runtime"
+}
+
+test_sync_repoints_units_and_link_at_this_checkout() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  run_cli sub add <<<https://example.test/subscription/work
+  run_cli core autostart on
+  local directory="$XDG_CONFIG_HOME/systemd/user"
+  sed -i 's#^ExecStart=.*#ExecStart=/removed-plugin/bin/omihomo sub update-on-start#' \
+    "$directory/omihomo-subscription-startup.service"
+  mkdir -p "$HOME/.local/bin"
+  ln -s /removed-plugin/bin/omihomo "$HOME/.local/bin/omihomo"
+  rm "$TEST_ROOT/systemctl.log"
+
+  run_cli core sync
+
+  assert_file_contains "$directory/omihomo-subscription-startup.service" "ExecStart=$REPO_ROOT/bin/omihomo sub update-on-start"
+  assert_file_contains "$directory/omihomo-subscription-startup.service" 'RestartPreventExitStatus=1'
+  assert_eq "$(readlink "$HOME/.local/bin/omihomo")" "$REPO_ROOT/bin/omihomo"
+  assert_file_contains "$TEST_ROOT/systemctl.log" daemon-reload
+  ! grep -Eq '(enable|disable) omihomo.service' "$TEST_ROOT/systemctl.log" || fail "sync changed the autostart choice"
 }
 
 test_install_has_one_privileged_setup_boundary() {
@@ -1488,7 +1615,7 @@ test_active_override_change_reports_unreachable_controller() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.test/subscription/work
+  run_cli sub add <<<https://example.test/subscription/work
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_API_UNREACHABLE=yes
@@ -1524,7 +1651,7 @@ test_uninstall_removes_every_artifact() {
   trap teardown_test RETURN
   export OMIHOMO_TEST_PKGS="mihomo-bin"
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.com/subscription >/dev/null
+  run_cli sub add <<<https://example.com/subscription >/dev/null
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$REPO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
   local unit="$XDG_CONFIG_HOME/systemd/user/omihomo.service"
@@ -1551,7 +1678,7 @@ test_uninstall_can_keep_state() {
   setup_test
   trap teardown_test RETURN
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
-  run_cli sub add https://example.com/subscription >/dev/null
+  run_cli sub add <<<https://example.com/subscription >/dev/null
 
   run_cli core uninstall --keep-data
 
@@ -1584,6 +1711,8 @@ tests=(
   test_runtime_routes_global_through_the_primary_group
   test_a_subscription_cannot_open_its_own_controller
   test_a_subscription_cannot_aim_downloads_or_set_the_clock
+  test_a_subscription_cannot_open_listeners_or_change_host_networking
+  test_subscriptions_require_https_and_keep_urls_out_of_argv
   test_global_mode_requires_a_subscription_group
   test_global_cannot_be_set_as_primary
   test_active_update_reloads_without_restarting_the_unit
@@ -1612,7 +1741,7 @@ tests=(
   test_turning_tun_on_requires_an_active_subscription
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_a_subscription_without_dns_or_an_inbound_gains_both
-  test_a_subscription_uses_proxied_dns_and_keeps_its_inbound
+  test_a_subscription_uses_proxied_dns_and_omihomos_inbound
   test_the_core_always_names_the_process_behind_a_connection
   test_an_existing_override_gains_proxied_dns
   test_an_explicit_dns_mode_survives_subscription_updates
@@ -1642,6 +1771,11 @@ tests=(
   test_tailscale_requires_tailscaled
   test_status_reports_tailscale_presence_and_state
   test_an_override_without_tailscale_coexistence_gains_it
+  test_permissions_reject_any_other_acl_entry
+  test_repair_reaches_a_core_its_owner_cannot_execute
+  test_hardening_restarts_a_running_core_once
+  test_failed_hardening_stays_pending_and_fails_sync
+  test_sync_repoints_units_and_link_at_this_checkout
   test_install_has_one_privileged_setup_boundary
   test_active_override_change_reports_unreachable_controller
 )

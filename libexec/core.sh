@@ -110,36 +110,76 @@ core_uninstall() {
   omi_note "run 'omarchy plugin remove omihomo' to take the widget off the bar"
 }
 
+# Repair needs only a core that exists: losing execute access is one of the
+# things it repairs. The privileged grant runs only when it is needed.
 core_repair() {
-  omi_require_core
-  if ! omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" repair /usr/bin/mihomo; then
+  omi_core_installed || omi_error "mihomo is not installed" 10
+  if ! omi_tun_permissions_ok &&
+    ! omi_privileged "$OMIHOMO_ROOT/libexec/root.sh" repair /usr/bin/mihomo; then
     omi_error "repairing the mihomo root permissions failed" 1
   fi
+  [[ ! -f $OMIHOMO_OVERRIDE_FILE ]] || omi_with_lock core_harden
+}
+
+# A reload never closes the controllers a core opened when it started, and
+# older releases let a subscription open its own. So once per sanitizer change
+# the runtime is rebuilt from the cache and a running core restarts on it; a
+# stopped one stays stopped. Until that succeeds, status reports it pending and
+# every sync, start and repair tries again.
+core_harden() {
+  omi_hardening_pending || return 0
+  local active cache runtime
+  active=$(omi_active_name)
+  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
+  if [[ -n $active && -f $cache ]]; then
+    runtime=$(mktemp "${OMIHOMO_DATA_DIR}/.runtime.XXXXXX")
+    omi_prepare_runtime "$cache" "$OMIHOMO_OVERRIDE_FILE" "$runtime" || return $?
+    omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
+  else
+    rm -f "$OMIHOMO_RUNTIME_FILE"
+  fi
+  if omi_unit_active; then
+    omi_systemctl --user restart "$OMIHOMO_UNIT" || return $?
+    omi_await_controller || return $?
+  fi
+  printf '%s\n' "$OMIHOMO_HARDENING" >"$OMIHOMO_HARDENED_FILE"
 }
 
 core_start() {
   omi_with_lock omi_init_layout
+  core_harden
   omi_start_core
 }
 
-# Re-derives runtime.yaml when it has gone stale. Without state there is
-# nothing to derive, so it writes none either.
+# Re-derives runtime.yaml when it has gone stale, and brings the units and the
+# CLI link in line with this checkout. Without state there is nothing to
+# derive, so it writes none either.
 core_sync() {
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
   omi_with_lock omi_init_layout
-  if omi_core_installed && [[ -f $OMIHOMO_UNIT_FILE &&
-    ! -f $(dirname "$OMIHOMO_UNIT_FILE")/omihomo-subscription-startup.service ]]; then
+  omi_core_installed || return 0
+  local directory link=$HOME/.local/bin/omihomo units before
+  directory=$(dirname "$OMIHOMO_UNIT_FILE")
+  if [[ -L $link && $(readlink -- "$link") != "$OMIHOMO_ROOT/bin/omihomo" ]]; then
+    ln -sfn "$OMIHOMO_ROOT/bin/omihomo" "$link"
+  fi
+  # Rewriting a unit keeps whether it is enabled, and drop-ins live beside it.
+  if [[ -f $OMIHOMO_UNIT_FILE ]]; then
+    units=("$OMIHOMO_UNIT_FILE" "$directory"/omihomo-subscription-{startup.service,update.service,update.timer})
+    before=$(cat -- "${units[@]}" 2>/dev/null || true)
     omi_write_unit
-    omi_systemctl --user daemon-reload
+    [[ ! -f $directory/omihomo-subscription-update.timer ]] || omi_write_subscription_timer
+    [[ $(cat -- "${units[@]}" 2>/dev/null || true) == "$before" ]] ||
+      omi_systemctl --user daemon-reload
   fi
   # Existing installations reach sync when the updated widget loads. Create
   # the new timer once; later syncs respect users who disabled it themselves.
-  if omi_core_installed && [[ -x $HOME/.local/bin/omihomo &&
-    ! -f $(dirname "$OMIHOMO_UNIT_FILE")/omihomo-subscription-update.timer ]]; then
+  if [[ -x $link && ! -f $directory/omihomo-subscription-update.timer ]]; then
     omi_write_subscription_timer
     omi_systemctl --user daemon-reload
     omi_systemctl --user enable --now omihomo-subscription-update.timer
   fi
+  core_harden
 }
 
 core_stop() {
