@@ -188,6 +188,11 @@ NetworkManager sends that probe over a socket bound to the physical interface, o
 tunnel, where a fake-ip address routes nowhere. Without the exemption the desktop reports limited
 connectivity while traffic flows normally.
 
+`find-process-mode` is always `always`, whatever the subscription says, so every connection names
+the process behind it and the panel's connections view can draw process → config flows. Mihomo's
+own default looks a process up only when a `PROCESS-NAME` rule needs it. Set
+`config.find-process-mode` in the override to choose otherwise.
+
 `runtime.yaml` is derived state: the active cache, `override.yaml`, NetworkManager's config, and
 the merge this plugin ships. Every command that writes state first re-derives it, and when the
 result differs from the file on disk it is validated, loaded into a running core, and replaces the

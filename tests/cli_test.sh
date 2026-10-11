@@ -885,6 +885,21 @@ test_a_subscription_uses_proxied_dns_and_keeps_its_inbound() {
   assert_eq "$(yq -o=json -I=0 '.dns.fallback' "$runtime")" '[]'
 }
 
+test_the_core_always_names_the_process_behind_a_connection() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY=$'proxies: []\nfind-process-mode: "off"'
+
+  run_cli sub add https://example.test/subscription/work
+  local runtime="$XDG_DATA_HOME/omihomo/runtime.yaml"
+  assert_eq "$(yq -r '."find-process-mode"' "$runtime")" always
+
+  yq -i '.config."find-process-mode" = "strict"' "$XDG_DATA_HOME/omihomo/override.yaml"
+  run_cli sub activate work
+  assert_eq "$(yq -r '."find-process-mode"' "$runtime")" strict
+}
+
 test_an_existing_override_gains_proxied_dns() {
   setup_test
   trap teardown_test RETURN
@@ -1566,6 +1581,7 @@ tests=(
   test_turning_tun_on_without_root_permissions_does_not_prompt
   test_a_subscription_without_dns_or_an_inbound_gains_both
   test_a_subscription_uses_proxied_dns_and_keeps_its_inbound
+  test_the_core_always_names_the_process_behind_a_connection
   test_an_existing_override_gains_proxied_dns
   test_an_explicit_dns_mode_survives_subscription_updates
   test_explicit_resolvers_survive_sync_and_subscription_updates

@@ -646,6 +646,7 @@ omi_merge_runtime() {
     (($merged."proxy-groups" // []) | map(select(.name != "GLOBAL"))) as $groups |
     strenv(OMIHOMO_CONNECTIVITY_HOST) as $connectivity |
     $merged |
+    ."find-process-mode" = ($config."find-process-mode" // "always") |
     .dns."fake-ip-filter" = (((.dns."fake-ip-filter" // []) | map(select(. != $connectivity))) +
       ([$connectivity] | map(select(. != "")))) |
     del(.dns."fake-ip-filter" | select(length == 0)) |
