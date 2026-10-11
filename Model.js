@@ -752,6 +752,25 @@ function formatDuration(ms) {
   return Math.floor(hours / 24) + "d " + (hours % 24) + "h"
 }
 
+// The fastest and slowest measured delays; untested configs are left out.
+function delaySpan(delays) {
+  var span = { low: 0, high: 0 }
+  for (var i = 0; i < delays.length; i++) {
+    var n = number(delays[i], 0)
+    if (n <= 0) continue
+    if (span.low === 0 || n < span.low) span.low = n
+    if (n > span.high) span.high = n
+  }
+  return span
+}
+
+// Where a delay sits within `span`, from 0 for the fastest to 1 for the slowest.
+function delayHeat(ms, span) {
+  var n = number(ms, 0)
+  if (n <= 0 || span.high <= span.low) return 0
+  return Math.max(0, Math.min(1, (n - span.low) / (span.high - span.low)))
+}
+
 function formatDelay(ms) {
   var n = number(ms, 0)
   return n > 0 ? n + " ms" : "—"
@@ -857,6 +876,8 @@ if (typeof module !== "undefined") {
     formatBytes: formatBytes,
     formatRate: formatRate,
     formatDuration: formatDuration,
+    delaySpan: delaySpan,
+    delayHeat: delayHeat,
     formatDelay: formatDelay,
     formatDate: formatDate,
     relativeTime: relativeTime,

@@ -362,6 +362,16 @@ test("formatting is decimal and compact", () => {
   assert.equal(Model.formatDelay(182), "182 ms")
 })
 
+test("latency heat runs from the fastest measured delay to the slowest", () => {
+  const span = Model.delaySpan([0, 206, 689, 330, 0])
+  assert.deepEqual(span, { low: 206, high: 689 })
+  assert.equal(Model.delayHeat(206, span), 0)
+  assert.equal(Model.delayHeat(689, span), 1)
+  assert.ok(Math.abs(Model.delayHeat(447.5, span) - 0.5) < 1e-9)
+  assert.equal(Model.delayHeat(0, span), 0)
+  assert.equal(Model.delayHeat(300, Model.delaySpan([300])), 0)
+})
+
 test("the config filter matches case-insensitively anywhere in the name", () => {
   const names = ["Tokyo 01", "TOKYO 02", "Frankfurt 01"]
   assert.deepEqual(Model.filterNames(names, "tokyo"), ["Tokyo 01", "TOKYO 02"])

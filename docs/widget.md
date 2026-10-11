@@ -65,9 +65,10 @@ under the rule form, in the settings list — whenever that is on screen, and un
 otherwise, so it is never out of sight. `Service.errorScope` records where each one belongs.
 
 The **configs view** is the browsed group as chips, the primary one marked with a dot, and its
-configs in one list with a latency pill and a test button each. A pill takes more of the urgent
-colour the slower the config is, and all of it on a timeout; the legend under the list says so and
-holds the whole-group test with how long ago it last ran. Browsing a group that is not the primary one offers a
+configs in one list with a latency pill and a test button each. The chosen config's row fades
+from the accent colour, and a choice still waiting for the core fades more faintly. A pill takes
+more of the urgent colour the closer it is to the group's slowest measured delay, none at its
+fastest, and all of it on a timeout; the legend under the list says so and holds the whole-group test with how long ago it last ran. Browsing a group that is not the primary one offers a
 `make primary` button next to its name. Only a `Selector` group can be chosen
 from; the rest pick for themselves and are read-only. An empty view always says why — no active
 subscription, a stopped core, an unreachable controller, or a subscription that declares no groups.
@@ -119,7 +120,8 @@ core is degraded. Autostart is `systemctl --user enable` behind `omihomo core au
 back by `status`. Repair stays in-panel because it is one privileged call with no build, and from
 the panel that call is a `pkexec` dialog. A core whose root permissions are missing, or still open
 to other accounts as installs before the owner-only grant left them, turns the gear and the bar
-icon urgent, and both warnings clear on the first status read after the repair. Uninstall hands
+icon urgent and puts a notice under the header on every other view; clicking it opens settings.
+All three clear on the first status read after the repair. Uninstall hands
 the removal to `omarchy-launch-floating-terminal-with-presentation`, because package removal needs
 sudo. It arms on the first activation and only runs on the second, because it also deletes the
 state directory; Esc or moving the cursor off the button cancels.

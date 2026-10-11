@@ -47,7 +47,7 @@ Panel {
   readonly property color surface: Commons.Color.popups.background
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: Style.hoverFillFor(foreground, accent)
-  readonly property color selectedFill: Style.selectedFillFor(foreground, accent)
+  readonly property color soft: Util.alpha(accent, 0.16)
   readonly property color fill: Util.alpha(foreground, 0.05)
   readonly property color outline: Util.alpha(foreground, 0.22)
   readonly property real controlRadius: Math.min(Style.cornerRadius, Style.space(7))
@@ -70,6 +70,8 @@ Panel {
   readonly property var browsedGroupEntry: Model.groupByName(visibleGroups, browsedGroup)
   readonly property var visibleConfigs: browsedGroupEntry
     ? Model.filterNames(browsedGroupEntry.all, configFilter) : []
+  readonly property var delaySpan: Model.delaySpan(browsedGroupEntry
+    ? browsedGroupEntry.all.map(function(name) { return omihomo.configDelay(name) }) : [])
   readonly property string testedText: {
     var at = omihomo.groupTestedAt[browsedGroup]
     return at ? "tested " + Model.relativeSince(at, nowMs) : "not tested yet"
@@ -138,7 +140,9 @@ Panel {
   readonly property bool errorInView: omihomo.lastError !== "" && (view === "subs"
     ? omihomo.errorScope.indexOf("sub:") === 0 : omihomo.errorScope === view)
   readonly property bool headerError: omihomo.lastError !== "" && !errorInView
-  readonly property string headerMessage: headerError ? omihomo.lastError : omihomo.actionStatus
+  readonly property bool repairNotice: needsRepair && view !== "settings" && !headerError && omihomo.actionStatus === ""
+  readonly property string headerMessage: headerError ? omihomo.lastError
+    : (repairNotice ? "mihomo's root permissions need repair · R" : omihomo.actionStatus)
   readonly property bool subscriptionFailed: omihomo.lastError !== "" && omihomo.errorScope.indexOf("sub:") === 0
 
   function css(c) {
@@ -149,11 +153,8 @@ Panel {
     return omihomo.lastError !== "" && omihomo.errorScope === scope
   }
 
-  function latencyHeat(ms) {
-    if (ms < 50) return 0.06
-    if (ms < 80) return 0.18
-    if (ms < 130) return 0.34
-    return 0.55
+  function latencyFill(heat) {
+    return Qt.tint(Util.alpha(foreground, 0.08), Util.alpha(urgent, 0.06 + 0.5 * heat))
   }
 
   function shortRuleType(type) {
@@ -711,7 +712,7 @@ Panel {
               implicitWidth: Style.space(root.compactHeader ? 26 : 34)
               implicitHeight: implicitWidth
               radius: width / 2
-              color: root.selectedFill
+              color: root.soft
 
               OmihomoIcon {
                 anchors.centerIn: parent
@@ -725,11 +726,10 @@ Panel {
               Layout.fillWidth: true
               spacing: Style.space(2)
 
-              Text {
+              PanelText {
                 Layout.fillWidth: true
                 text: omihomo.activeSubscription !== "" ? omihomo.activeSubscription : "Omihomo"
                 color: root.foreground
-                font.family: root.fontFamily
                 font.pixelSize: root.compactHeader ? Style.font.subtitle : Style.font.heading
                 font.bold: true
                 elide: Text.ElideRight
@@ -747,14 +747,12 @@ Panel {
                     : (omihomo.coreRunning ? root.accent : root.faint)
                 }
 
-                Text {
+                PanelText {
                   Layout.fillWidth: true
                   text: root.compactHeader && omihomo.coreRunning
                     ? Model.stateLabel(omihomo.coreState).toLowerCase() + " · " + omihomo.effectiveMode
                     : root.statusText
                   color: omihomo.coreState === "degraded" ? root.urgent : root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
                   elide: Text.ElideRight
                 }
               }
@@ -765,18 +763,14 @@ Panel {
               visible: root.compactHeader && omihomo.installed
               spacing: 0
 
-              Text {
+              PanelText {
                 text: "↓ " + Model.formatRate(omihomo.downloadRate)
                 color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
 
-              Text {
+              PanelText {
                 text: "↑ " + Model.formatRate(omihomo.uploadRate)
                 color: root.accent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
             }
 
@@ -812,18 +806,16 @@ Panel {
             spacing: Style.space(8)
             Layout.topMargin: Style.space(4)
 
-            Text {
+            PanelText {
               text: "↓ " + Model.formatRate(omihomo.downloadRate)
               color: root.foreground
-              font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
 
-            Text {
+            PanelText {
               Layout.fillWidth: true
               text: "↑ " + Model.formatRate(omihomo.uploadRate)
               color: root.accent
-              font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
           }
@@ -854,17 +846,25 @@ Panel {
           }
         }
 
-        Text {
+        PanelText {
           visible: root.headerMessage !== ""
           Layout.fillWidth: true
           Layout.leftMargin: Style.space(14)
           Layout.rightMargin: Style.space(14)
           Layout.bottomMargin: Style.space(10)
-          text: (root.headerError ? "▲ " : "") + root.headerMessage
-          color: root.headerError ? root.urgent : root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          text: (root.headerError || root.repairNotice ? "▲ " : "") + root.headerMessage
+          color: root.headerError || root.repairNotice ? root.urgent : root.dim
+          font.underline: root.repairNotice && repairMouse.containsMouse
           wrapMode: Text.WordWrap
+
+          MouseArea {
+            id: repairMouse
+            anchors.fill: parent
+            enabled: root.repairNotice
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openView("settings")
+          }
         }
 
         ColumnLayout {
@@ -874,11 +874,10 @@ Panel {
           Layout.margins: Style.space(14)
           spacing: Style.space(10)
 
-          Text {
+          PanelText {
             Layout.fillWidth: true
             text: "The mihomo core is not installed. Installing builds it from the AUR, so it runs in a terminal."
             color: root.dim
-            font.family: root.fontFamily
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
           }
@@ -946,7 +945,7 @@ Panel {
             anchors.fill: parent
             visible: root.view === "configs"
             spacing: Style.space(8)
-            Text {
+            PanelText {
               visible: !root.liveReady || (omihomo.proxiesLoaded && root.visibleGroups.length === 0)
               Layout.fillWidth: true
               text: !root.liveReady
@@ -954,7 +953,6 @@ Panel {
                   : (omihomo.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse configs."))
                 : "This subscription declares no groups."
               color: root.dim
-              font.family: root.fontFamily
               font.pixelSize: Style.font.body
               wrapMode: Text.WordWrap
             }
@@ -1025,13 +1023,11 @@ Panel {
               }
             }
 
-            Text {
+            PanelText {
               visible: root.errorAt("configs")
               Layout.fillWidth: true
               text: "▲ " + omihomo.lastError
               color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
 
@@ -1040,11 +1036,9 @@ Panel {
               Layout.fillWidth: true
               spacing: Style.space(6)
 
-              Text {
+              PanelText {
                 text: omihomo.pingTestsRunning ? "testing…" : root.testedText
                 color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
 
               SmallButton {
@@ -1057,21 +1051,19 @@ Panel {
 
               Item { Layout.fillWidth: true }
 
-              Text {
+              PanelText {
                 text: "fast"
                 color: root.faint
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
 
               Repeater {
-                model: [30, 60, 100, 200]
+                model: [0, 1 / 3, 2 / 3, 1]
                 Rectangle {
                   required property var modelData
                   implicitWidth: Style.space(16)
                   implicitHeight: Style.space(8)
                   radius: Math.min(Style.cornerRadius, 2)
-                  color: Qt.tint(Util.alpha(root.foreground, 0.08), Util.alpha(root.urgent, root.latencyHeat(modelData)))
+                  color: root.latencyFill(modelData)
                 }
               }
 
@@ -1082,11 +1074,9 @@ Panel {
                 color: root.urgent
               }
 
-              Text {
+              PanelText {
                 text: "slow"
                 color: root.faint
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
             }
           }
@@ -1102,12 +1092,11 @@ Panel {
               note: omihomo.subscriptions.length + (omihomo.activeSubscription !== "" ? " · active " + omihomo.activeSubscription : "")
             }
 
-            Text {
+            PanelText {
               visible: omihomo.subscriptions.length === 0
               Layout.fillWidth: true
               text: "No subscriptions yet. Paste a URL below."
               color: root.dim
-              font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
 
@@ -1157,13 +1146,11 @@ Panel {
               }
             }
 
-            Text {
+            PanelText {
               visible: root.errorAt("sub:")
               Layout.fillWidth: true
               text: "▲ " + omihomo.lastError
               color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
             Item { Layout.fillHeight: true }
@@ -1178,11 +1165,9 @@ Panel {
               Layout.fillWidth: true
               spacing: Style.space(8)
 
-              Text {
+              PanelText {
                 text: "test"
                 color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
 
               PanelField {
@@ -1204,24 +1189,21 @@ Panel {
               Layout.fillWidth: true
               spacing: Style.space(6)
 
-              Text {
+              PanelText {
                 visible: root.ruleTest.hit >= 0
                 text: "→ " + root.ruleHitTarget
                 color: root.accent
-                font.family: root.fontFamily
                 font.pixelSize: Style.font.body
                 font.bold: true
               }
 
-              Text {
+              PanelText {
                 Layout.fillWidth: true
                 text: root.ruleTest.host === "" ? "Type a domain or an IP to see which rule catches it."
                   : (root.ruleTest.hit < 0 ? "No rule matches."
                     : "rule " + (root.ruleTest.hit + 1) + " of " + root.effectiveRules.length
                       + (root.ruleTest.unknown > 0 ? " · " + root.ruleTest.unknown + " above depend on DNS, rule sets, or the app" : ""))
                 color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
               }
             }
@@ -1254,12 +1236,10 @@ Panel {
 
               Repeater {
                 model: root.ruleTally.slice(0, 6)
-                Text {
+                PanelText {
                   required property var modelData
                   text: modelData.count + " " + modelData.target
                   color: modelData.target === root.ruleHitTarget ? root.accent : root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
                 }
               }
             }
@@ -1274,7 +1254,7 @@ Panel {
                 id: ruleEntry
                 required property var modelData
                 width: ruleList.rowWidth
-                height: modelData.kind === "head" ? ruleHead.implicitHeight + Style.space(8) : ruleRow.implicitHeight
+                height: modelData.kind === "head" ? ruleHead.implicitHeight + Style.space(8) : ruleBody.implicitHeight
 
                 SectionLine {
                   id: ruleHead
@@ -1288,7 +1268,7 @@ Panel {
                 }
 
                 RuleRow {
-                  id: ruleRow
+                  id: ruleBody
                   visible: ruleEntry.modelData.kind !== "head"
                   width: parent.width
                   entry: ruleEntry.modelData
@@ -1339,15 +1319,13 @@ Panel {
               }
             }
 
-            Text {
+            PanelText {
               readonly property string message: root.ruleFormValue !== "" && root.ruleFormError !== ""
                 ? root.ruleFormError : (root.errorAt("rules") ? omihomo.lastError : "")
               visible: message !== ""
               Layout.fillWidth: true
               text: "▲ " + message
               color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
           }
@@ -1360,20 +1338,16 @@ Panel {
             RowLayout {
               Layout.fillWidth: true
 
-              Text {
+              PanelText {
                 Layout.fillWidth: true
                 text: "↓ " + Model.formatBytes(omihomo.connectionsDownload)
                   + "  ↑ " + Model.formatBytes(omihomo.connectionsUpload) + " total"
                 color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
 
-              Text {
+              PanelText {
                 text: "process → config · width = bytes"
                 color: root.faint
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
             }
 
@@ -1389,12 +1363,11 @@ Panel {
               note: "bar = bytes, log scale"
             }
 
-            Text {
+            PanelText {
               visible: omihomo.connectionStacks.length === 0
               Layout.fillWidth: true
               text: root.liveReady ? "Nothing logged yet." : "mihomo is not running."
               color: root.dim
-              font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
 
@@ -1435,13 +1408,11 @@ Panel {
               }
             }
 
-            Text {
+            PanelText {
               visible: root.errorAt("conns")
               Layout.fillWidth: true
               text: "▲ " + omihomo.lastError
               color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
 
@@ -1480,13 +1451,11 @@ Panel {
               width: settingsFlick.width - (settingsFlick.interactive ? Style.space(10) : 0)
               spacing: Style.space(6)
 
-              Text {
+              PanelText {
                 visible: root.errorAt("settings")
                 Layout.fillWidth: true
                 text: "▲ " + omihomo.lastError
                 color: root.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
 
@@ -1616,13 +1585,11 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.rightMargin: Style.space(8)
                   spacing: Style.space(6)
-                  Text {
+                  PanelText {
                     Layout.fillWidth: true
                     Layout.leftMargin: Style.space(8)
                     text: "core " + Model.stateLabel(omihomo.coreState).toLowerCase() + " · " + (omihomo.permissionsOk ? "root grant owner-only" : "missing root permissions, or open to other accounts")
                     color: omihomo.permissionsOk ? root.dim : root.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
                   }
 
@@ -1661,14 +1628,12 @@ Panel {
                     }
                   }
 
-                  Text {
+                  PanelText {
                     visible: root.uninstallArmed
                     Layout.fillWidth: true
                     Layout.leftMargin: Style.space(8)
                     text: "Removes the core, its permissions, the unit, and saved subscriptions."
                     color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
                   }
                 }
@@ -1717,26 +1682,27 @@ Panel {
 
     property string section: ""
     property int rowIndex: -1
-    property bool cursorStripe: true
+    property bool fades: true
+    property bool pendingChoice: false
+    property color restFill: "transparent"
     readonly property alias hovered: navMouse.containsMouse
+    readonly property color fadeFill: current ? Util.alpha(root.accent, hasCursor ? 0.3 : 0.2)
+      : (pendingChoice ? Util.alpha(root.accent, hasCursor ? 0.16 : 0.08) : Util.alpha(root.foreground, 0.1))
 
     signal activated()
 
     hasCursor: root.at(navRow.section, navRow.rowIndex < 0 ? undefined : navRow.rowIndex)
     foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
     radius: root.controlRadius
     borderSpec: Border.none()
+    color: restFill
+    gradient: fades && (current || pendingChoice || hasCursor) ? fade : null
 
-    Rectangle {
-      visible: navRow.hasCursor && navRow.cursorStripe
-      anchors.left: parent.left
-      anchors.top: parent.top
-      anchors.bottom: parent.bottom
-      width: Style.space(2)
-      color: root.accent
-      radius: width / 2
+    Gradient {
+      id: fade
+      orientation: Gradient.Horizontal
+      GradientStop { position: 0; color: navRow.fadeFill }
+      GradientStop { position: 1; color: navRow.restFill.a > 0 ? navRow.restFill : Util.alpha(navRow.fadeFill, 0) }
     }
 
     MouseArea {
@@ -1790,6 +1756,12 @@ Panel {
     }
   }
 
+  component PanelText: Text {
+    renderType: Text.NativeRendering
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+  }
+
   component SmallButton: Button {
     property bool ghost: false
     property bool primary: false
@@ -1813,6 +1785,7 @@ Panel {
     property bool highlighted: false
     implicitWidth: Style.space(120)
     implicitHeight: Style.space(26)
+    renderType: Text.NativeRendering
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
     placeholderTextColor: root.faint
@@ -1888,22 +1861,18 @@ Panel {
 
     spacing: Style.space(8)
 
-    Text {
+    PanelText {
       text: sectionLine.title
       color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
       font.letterSpacing: Style.space(0.8)
     }
 
     Item { Layout.fillWidth: true }
 
-    Text {
+    PanelText {
       visible: text !== ""
       text: sectionLine.note
       color: root.faint
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
   }
 
@@ -1930,70 +1899,32 @@ Panel {
       font: tagText.font
     }
 
-    Text {
+    PanelText {
       id: tagText
       anchors.centerIn: parent
       width: Math.min(tagMetrics.advanceWidth, tag.maxWidth)
       text: tag.text
       color: tag.filled ? root.surface : tag.tint
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
       elide: Text.ElideRight
       horizontalAlignment: Text.AlignHCenter
     }
   }
 
-  component Radio: Item {
-    property bool solid: false
-    property bool checked: false
-    property bool pending: false
-
-    implicitWidth: Style.space(12)
-    implicitHeight: Style.space(12)
-
-    Rectangle {
-      visible: parent.solid && parent.checked
-      anchors.fill: parent
-      anchors.margins: -Style.space(3)
-      radius: width / 2
-      color: root.selectedFill
-    }
-
-    Rectangle {
-      anchors.fill: parent
-      radius: width / 2
-      color: parent.solid && parent.checked ? root.accent : "transparent"
-      border.width: Math.max(1, Style.space(1.5))
-      border.color: parent.checked || parent.pending ? root.accent : root.faint
-    }
-
-    Rectangle {
-      visible: parent.checked || parent.pending
-      anchors.centerIn: parent
-      width: parent.width / 2
-      height: width
-      radius: width / 2
-      color: parent.pending ? root.dim : root.accent
-    }
-  }
-
-  component Kbd: Rectangle {
+  component Kbd: BorderSurface {
     property string text: ""
 
     implicitWidth: Math.max(kbdText.implicitWidth + Style.space(8), Style.space(18))
     implicitHeight: Style.space(18)
     radius: Math.min(Style.cornerRadius, 4)
     color: Util.alpha(root.foreground, 0.06)
-    border.width: 1
-    border.color: Util.alpha(root.foreground, 0.2)
+    borderSpec: Border.flat(Util.alpha(root.foreground, 0.2), "1 1 2 1")
 
-    Text {
+    PanelText {
       id: kbdText
       anchors.centerIn: parent
+      anchors.verticalCenterOffset: -0.5
       text: parent.text
       color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
   }
 
@@ -2020,12 +1951,10 @@ Panel {
         }
       }
 
-      Text {
+      PanelText {
         anchors.verticalCenter: parent.verticalCenter
         text: hint.label
         color: hintMouse.containsMouse ? root.foreground : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
     }
 
@@ -2058,7 +1987,7 @@ Panel {
     border.width: 1
     border.color: current ? root.outline : "transparent"
 
-    Text {
+    PanelText {
       visible: !tab.gear
       anchors.left: parent.left
       anchors.top: parent.top
@@ -2066,11 +1995,9 @@ Panel {
       anchors.topMargin: Style.space(3)
       text: String(tab.number)
       color: root.faint
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
 
-    Text {
+    PanelText {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.verticalCenter: tab.gear ? parent.verticalCenter : undefined
       anchors.bottom: tab.gear ? undefined : parent.bottom
@@ -2078,7 +2005,6 @@ Panel {
       visible: !tab.gear
       text: tab.label
       color: tab.current ? root.foreground : root.dim
-      font.family: root.fontFamily
       font.pixelSize: tab.gear ? Style.font.iconLarge : Style.font.body
     }
 
@@ -2121,25 +2047,37 @@ Panel {
       implicitHeight: Style.space(15)
       radius: Math.min(root.controlRadius, Style.space(4))
       color: tab.alert ? root.urgent : root.hoverFill
-      Text {
+      PanelText {
         id: countText
         anchors.centerIn: parent
         text: tab.count
         color: tab.alert ? root.surface : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
     }
 
-    Rectangle {
+    Shapes.Shape {
+      id: underline
       visible: tab.current
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.bottom: parent.bottom
-      anchors.margins: 1
-      height: Style.space(2)
-      radius: Style.cornerRadius > 0 ? height / 2 : 0
-      color: root.accent
+      anchors.fill: parent
+      anchors.margins: tab.border.width
+      preferredRendererType: Shapes.Shape.CurveRenderer
+      readonly property real r: Math.max(0, tab.radius - tab.border.width)
+      readonly property real t: Style.space(2)
+
+      Shapes.ShapePath {
+        strokeColor: "transparent"
+        fillColor: root.accent
+        PathSvg {
+          readonly property real w: underline.width
+          readonly property real h: underline.height
+          readonly property real r: underline.r
+          readonly property real t: underline.t
+          path: "M 0 " + (h - r) + " Q 0 " + h + " " + r + " " + h + " H " + (w - r)
+            + " Q " + w + " " + h + " " + w + " " + (h - r) + " V " + (h - r - t)
+            + " Q " + w + " " + (h - t) + " " + (w - r) + " " + (h - t) + " H " + r
+            + " Q 0 " + (h - t) + " 0 " + (h - r - t) + " Z"
+        }
+      }
     }
 
     MouseArea {
@@ -2176,20 +2114,17 @@ Panel {
       width: parent.width
       spacing: Style.space(2)
 
-      Text {
+      PanelText {
         text: readout.label
         color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
         font.letterSpacing: Style.space(0.8)
       }
 
-      Text {
+      PanelText {
         width: parent.width
         text: readout.value
         opacity: omihomo.coreActive ? 1 : 0.35
         color: readout.faded ? root.dim : root.foreground
-        font.family: root.fontFamily
         font.pixelSize: Style.font.subtitle
         font.underline: readout.tooltip !== "" && readoutMouse.containsMouse
         elide: Text.ElideRight
@@ -2359,7 +2294,7 @@ Panel {
     readonly property bool primary: groupName !== "" && groupName === omihomo.primaryGroup
 
     section: "group"
-    cursorStripe: false
+    fades: false
     current: groupName === root.browsedGroup
     bordered: true
     implicitWidth: chipRow.implicitWidth + Style.space(20)
@@ -2374,12 +2309,10 @@ Panel {
       anchors.centerIn: parent
       spacing: Style.space(6)
 
-      Text {
+      PanelText {
         anchors.verticalCenter: parent.verticalCenter
         text: chip.groupName
         color: chip.current ? root.surface : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
 
       Rectangle {
@@ -2416,29 +2349,21 @@ Panel {
     readonly property int delay: omihomo.configDelay(configRow.configName)
 
     section: "config"
-    current: false
+    current: configRow.selected
+    pendingChoice: configRow.pending && !configRow.selected
     implicitHeight: Style.space(30)
     onActivated: root.chooseConfigAt(configRow.rowIndex)
 
     RowLayout {
       anchors.fill: parent
-      anchors.leftMargin: Style.space(8)
+      anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(4)
       spacing: Style.space(8)
 
-      Radio {
-        solid: true
-        implicitWidth: Style.space(11)
-        implicitHeight: Style.space(11)
-        checked: configRow.selected
-        pending: configRow.pending && !configRow.selected
-      }
-
-      Text {
+      PanelText {
         Layout.fillWidth: true
         text: configRow.configName
         color: root.foreground
-        font.family: root.fontFamily
         font.pixelSize: Style.font.body
         font.bold: configRow.selected
         elide: Text.ElideRight
@@ -2454,16 +2379,14 @@ Panel {
         radius: Math.min(root.controlRadius, Style.space(5))
         color: pill.failed ? root.urgent
           : (configRow.delay > 0 && !pill.testing
-            ? Qt.tint(Util.alpha(root.foreground, 0.08), Util.alpha(root.urgent, root.latencyHeat(configRow.delay)))
+            ? root.latencyFill(Model.delayHeat(configRow.delay, root.delaySpan))
             : "transparent")
 
-        Text {
+        PanelText {
           id: pillText
           anchors.centerIn: parent
           text: pill.testing ? "···" : (pill.failed ? "timeout" : Model.formatDelay(configRow.delay))
           color: pill.failed ? root.surface : (configRow.delay > 0 ? root.foreground : root.faint)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
 
           SequentialAnimation on opacity {
             running: pill.testing
@@ -2499,12 +2422,11 @@ Panel {
     readonly property string quotaText: usage.text.replace(/(\S+) (\S+) of (\S+) \2/, "$1/$3 $2").replace("expires ", "exp ")
 
     section: "sub"
-    cursorStripe: false
     current: active
-    bordered: true
+    pendingChoice: card.pending && !card.active
     radius: root.cardRadius
-    color: root.fill
-    borderSpec: Border.flat(hasCursor ? root.accent : (failed ? root.urgent : (active ? Util.alpha(root.accent, 0.5) : root.line)), hasCursor ? 2 : 1)
+    restFill: root.fill
+    borderSpec: Border.flat(failed ? root.urgent : root.line, 1)
     implicitHeight: cardColumn.implicitHeight + Style.space(18)
     onActivated: root.activateSubscriptionAt(card.rowIndex)
 
@@ -2521,13 +2443,10 @@ Panel {
         Layout.fillWidth: true
         spacing: Style.space(8)
 
-        Radio { checked: card.active; pending: card.pending && !card.active }
-
-        Text {
+        PanelText {
           Layout.fillWidth: true
           text: card.subName
           color: root.foreground
-          font.family: root.fontFamily
           font.pixelSize: Style.font.body
           font.bold: card.active
           elide: Text.ElideRight
@@ -2561,7 +2480,6 @@ Panel {
 
       RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: Style.space(20)
         spacing: Style.space(8)
 
         Rectangle {
@@ -2580,13 +2498,11 @@ Panel {
           }
         }
 
-        Text {
+        PanelText {
           Layout.maximumWidth: cardColumn.width - Style.space(64)
           text: card.quotaText + (card.active ? " · "
             + (Model.relativeTime(card.subscription ? card.subscription.updatedAt : "", root.nowMs) || "never") : "")
           color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
         }
       }
@@ -2594,7 +2510,6 @@ Panel {
       Rectangle {
         visible: card.failed
         Layout.fillWidth: true
-        Layout.leftMargin: Style.space(20)
         implicitHeight: Math.max(errorMessage.implicitHeight, Style.space(24)) + Style.space(14)
         radius: root.controlRadius
         color: Util.alpha(root.urgent, 0.14)
@@ -2606,13 +2521,11 @@ Panel {
           anchors.margins: Style.space(7)
           spacing: Style.space(8)
 
-        Text {
+        PanelText {
           id: errorMessage
           Layout.fillWidth: true
           text: "▲ " + omihomo.lastError
           color: root.urgent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
           wrapMode: Text.WordWrap
         }
 
@@ -2627,15 +2540,12 @@ Panel {
       RowLayout {
         visible: root.removeArmed === card.subName
         Layout.fillWidth: true
-        Layout.leftMargin: Style.space(20)
         spacing: Style.space(6)
 
-        Text {
+        PanelText {
           Layout.fillWidth: true
           text: "Remove " + card.subName + "?"
           color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
         }
 
@@ -2666,11 +2576,8 @@ Panel {
     readonly property bool below: testing && root.ruleTest.hit >= 0 && (entry.eff < 0 || entry.eff > root.ruleTest.hit)
 
     section: own ? "rule" : "srule"
-    cursorStripe: false
-    borderSpec: hasCursor ? Border.flat(root.outline, 1) : Border.none()
     rowIndex: entry.i === undefined ? -1 : entry.i
     current: hit
-    currentFill: root.selectedFill
     implicitHeight: Style.space(22)
     opacity: below ? 0.5 : 1
 
@@ -2716,30 +2623,24 @@ Panel {
         }
       }
 
-      Text {
+      PanelText {
         Layout.preferredWidth: Style.space(56)
         text: root.shortRuleType(ruleRow.rule ? ruleRow.rule.type : "")
         color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
         elide: Text.ElideRight
       }
 
-      Text {
+      PanelText {
         Layout.fillWidth: true
         text: ruleRow.rule ? (ruleRow.rule.value !== "" ? ruleRow.rule.value : "everything else") : ""
         color: ruleRow.own || ruleRow.hit ? root.foreground : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
         elide: Text.ElideRight
       }
 
-      Text {
+      PanelText {
         visible: ruleRow.own && !!ruleRow.rule && ruleRow.rule.kind !== "prepend"
         text: ruleRow.rule && ruleRow.rule.kind ? ruleRow.rule.kind : ""
         color: root.faint
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
 
       Tag {
@@ -2750,12 +2651,10 @@ Panel {
         maxWidth: Style.space(84)
       }
 
-      Text {
+      PanelText {
         Layout.preferredWidth: Style.space(22)
         text: ruleRow.hit ? "hit" : (ruleRow.verdict === "miss" ? "no" : (ruleRow.verdict === "unknown" ? "?" : ""))
         color: ruleRow.hit ? root.accent : root.faint
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
 
       Item {
@@ -2791,8 +2690,6 @@ Panel {
     readonly property double bytes: stack ? stack.download + stack.upload : 0
 
     section: "conn"
-    cursorStripe: false
-    borderSpec: hasCursor ? Border.flat(root.accent, 2) : Border.none()
     implicitHeight: Style.space(24)
     opacity: live ? 1 : 0.55
     onActivated: root.activateConnectionAt(connectionRow.rowIndex)
@@ -2805,7 +2702,7 @@ Panel {
       width: (parent.width - 2) * Math.max(0.02, Math.min(1, root.largestStack > 5000 && connectionRow.bytes > 5000
         ? Math.log(connectionRow.bytes / 5000) / Math.log(root.largestStack / 5000) : 0))
       radius: root.controlRadius
-      color: connectionRow.hasCursor ? root.selectedFill : Util.alpha(root.foreground, 0.07)
+      color: Util.alpha(root.foreground, 0.07)
     }
 
     RowLayout {
@@ -2814,37 +2711,30 @@ Panel {
       anchors.rightMargin: Style.space(2)
       spacing: Style.space(6)
 
-      Text {
+      PanelText {
         text: connectionRow.live ? "●" : "○"
         color: connectionRow.live ? root.accent : root.faint
-        font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
 
-      Text {
+      PanelText {
         Layout.maximumWidth: Style.space(96)
         text: connectionRow.stack ? (connectionRow.stack.process || "unknown") : ""
         color: connectionRow.live ? root.foreground : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
         font.bold: connectionRow.live
         elide: Text.ElideRight
       }
 
-      Text {
+      PanelText {
         visible: connectionRow.stack && connectionRow.stack.count > 1
         text: connectionRow.stack ? "×" + connectionRow.stack.count : ""
         color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
 
-      Text {
+      PanelText {
         Layout.fillWidth: true
         text: connectionRow.stack ? connectionRow.stack.host : ""
         color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
         elide: Text.ElideRight
       }
 
@@ -2854,11 +2744,9 @@ Panel {
         maxWidth: Style.space(80)
       }
 
-      Text {
+      PanelText {
         text: Model.formatBytes(connectionRow.bytes)
         color: connectionRow.live ? root.foreground : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
       }
 
       InlineAction {
@@ -2920,23 +2808,20 @@ Panel {
           Layout.fillWidth: true
           spacing: Style.space(6)
 
-          Text {
+          PanelText {
             Layout.fillWidth: true
             text: settingRow.title
             color: root.foreground
-            font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
 
           Kbd { text: settingRow.keyHint; visible: text !== "" }
         }
 
-        Text {
+        PanelText {
           Layout.fillWidth: true
           text: settingRow.subtitle
           color: settingRow.urgentSubtitle ? root.urgent : root.faint
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
           wrapMode: Text.WordWrap
         }
       }
@@ -2956,22 +2841,53 @@ Panel {
         color: "transparent"
         border.width: 1
         border.color: root.outline
-        clip: true
 
         Row {
           id: modes
-          anchors.centerIn: parent
+          anchors.fill: parent
+          anchors.margins: 1
+
           Repeater {
             model: Model.MODES
-            SmallButton {
+
+            Item {
+              id: segment
               required property var modelData
-              text: String(modelData)
-              horizontalPadding: Style.space(8)
-              radius: 0
-              foreground: omihomo.effectiveMode === modelData ? root.surface : root.dim
-              color: omihomo.effectiveMode === modelData ? root.foreground : (hot ? root.hoverFill : "transparent")
-              borderSpec: Border.none()
-              onClicked: omihomo.setMode(String(modelData))
+              required property int index
+              readonly property bool on: omihomo.effectiveMode === modelData
+
+              implicitWidth: segmentText.implicitWidth + Style.space(18)
+              height: modes.height
+
+              Rectangle {
+                visible: segment.on
+                anchors.fill: parent
+                radius: Math.max(0, root.controlRadius - 1)
+                color: root.foreground
+              }
+
+              Rectangle {
+                visible: segment.on
+                anchors.fill: parent
+                anchors.leftMargin: segment.index === 0 ? parent.width / 2 : 0
+                anchors.rightMargin: segment.index === Model.MODES.length - 1 ? parent.width / 2 : 0
+                color: root.foreground
+              }
+
+              PanelText {
+                id: segmentText
+                anchors.centerIn: parent
+                text: String(segment.modelData)
+                color: segment.on ? root.surface : (segmentMouse.containsMouse ? root.foreground : root.dim)
+              }
+
+              MouseArea {
+                id: segmentMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: omihomo.setMode(String(segment.modelData))
+              }
             }
           }
         }
