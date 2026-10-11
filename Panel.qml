@@ -46,8 +46,8 @@ Panel {
   readonly property color line: Util.alpha(foreground, 0.11)
   readonly property color surface: Commons.Color.popups.background
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color hoverFill: Util.alpha(foreground, 0.09)
-  readonly property color selectedFill: Util.alpha(accent, 0.16)
+  readonly property color hoverFill: Style.hoverFillFor(foreground, accent)
+  readonly property color selectedFill: Style.selectedFillFor(foreground, accent)
   readonly property color fill: Util.alpha(foreground, 0.05)
   readonly property color outline: Util.alpha(foreground, 0.22)
   readonly property real controlRadius: Math.min(Style.cornerRadius, Style.space(7))
@@ -195,7 +195,7 @@ Panel {
     case "settings":
       rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" }, { s: "autostart" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
-      rows.push({ s: "repair" })
+      if (!omihomo.permissionsOk) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       break
     }
@@ -1099,7 +1099,7 @@ Panel {
             SectionLine {
               Layout.fillWidth: true
               title: "SUBSCRIPTIONS"
-              note: omihomo.subscriptions.length + " · " + (omihomo.activeSubscription !== "" ? "active " + omihomo.activeSubscription : "")
+              note: omihomo.subscriptions.length + (omihomo.activeSubscription !== "" ? " · active " + omihomo.activeSubscription : "")
             }
 
             Text {
@@ -1451,7 +1451,7 @@ Panel {
 
               SmallButton {
                 text: "close all"
-                foreground: root.urgent
+                danger: true
                 enabled: omihomo.openConnectionCount > 0
                 onClicked: omihomo.closeAllConnections()
               }
@@ -1590,6 +1590,7 @@ Panel {
                     keyHint: "P"
                     subtitle: "the proxy server must be on the tailnet"
                     checked: omihomo.tailnetProxyActive
+                    opacity: omihomo.tailscaleActive ? 1 : 0.45
                     onActivated: omihomo.toggleTailnetProxy()
                   }
                 }
@@ -1636,7 +1637,8 @@ Panel {
                     }
 
                     SmallButton {
-                      text: "↻ repair permissions"
+                      text: omihomo.permissionsOk ? "✓ permissions ok" : "↻ repair permissions"
+                      enabled: !omihomo.permissionsOk
                       tooltipText: "Repair permissions · R"
                       foreground: omihomo.permissionsOk ? root.foreground : root.urgent
                       hasCursor: root.at("repair")
@@ -1646,7 +1648,7 @@ Panel {
 
                     SmallButton {
                       text: root.uninstallArmed ? "confirm uninstall" : "uninstall…"
-                      foreground: root.urgent
+                      danger: true
                       hasCursor: root.at("uninstall")
                       onHovered: function(on) { if (on) root.focusRow("uninstall") }
                       onClicked: root.uninstallCore()
@@ -1791,16 +1793,17 @@ Panel {
   component SmallButton: Button {
     property bool ghost: false
     property bool primary: false
+    property bool danger: false
 
     bordered: true
-    foreground: primary ? root.surface : root.foreground
+    foreground: danger ? root.urgent : (primary ? root.surface : root.foreground)
     fontFamily: root.fontFamily
     fontSize: Style.font.bodySmall
     horizontalPadding: Style.space(9)
     verticalPadding: Style.space(3)
     radius: root.controlRadius
-    color: primary ? root.accent : (hot ? root.hoverFill : (ghost ? "transparent" : root.fill))
-    borderSpec: Border.flat(hasCursor ? root.accent : (ghost ? "transparent" : (primary ? root.accent : root.outline)), hasCursor ? 2 : 1)
+    color: primary ? root.accent : (hot ? root.hoverFill : (ghost || danger ? "transparent" : root.fill))
+    borderSpec: Border.flat(hasCursor ? root.accent : (danger ? Util.alpha(root.urgent, 0.55) : (ghost ? "transparent" : (primary ? root.accent : root.outline))), hasCursor ? 2 : 1)
     implicitHeight: Style.space(24)
     opacity: enabled ? 1 : 0.4
   }
@@ -1851,7 +1854,7 @@ Panel {
 
     implicitWidth: trackWidth
     implicitHeight: trackHeight
-    radius: height / 2
+    radius: Style.cornerRadius > 0 ? height / 2 : 0
     color: checked ? root.accent : root.hoverFill
     border.width: 1
     border.color: switchMouse.containsMouse ? foreground : (checked ? root.accent : root.outline)
@@ -1860,7 +1863,7 @@ Panel {
     Rectangle {
       width: parent.height - Style.space(6)
       height: width
-      radius: width / 2
+      radius: Style.cornerRadius > 0 ? width / 2 : 0
       x: panelSwitch.checked ? panelSwitch.width - width - Style.space(3) : Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
       color: panelSwitch.checked ? root.surface : root.dim
@@ -1916,7 +1919,7 @@ Panel {
 
     implicitWidth: Math.min(tagMetrics.advanceWidth, maxWidth) + Style.space(10)
     implicitHeight: tagText.implicitHeight + Style.space(2)
-    radius: pill ? height / 2 : Math.min(root.controlRadius, Style.space(4))
+    radius: pill ? (Style.cornerRadius > 0 ? height / 2 : 0) : Math.min(root.controlRadius, Style.space(4))
     color: filled ? tint : "transparent"
     border.width: 1
     border.color: Util.alpha(tint, strong ? 0.9 : 0.35)
@@ -2135,7 +2138,7 @@ Panel {
       anchors.bottom: parent.bottom
       anchors.margins: 1
       height: Style.space(2)
-      radius: height / 2
+      radius: Style.cornerRadius > 0 ? height / 2 : 0
       color: root.accent
     }
 
@@ -2150,7 +2153,7 @@ Panel {
 
     PanelToolTip {
       visible: tabMouse.containsMouse
-      text: tab.gear ? "Settings · M" : tab.label + " · " + tab.number
+      text: tab.gear ? (root.needsRepair ? "Settings · needs repair · M" : "Settings · M") : tab.label + " · " + tab.number
       fontFamily: root.fontFamily
     }
   }
@@ -2356,13 +2359,14 @@ Panel {
     readonly property bool primary: groupName !== "" && groupName === omihomo.primaryGroup
 
     section: "group"
+    cursorStripe: false
     current: groupName === root.browsedGroup
     bordered: true
     implicitWidth: chipRow.implicitWidth + Style.space(20)
     implicitHeight: chipRow.implicitHeight + Style.space(8)
-    radius: height / 2
+    radius: Style.cornerRadius > 0 ? height / 2 : 0
     color: current ? root.foreground : (hasCursor ? root.hoverFill : "transparent")
-    borderSpec: Border.flat(current ? root.foreground : root.outline, 1)
+    borderSpec: Border.flat(hasCursor ? root.accent : (current ? root.foreground : root.outline), hasCursor ? 2 : 1)
     onActivated: root.browseGroupAt(chip.rowIndex)
 
     Row {
@@ -2572,7 +2576,7 @@ Panel {
             width: parent.width * Math.max(0, card.usage.fraction)
             height: parent.height
             radius: parent.radius
-            color: card.active ? root.accent : root.faint
+            color: card.usage.fraction > 0.9 ? root.urgent : (card.active ? root.accent : root.faint)
           }
         }
 
@@ -2623,6 +2627,7 @@ Panel {
       RowLayout {
         visible: root.removeArmed === card.subName
         Layout.fillWidth: true
+        Layout.leftMargin: Style.space(20)
         spacing: Style.space(6)
 
         Text {
@@ -2684,7 +2689,7 @@ Panel {
           visible: !ruleRow.below
           width: Style.space(2)
           y: ruleRow.entry.eff === 0 ? parent.height / 2 : 0
-          height: ruleRow.hit ? parent.height / 2 : parent.height - y
+          height: ruleRow.hit ? Math.max(0, parent.height / 2 - y) : parent.height - y
           color: ruleRow.testing && !ruleRow.below ? root.accent : root.outline
         }
 
