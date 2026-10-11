@@ -12,15 +12,19 @@ core_install() {
   omi_require_command yay
   omi_with_lock omi_init_layout
   omi_install_packages
-  local binary
+  local binary enable_autostart=0
   binary=$(omi_mihomo_bin)
   [[ -n $binary ]] || omi_error "mihomo was not installed" 10
   omi_tun_permissions_ok || omi_error "mihomo was installed without the root permissions TUN needs" 1
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$OMIHOMO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
+  [[ -f $OMIHOMO_UNIT_FILE ]] || enable_autostart=1
   omi_write_unit
   omi_write_subscription_timer
   omi_systemctl --user daemon-reload
+  if ((enable_autostart)); then
+    omi_systemctl --user enable "$OMIHOMO_UNIT"
+  fi
   omi_systemctl --user enable --now omihomo-subscription-update.timer
   omi_note "mihomo is installed. Open the panel and add a subscription."
 }
@@ -72,6 +76,8 @@ core_uninstall() {
   "$OMIHOMO_SYSTEMCTL" --user disable --now omihomo-subscription-update.timer omihomo-subscription-update.service >/dev/null 2>&1 || true
   rm -f "$(dirname "$OMIHOMO_UNIT_FILE")"/omihomo-subscription-update.{service,timer}
   "$OMIHOMO_SYSTEMCTL" --user disable --now "$OMIHOMO_UNIT" >/dev/null 2>&1 || true
+  "$OMIHOMO_SYSTEMCTL" --user stop omihomo-subscription-startup.service >/dev/null 2>&1 || true
+  rm -f "$(dirname "$OMIHOMO_UNIT_FILE")/omihomo-subscription-startup.service"
   rm -f "$OMIHOMO_UNIT_FILE"
   "$OMIHOMO_SYSTEMCTL" --user daemon-reload >/dev/null 2>&1 || true
 
@@ -121,6 +127,11 @@ core_start() {
 core_sync() {
   [[ -f $OMIHOMO_OVERRIDE_FILE ]] || return 0
   omi_with_lock omi_init_layout
+  if omi_core_installed && [[ -f $OMIHOMO_UNIT_FILE &&
+    ! -f $(dirname "$OMIHOMO_UNIT_FILE")/omihomo-subscription-startup.service ]]; then
+    omi_write_unit
+    omi_systemctl --user daemon-reload
+  fi
   # Existing installations reach sync when the updated widget loads. Create
   # the new timer once; later syncs respect users who disabled it themselves.
   if omi_core_installed && [[ -x $HOME/.local/bin/omihomo &&
@@ -141,13 +152,11 @@ core_restart() {
   omi_systemctl --user restart "$OMIHOMO_UNIT"
 }
 
-# Enabling a unit that was never written fails, so autostart writes it the same
-# way `core start` does rather than assuming the core has been started once.
 core_autostart() {
   omi_require_core
   case ${1:-} in
     on)
-      [[ -f $OMIHOMO_UNIT_FILE ]] || omi_write_unit
+      omi_write_unit
       omi_systemctl --user daemon-reload
       omi_systemctl --user enable "$OMIHOMO_UNIT"
       ;;

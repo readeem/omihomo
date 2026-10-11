@@ -102,6 +102,11 @@ Checks run every minute, even with the panel closed or the core stopped. A refre
 running or stopped state, mode, and TUN state, and the selected configs that still exist in their
 groups. A failed download keeps the previous configuration and retries on the next check.
 
+Autostart is enabled by default on new installs. When enabled, every core start also refreshes
+all subscriptions, even before their scheduled deadlines. This runs separately after the core
+starts, so an unavailable provider leaves the cached configuration running. Existing installs
+keep their autostart setting, including an explicit choice to disable it.
+
 Each successful import or update records the interval and its timestamp, so a provider can change
 the interval in any response. A failed update keeps both previous values. Every download and
 controller call has its own timeout. The batch as a whole has none, so a slow subscription cannot
@@ -141,6 +146,7 @@ A proxy manager needs more than a config file. This is everything Omihomo change
 | pacman hook that reapplies both after a mihomo upgrade | `/usr/share/libalpm/hooks/omihomo-permissions.hook` | `core install`, `core repair` |
 | systemd user unit for the core | `~/.config/systemd/user/omihomo.service` | `core install` |
 | subscription refresh service and timer | `~/.config/systemd/user/omihomo-subscription-update.{service,timer}` | `core install`, first `core sync` after upgrade |
+| subscription startup refresh service | `~/.config/systemd/user/omihomo-subscription-startup.service` | core unit creation, first `core sync` after upgrade |
 | CLI symlink | `~/.local/bin/omihomo` | `core install` |
 | subscriptions, configs, rules, cache | `~/.local/share/omihomo/` | every write verb |
 | proxy env for tailscaled | `/etc/systemd/system/tailscaled.service.d/omihomo.conf` | `set tailscale on` only |

@@ -411,6 +411,7 @@ omi_write_unit() {
 [Unit]
 Description=Omihomo mihomo proxy core
 After=network-online.target
+Wants=omihomo-subscription-startup.service
 
 [Service]
 ExecStart=$(omi_mihomo_bin) -d $OMIHOMO_DATA_DIR -f $OMIHOMO_RUNTIME_FILE
@@ -418,6 +419,16 @@ Restart=on-failure
 
 [Install]
 WantedBy=default.target
+EOF
+  cat >"$(dirname "$OMIHOMO_UNIT_FILE")/omihomo-subscription-startup.service" <<EOF
+[Unit]
+Description=Refresh Omihomo subscriptions after an autostarted core starts
+After=$OMIHOMO_UNIT
+
+[Service]
+Type=oneshot
+ExecStart=$OMIHOMO_ROOT/bin/omihomo sub update-on-start
+TimeoutStartSec=infinity
 EOF
 }
 

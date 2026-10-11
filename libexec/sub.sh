@@ -433,17 +433,29 @@ subscription_update_if_due() {
   subscription_update "$name"
 }
 
-subscription_update_due() {
+subscription_update_batch() {
   [[ -f $OMIHOMO_SUBSCRIPTIONS_FILE ]] && omi_core_installed || return 0
-  local names name status=0
+  local command=${1:-update-if-due} names name status=0
   names=$(jq -r '.[].name' "$OMIHOMO_SUBSCRIPTIONS_FILE")
   while IFS= read -r name; do
     [[ -n $name ]] || continue
-    # A separate process keeps errexit effective inside subscription_update
-    # while allowing one failing subscription to leave the others runnable.
-    "$OMIHOMO_ROOT/libexec/sub.sh" update-if-due "$name" || status=1
+    "$OMIHOMO_ROOT/libexec/sub.sh" "$command" "$name" || status=1
   done <<<"$names"
   return "$status"
+}
+
+subscription_update_on_start() {
+  [[ -s $OMIHOMO_SUBSCRIPTIONS_FILE ]] && omi_core_installed &&
+    omi_unit_enabled && omi_unit_active || return 0
+  local attempt
+  for attempt in {1..20}; do
+    if omi_api_reachable; then
+      subscription_update_batch update
+      return $?
+    fi
+    sleep 0.5
+  done
+  omi_error "core controller was not ready for the startup subscription refresh" 12
 }
 
 subscription_remove() {
@@ -503,7 +515,8 @@ case ${1:-} in
   list) subscription_list ;;
   remove) omi_with_lock subscription_remove "${2:-}" ;;
   update) omi_with_lock subscription_update "${2:-}" ;;
-  update-due) subscription_update_due ;;
+  update-due) subscription_update_batch ;;
+  update-on-start) subscription_update_on_start ;;
   update-if-due) omi_with_lock subscription_update_if_due "${2:-}" ;;
   activate) omi_with_lock subscription_activate "${2:-}" ;;
   *) omi_error "unknown subscription command" 1 ;;

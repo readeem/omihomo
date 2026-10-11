@@ -17,6 +17,7 @@ omihomo sub list
 omihomo sub remove <name>
 omihomo sub update <name>
 omihomo sub update-due
+omihomo sub update-on-start
 omihomo sub activate <name>
 
 omihomo rule add <type> <value> <target>
@@ -65,6 +66,12 @@ runtime and restore its selections before reporting failure. Downloads have a 10
 connection timeout and a 60-second overall timeout.
 The oneshot service has no whole-batch timeout, so a long sequence of slow failed downloads
 cannot repeatedly prevent healthy later subscriptions from being checked.
+
+`sub update-on-start` refreshes all subscriptions regardless of their deadlines when autostart
+is enabled and the core is running. The core unit starts a separate oneshot service ordered after
+it, so startup does not wait for downloads and a refresh failure cannot stop the core. The command
+polls the controller up to twenty times, then uses the same refresh transactions as manual
+updates. Existing installs gain the startup service on their first `core sync` after upgrading.
 
 When the core is already running, rule writes hot-reload its config and leave the TUN adapter in
 place. A successful write means mihomo accepted the config; it does not prove that every existing
@@ -306,12 +313,13 @@ showing `GLOBAL`, `DIRECT`, or `REJECT` as manual config choices. `set mode glob
 active subscription has no groups, and `set group GLOBAL` is rejected.
 
 `core autostart on|off` is `systemctl --user enable|disable` on the unit, and is what the panel's
-settings view toggles. Turning it on writes the unit first when it is missing, so autostart works on
+settings view toggles. Turning it on writes the core and startup refresh units first, so autostart works on
 a core that has never been started.
 
 `core install` installs the AUR package and the required `go-yq`, `jq`, `curl`, and `nftables`
 tools, writes the user unit and default override, and prepares the permissions hook in one
-privileged call. `yay --sudoloop` keeps that authorization alive while it installs the AUR
+privileged call. A new installation enables core autostart; reinstalling preserves the existing
+autostart choice. `yay --sudoloop` keeps that authorization alive while it installs the AUR
 package, and the pacman hook makes the binary setuid root inside that package transaction (see
 ADR-0006). Installation is terminal-only because pacman's output and the one setup password
 prompt need somewhere to go. `core repair` is the explicit reapplication path, and it also clears

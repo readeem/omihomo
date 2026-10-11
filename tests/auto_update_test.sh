@@ -73,6 +73,59 @@ test_manual_refresh_resets_the_deadline() {
   assert_eq "$(fetch_count)" 2
 }
 
+test_startup_refreshes_all_subscriptions_before_their_deadlines() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  run_cli sub add https://example.test/subscription/second
+  export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_NOW=1735732860
+  run_cli sub update-on-start
+  assert_eq "$(fetch_count)" 4
+  assert_eq "$(run_cli sub list | jq '[.[].updated_at] | unique | .[]' -r)" 2025-01-01T12:01:00Z
+  [[ ! -e $TEST_ROOT/systemctl.log ]] || fail "startup refresh changed the core lifecycle"
+}
+
+test_startup_skips_refresh_when_autostart_is_disabled_or_core_is_stopped() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  run_cli sub update-on-start
+  export OMIHOMO_TEST_UNIT_ACTIVE=no OMIHOMO_TEST_UNIT_ENABLED=yes
+  run_cli sub update-on-start
+  assert_eq "$(fetch_count)" 1
+}
+
+test_startup_failure_keeps_cache_and_refreshes_other_subscriptions() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  run_cli sub add https://example.test/subscription/second
+  local cache runtime status
+  cache=$(<"$XDG_DATA_HOME/omihomo/cache/work.yaml")
+  runtime=$(<"$XDG_DATA_HOME/omihomo/runtime.yaml")
+  export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_NOW=1735732860
+  export OMIHOMO_TEST_FETCH_FAIL_URL=https://example.test/subscription/work
+  set +e
+  run_cli sub update-on-start 2>"$TEST_ROOT/error"
+  status=$?
+  set -e
+  assert_eq "$status" 1
+  assert_eq "$(<"$XDG_DATA_HOME/omihomo/cache/work.yaml")" "$cache"
+  assert_eq "$(<"$XDG_DATA_HOME/omihomo/runtime.yaml")" "$runtime"
+  assert_eq "$(run_cli sub list | jq -r '.[] | select(.name == "work") | .updated_at')" 2025-01-01T12:00:00Z
+  assert_eq "$(run_cli sub list | jq -r '.[] | select(.name == "second") | .updated_at')" 2025-01-01T12:01:00Z
+}
+
+test_startup_refresh_restores_connection_state() {
+  setup_connection_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_UNIT_ENABLED=yes
+  run_cli sub update-on-start
+  assert_eq "$(yq -r '.mode' "$TEST_ROOT/live.yaml")" global
+  assert_eq "$(yq -r '.tun.enable' "$TEST_ROOT/live.yaml")" true
+  assert_eq "$(jq -r '.["Group / Выбор"].now' "$TEST_ROOT/proxies.json")" 'Chosen / Москва'
+}
+
 test_failed_download_keeps_state_and_retries() {
   setup_refresh_test
   trap teardown_test RETURN
@@ -220,10 +273,14 @@ test_sync_installs_timer_for_existing_users_once() {
   trap teardown_test RETURN
   mkdir -p "$HOME/.local/bin"
   ln -s "$REPO_ROOT/bin/omihomo" "$HOME/.local/bin/omihomo"
+  printf '[Service]\nExecStart=/bin/true\n' >"$XDG_CONFIG_HOME/systemd/user/omihomo.service"
   run_cli core sync
   local directory="$XDG_CONFIG_HOME/systemd/user"
   assert_file_contains "$directory/omihomo-subscription-update.timer" 'Persistent=true'
   assert_file_contains "$directory/omihomo-subscription-update.service" 'sub update-due'
+  assert_file_contains "$directory/omihomo.service" 'Wants=omihomo-subscription-startup.service'
+  assert_file_contains "$directory/omihomo-subscription-startup.service" 'After=omihomo.service'
+  assert_file_contains "$directory/omihomo-subscription-startup.service" 'sub update-on-start'
   assert_file_contains "$TEST_ROOT/systemctl.log" 'enable --now omihomo-subscription-update.timer'
   local operations
   operations=$(<"$TEST_ROOT/systemctl.log")
@@ -345,6 +402,10 @@ test_slow_failures_do_not_starve_the_healthy_tail() {
 }
 
 tests=(
+  test_startup_refreshes_all_subscriptions_before_their_deadlines
+  test_startup_skips_refresh_when_autostart_is_disabled_or_core_is_stopped
+  test_startup_failure_keeps_cache_and_refreshes_other_subscriptions
+  test_startup_refresh_restores_connection_state
   test_elapsed_time_survives_sessions_and_refreshes_at_six_hours
   test_manual_refresh_resets_the_deadline
   test_failed_download_keeps_state_and_retries

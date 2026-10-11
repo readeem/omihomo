@@ -1475,6 +1475,13 @@ test_install_has_one_privileged_setup_boundary() {
   assert_file_contains "$XDG_CONFIG_HOME/systemd/user/omihomo-subscription-update.timer" 'OnCalendar=*-*-* *:*:00'
   assert_file_contains "$XDG_CONFIG_HOME/systemd/user/omihomo-subscription-update.service" 'sub update-due'
   assert_file_contains "$TEST_ROOT/systemctl.log" 'enable --now omihomo-subscription-update.timer'
+  assert_file_contains "$TEST_ROOT/systemctl.log" 'enable omihomo.service'
+
+  rm "$TEST_ROOT/systemctl.log"
+  script -qec "$REPO_ROOT/bin/omihomo core install" /dev/null >/dev/null
+  if grep -Fxq 'enable omihomo.service' "$TEST_ROOT/systemctl.log"; then
+    fail "reinstall overrode the existing autostart choice"
+  fi
 }
 
 test_active_override_change_reports_unreachable_controller() {
@@ -1524,10 +1531,12 @@ test_uninstall_removes_every_artifact() {
   mkdir -p "$(dirname "$unit")"
   printf '[Service]\n' >"$unit"
   touch "$(dirname "$unit")"/omihomo-subscription-update.{service,timer}
+  touch "$(dirname "$unit")/omihomo-subscription-startup.service"
 
   run_cli core uninstall
 
   [[ ! -e $unit ]] || fail "unit file survived uninstall"
+  [[ ! -e $(dirname "$unit")/omihomo-subscription-startup.service ]] || fail "startup service survived uninstall"
   [[ ! -e $(dirname "$unit")/omihomo-subscription-update.timer ]] || fail "refresh timer survived uninstall"
   [[ ! -e $(dirname "$unit")/omihomo-subscription-update.service ]] || fail "refresh service survived uninstall"
   assert_file_contains "$TEST_ROOT/systemctl.log" 'disable --now omihomo-subscription-update.timer omihomo-subscription-update.service'
