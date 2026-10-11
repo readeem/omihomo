@@ -1682,7 +1682,6 @@ Panel {
 
     property string section: ""
     property int rowIndex: -1
-    property bool fades: true
     property bool pendingChoice: false
     property color restFill: "transparent"
     readonly property alias hovered: navMouse.containsMouse
@@ -1696,7 +1695,7 @@ Panel {
     radius: root.controlRadius
     borderSpec: Border.none()
     color: restFill
-    gradient: fades && (current || pendingChoice || hasCursor) ? fade : null
+    gradient: current || pendingChoice || hasCursor ? fade : null
 
     Gradient {
       id: fade
@@ -2323,14 +2322,12 @@ Panel {
     readonly property bool primary: groupName !== "" && groupName === omihomo.primaryGroup
 
     section: "group"
-    fades: false
     current: groupName === root.browsedGroup
     bordered: true
     implicitWidth: chipRow.implicitWidth + Style.space(20)
     implicitHeight: chipRow.implicitHeight + Style.space(8)
     radius: Style.cornerRadius > 0 ? height / 2 : 0
-    color: current ? root.accent : (hasCursor ? root.hoverFill : "transparent")
-    borderSpec: Border.flat(hasCursor ? (current ? root.foreground : root.accent) : (current ? root.accent : root.outline), hasCursor ? 2 : 1)
+    borderSpec: Border.flat(current ? Util.alpha(root.accent, 0.5) : root.outline, 1)
     onActivated: root.browseGroupAt(chip.rowIndex)
 
     Row {
@@ -2341,7 +2338,7 @@ Panel {
       PanelText {
         anchors.verticalCenter: parent.verticalCenter
         text: chip.groupName
-        color: chip.current ? root.surface : root.dim
+        color: chip.current ? root.foreground : root.dim
       }
 
       Rectangle {
@@ -2350,7 +2347,7 @@ Panel {
         width: Style.space(5)
         height: width
         radius: width / 2
-        color: chip.current ? root.surface : root.accent
+        color: root.accent
       }
     }
 
