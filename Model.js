@@ -217,11 +217,18 @@ function parseApiInfo(raw) {
 
 function parseConfigs(raw) {
   var data = parseJson(raw, null)
-  if (!data || typeof data !== "object") return { mode: "", mixedPort: 0, port: 0 }
+  if (!data || typeof data !== "object") data = {}
+  var tun = data.tun || {}
   return {
     mode: text(data.mode).toLowerCase(),
     mixedPort: number(data["mixed-port"], 0),
-    port: number(data.port, 0)
+    port: number(data.port, 0),
+    routing: {
+      tunEnabled: tun.enable === true,
+      tunAutoRoute: tun["auto-route"] === true,
+      routeExcludeAddresses: Array.isArray(tun["route-exclude-address"])
+        ? tun["route-exclude-address"].filter(function(cidr) { return typeof cidr === "string" }) : []
+    }
   }
 }
 
@@ -391,7 +398,13 @@ function parseConnections(raw, nowMs) {
       id: text(entry.id),
       host: connectionHost(metadata),
       network: text(metadata.network).toUpperCase(),
-      process: baseName(metadata.processPath),
+      process: baseName(metadata.processPath) || text(metadata.process)
+        || (metadata.type === "Inner" ? "mihomo · internal" : ""),
+      inboundType: text(metadata.type),
+      sourceIP: text(metadata.sourceIP),
+      sourcePort: number(metadata.sourcePort, 0),
+      destinationIP: text(metadata.destinationIP),
+      destinationPort: number(metadata.destinationPort, 0),
       chain: chains.length > 0 ? text(chains[0]) : "",
       rule: text(entry.rule) + (text(entry.rulePayload) !== "" ? "(" + text(entry.rulePayload) + ")" : ""),
       upload: number(entry.upload, 0),
@@ -403,6 +416,36 @@ function parseConnections(raw, nowMs) {
     })
   }
   return out
+}
+
+/** Fills missing TUN process names from unique sockets on a local address. */
+function enrichConnections(items, table) {
+  var addresses = table && Array.isArray(table.addresses) ? table.addresses : []
+  var sockets = table && Array.isArray(table.sockets) ? table.sockets : []
+  return items.map(function(entry) {
+    if (entry.process !== "" || entry.inboundType !== "Tun" || entry.sourcePort <= 0) return entry
+    var source = socketAddress(entry.sourceIP)
+    if (addresses.map(socketAddress).indexOf(source) < 0) return entry
+    var matches = sockets.filter(function(socket) {
+      if (text(socket.network).toUpperCase() !== entry.network || socket.localPort !== entry.sourcePort) return false
+      var local = socketAddress(socket.localIP)
+      var wildcard = local === "*" || (local === "0.0.0.0" && ipv4Number(source) !== null)
+        || (local === "::" && source.indexOf(":") >= 0)
+      if (local !== source && !wildcard) return false
+      if (entry.network === "TCP" && socket.peerPort === 0) return false
+      return socket.peerPort === 0 || (socket.peerPort === entry.destinationPort
+        && socketAddress(socket.peerIP) === socketAddress(entry.destinationIP))
+    })
+    if (matches.length !== 1 || text(matches[0].process) === "") return entry
+    var enriched = {}
+    for (var key in entry) enriched[key] = entry[key]
+    enriched.process = text(matches[0].process)
+    return enriched
+  })
+}
+
+function socketAddress(value) {
+  return text(value).replace(/^\[|\]$/g, "").replace(/^::ffff:/i, "").toLowerCase()
 }
 
 // Fold one snapshot into the log. An id that is still there keeps its original
@@ -427,6 +470,10 @@ function mergeConnectionLog(log, items, nowMs, cap) {
     kept[entry.id] = true
     if (update) {
       update.startMs = entry.startMs
+      if (update.process === "" && update.network === entry.network
+        && update.sourceIP === entry.sourceIP && update.sourcePort === entry.sourcePort
+        && update.destinationIP === entry.destinationIP && update.destinationPort === entry.destinationPort)
+        update.process = entry.process
       out.push(update)
     } else if (entry.open) {
       out.push(closedEntry(entry, now))
@@ -616,7 +663,7 @@ function inIpv4Cidr(ip, cidr) {
   var parts = text(cidr).split("/")
   var base = ipv4Number(parts[0])
   var bits = parts.length > 1 ? number(parts[1], -1) : 32
-  if (base === null || bits < 0 || bits > 32) return false
+  if (base === null || bits < 0 || bits > 32 || bits !== Math.floor(bits)) return false
   var size = Math.pow(2, 32 - bits)
   return Math.floor(ip / size) === Math.floor(base / size)
 }
@@ -654,19 +701,31 @@ function ruleVerdict(rule, host) {
   return "unknown"
 }
 
-// Walks `rules` top to bottom the way mihomo does and stops at the first hit.
-// `verdicts` covers every rule up to and including it, so the list can mark
-// which ones were passed and which could not be judged from here.
-function testRules(rules, query) {
+/** Checks active IPv4 TUN exclusions, then reports the first locally evaluable rule hit. */
+function testRules(rules, query, routing) {
   var host = ruleQueryHost(query)
-  var out = { host: host, hit: -1, verdicts: [], unknown: 0 }
+  var out = { host: host, hit: -1, verdicts: [], unknown: 0, certain: false,
+    bypassed: false, bypassCidr: "" }
   if (host === "") return out
+  var ip = ipv4Number(host)
+  if (ip !== null && routing && routing.tunEnabled && routing.tunAutoRoute) {
+    var excludes = routing.routeExcludeAddresses || []
+    for (var j = 0; j < excludes.length; j++) {
+      if (inIpv4Cidr(ip, excludes[j])) {
+        out.bypassed = true
+        out.bypassCidr = excludes[j]
+        out.certain = true
+        return out
+      }
+    }
+  }
   var list = rules && typeof rules.length === "number" ? rules : []
   for (var i = 0; i < list.length; i++) {
     var verdict = ruleVerdict(list[i], host)
     out.verdicts.push(verdict)
     if (verdict === "hit") {
       out.hit = i
+      out.certain = out.unknown === 0
       return out
     }
     if (verdict === "unknown") out.unknown++
@@ -896,6 +955,7 @@ if (typeof module !== "undefined") {
     parseTraffic: parseTraffic,
     parseTrace: parseTrace,
     parseConnections: parseConnections,
+    enrichConnections: enrichConnections,
     mergeConnectionLog: mergeConnectionLog,
     stackConnections: stackConnections,
     openConnectionCount: openConnectionCount,

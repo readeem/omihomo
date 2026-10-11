@@ -27,6 +27,7 @@ arguments=("${arguments[@]}")
 case $command_name in
   core) script="$OMIHOMO_ROOT/libexec/core.sh" ;;
   sub) script="$OMIHOMO_ROOT/libexec/sub.sh" ;;
+  socket-processes) script="$OMIHOMO_ROOT/libexec/socket-processes.sh" ;;
   rule|set) script="$OMIHOMO_ROOT/libexec/override.sh"; arguments=("$command_name" "${arguments[@]}") ;;
   status|api-info) script="$OMIHOMO_ROOT/libexec/state.sh"; arguments=("$command_name" "${arguments[@]}") ;;
   *)

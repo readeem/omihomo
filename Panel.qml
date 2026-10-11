@@ -89,7 +89,7 @@ Panel {
 
   readonly property var ownHeadRules: omihomo.rules.filter(function(rule) { return rule.kind === "prepend" })
   readonly property var effectiveRules: ownHeadRules.concat(omihomo.injectedRules, omihomo.subscriptionRules)
-  readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery)
+  readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery, omihomo.routing)
   readonly property string ruleHitTarget: ruleTest.hit >= 0 ? effectiveRules[ruleTest.hit].target : ""
   readonly property var ruleTally: Model.ruleTargetTally(effectiveRules)
   readonly property var ruleEntries: {
@@ -1233,8 +1233,9 @@ Panel {
               spacing: Style.space(6)
 
               PanelText {
-                visible: root.ruleTest.hit >= 0
-                text: "→ " + root.ruleHitTarget
+                visible: root.ruleTest.hit >= 0 || root.ruleTest.bypassed
+                text: root.ruleTest.bypassed ? "Outside VPN"
+                  : (root.ruleTest.certain ? "→ " : "possibly → ") + root.ruleHitTarget
                 color: root.accent
                 font.pixelSize: Style.font.body
                 font.bold: true
@@ -1243,7 +1244,8 @@ Panel {
               PanelText {
                 Layout.fillWidth: true
                 text: root.ruleTest.host === "" ? "Type a domain or an IP to see which rule catches it."
-                  : (root.ruleTest.hit < 0 ? "No rule matches."
+                  : (root.ruleTest.bypassed ? "Uses the system route · excluded by " + root.ruleTest.bypassCidr
+                    : root.ruleTest.hit < 0 ? "No rule matches."
                     : "rule " + (root.ruleTest.hit + 1) + " of " + root.effectiveRules.length
                       + (root.ruleTest.unknown > 0 ? " · " + root.ruleTest.unknown + " above depend on DNS, rule sets, or the app" : ""))
                 color: root.dim

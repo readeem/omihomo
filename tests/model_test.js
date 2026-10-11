@@ -219,6 +219,45 @@ const conn = (id, host, process, over) => Object.assign({
   metadata: { network: "tcp", host, destinationPort: "443", processPath: process }
 }, over || {})
 
+test("connection labels use the API name and identify internal traffic", () => {
+  const items = Model.parseConnections(snapshot([
+    { id: "named", metadata: { process: "firefox", type: "Tun" } },
+    { id: "internal", metadata: { type: "Inner" } }
+  ])).items
+  assert.equal(items[0].process, "firefox")
+  assert.equal(items[1].process, "mihomo · internal")
+})
+
+test("socket lookup identifies only unambiguous local connections", () => {
+  const item = Model.parseConnections(snapshot([{
+    id: "udp", metadata: { type: "Tun", network: "udp", sourceIP: "192.168.42.10",
+      sourcePort: "53000", destinationIP: "203.0.113.5", destinationPort: "443" }
+  }])).items[0]
+  const socket = { network: "udp", localIP: "0.0.0.0", localPort: 53000,
+    peerIP: "0.0.0.0", peerPort: 0, process: "firefox" }
+  const table = { addresses: ["192.168.42.10"], sockets: [socket] }
+  assert.equal(Model.enrichConnections([item], table)[0].process, "firefox")
+  assert.equal(Model.enrichConnections([item], { addresses: [], sockets: [socket] })[0].process, "")
+  assert.equal(Model.enrichConnections([item], { addresses: table.addresses,
+    sockets: [socket, {...socket, process: "another-app"}] })[0].process, "")
+  assert.equal(Model.enrichConnections([item], { addresses: table.addresses,
+    sockets: [{...socket, network: "tcp"}] })[0].process, "")
+  assert.equal(Model.enrichConnections([item], { addresses: table.addresses,
+    sockets: [{...socket, peerPort: 443, peerIP: "203.0.113.6"}] })[0].process, "")
+  assert.equal(Model.enrichConnections([{...item, process: "known"}], table)[0].process, "known")
+})
+
+test("a connection keeps its resolved owner when the socket disappears", () => {
+  const raw = snapshot([{id: "udp", metadata: {type: "Tun", network: "udp",
+    sourceIP: "192.168.42.10", sourcePort: "53000", destinationIP: "203.0.113.5", destinationPort: "443"}}])
+  const first = Model.parseConnections(raw).items
+  first[0].process = "firefox"
+  assert.equal(Model.mergeConnectionLog(first, Model.parseConnections(raw).items)[0].process, "firefox")
+  const changed = Model.parseConnections(raw).items
+  changed[0].sourcePort = 53001
+  assert.equal(Model.mergeConnectionLog(first, changed)[0].process, "")
+})
+
 test("a connection snapshot carries a host, a start, and its totals", () => {
   const now = Date.parse("2026-08-18T12:00:00Z")
   const parsed = Model.parseConnections(snapshot([
@@ -350,6 +389,28 @@ test("IP rules on a hostname depend on the core's DNS answer", () => {
   assert.equal(Model.ruleVerdict({ type: "IP-CIDR", value: "192.168.0.0/16" }, "192.169.0.1"), "miss")
   assert.equal(Model.ruleVerdict({ type: "DOMAIN-KEYWORD", value: "openai" }, "chat.openai.com"), "hit")
   assert.equal(Model.ruleVerdict({ type: "PROCESS-NAME", value: "steam" }, "steampowered.com"), "unknown")
+})
+
+test("rule testing accounts for the active TUN route exclusions", () => {
+  const rules = [{ type: "MATCH", target: "Proxy" }]
+  const routing = { tunEnabled: true, tunAutoRoute: true, routeExcludeAddresses: ["192.168.0.0/16"] }
+  const result = Model.testRules(rules, "192.168.42.1", routing)
+  assert.equal(result.bypassed, true)
+  assert.equal(result.bypassCidr, "192.168.0.0/16")
+  assert.equal(result.hit, -1)
+  assert.equal(Model.testRules(rules, "203.0.113.5", routing).bypassed, false)
+  assert.equal(Model.testRules(rules, "192.168.42.1", {...routing, tunEnabled: false}).hit, 0)
+  assert.equal(Model.testRules(rules, "192.168.42.1", {...routing, tunAutoRoute: false}).hit, 0)
+  assert.equal(Model.testRules(rules, "192.168.42.1", {...routing, routeExcludeAddresses: []}).hit, 0)
+  const parsed = Model.parseConfigs(JSON.stringify({tun: {enable: true, "auto-route": true,
+    "route-exclude-address": ["192.168.0.0/16"]}}))
+  assert.deepEqual(parsed.routing, routing)
+})
+
+test("a later rule hit is tentative when an earlier rule is unresolved", () => {
+  assert.equal(Model.testRules([{type: "RULE-SET", value: "private", target: "DIRECT"},
+    {type: "MATCH", target: "Proxy"}], "192.168.42.1").certain, false)
+  assert.equal(Model.testRules([{type: "MATCH", target: "Proxy"}], "203.0.113.5").certain, true)
 })
 
 test("targets tally largest first", () => {

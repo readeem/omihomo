@@ -78,6 +78,7 @@ Item {
   readonly property string apiHeader: "Authorization: Bearer " + apiSecret + "\n"
   property int mixedPort: 0
   property string mode: ""
+  property var routing: ({})
   property string _desiredMode: ""
   readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
 
@@ -101,6 +102,9 @@ Item {
   // core started, open or closed, and `connectionStacks` is what the view
   // draws — one row per process, destination, and state.
   property var connectionLog: []
+  property var _pendingConnections: null
+  property string _connectionLookupRuntime: ""
+  property string _connectionReadRuntime: ""
   readonly property var connectionStacks: Model.stackConnections(connectionLog)
   readonly property int openConnectionCount: Model.openConnectionCount(connectionLog)
   readonly property int connectionLogCap: 200
@@ -248,7 +252,7 @@ Item {
   // looking at it.
   function refreshConnections() {
     if (!apiReady || !panelOpen) return
-    connectionsCmd.launch(apiArgs("GET", "/connections"))
+    if (connectionsCmd.launch(apiArgs("GET", "/connections"))) _connectionReadRuntime = runtimeKey
   }
 
   // IP and latency are the only fields that cost a network round trip, so they
@@ -341,6 +345,8 @@ Item {
     groups = []
     configEntries = ({})
     connectionLog = []
+    _pendingConnections = null
+    routing = ({})
     proxiesLoaded = false
     mixedPort = 0
     configTestResults = ({})
@@ -354,6 +360,7 @@ Item {
     var parsed = Model.parseConfigs(raw)
     mode = parsed.mode
     mixedPort = parsed.mixedPort > 0 ? parsed.mixedPort : parsed.port
+    routing = parsed.routing
     if (_desiredMode !== "" && mode === _desiredMode) _desiredMode = ""
     runQueuedTrace()
   }
@@ -790,13 +797,48 @@ Item {
     id: connectionsCmd
     input: root.apiHeader
     onFinished: function(code, out) {
+      if (root._connectionReadRuntime !== root.runtimeKey) return
       if (code !== 0) return root.noteApiFailure(code)
-      var now = Date.now()
-      var parsed = Model.parseConnections(out, now)
-      root.connectionLog = Model.mergeConnectionLog(root.connectionLog, parsed.items, now,
-        root.connectionLogCap)
-      root.connectionsDownload = parsed.downloadTotal
-      root.connectionsUpload = parsed.uploadTotal
+      root.applyConnections(out)
+    }
+  }
+
+  /** Records a controller snapshot and looks up missing process names. */
+  function applyConnections(out) {
+    var now = Date.now()
+    var parsed = Model.parseConnections(out, now)
+    connectionLog = Model.mergeConnectionLog(connectionLog, parsed.items, now, connectionLogCap)
+    connectionsDownload = parsed.downloadTotal
+    connectionsUpload = parsed.uploadTotal
+    if (cliPath !== "" && parsed.items.some(function(entry) {
+      return entry.process === "" && entry.inboundType === "Tun"
+    }) && socketProcessesCmd.launch(cli(["socket-processes"]))) {
+      _pendingConnections = parsed
+      _connectionLookupRuntime = runtimeKey
+    }
+  }
+
+  /** Enriches matching open connections from a lookup for the current core run. */
+  function finishConnections(socketTable) {
+    var parsed = _pendingConnections
+    _pendingConnections = null
+    if (!parsed || _connectionLookupRuntime !== runtimeKey || !socketTable) return
+    var candidates = Object.create(null)
+    parsed.items.forEach(function(entry) { candidates[entry.id] = entry })
+    connectionLog = connectionLog.map(function(entry) {
+      var candidate = candidates[entry.id]
+      if (!entry.open || !candidate || candidate.network !== entry.network
+        || candidate.sourceIP !== entry.sourceIP || candidate.sourcePort !== entry.sourcePort
+        || candidate.destinationIP !== entry.destinationIP || candidate.destinationPort !== entry.destinationPort)
+        return entry
+      return Model.enrichConnections([entry], socketTable)[0]
+    })
+  }
+
+  Cmd {
+    id: socketProcessesCmd
+    onFinished: function(code, out) {
+      root.finishConnections(code === 0 ? Model.parseJson(out, null) : null)
     }
   }
 

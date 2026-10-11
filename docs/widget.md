@@ -91,7 +91,10 @@ that would catch it, marks the ones above it as passed, and fades the ones below
 rules in mihomo's order, your prepended rules first, and judges what a host string can tell:
 domain, suffix, keyword, IPv4 CIDR, private GeoIP, and the final match. A rule that depends on
 anything else — a DNS answer, a rule set, a geo database, the process — is marked `?`, and the
-verdict says how many such rules sat above the hit, because the core may stop at one of them. A bar
+verdict says how many such rules sat above the hit and marks its target as tentative, because the
+core may stop at one of them. An IPv4 address excluded by the active TUN routes is shown as outside
+the VPN, using the system route, before any rule is tested. This describes transparent TUN traffic;
+an application explicitly configured to use the proxy can still send an excluded address to it. A bar
 under the tester shows how the rules divide between targets. Your rules are editable and deletable,
 and the add form under the list covers the four types from ticket #7. The rules Omihomo injects for
 the Tailscale integration and the tailnet proxy follow under their own heading, read-only, as
@@ -103,8 +106,12 @@ view with the form taking keys from anywhere in the panel.
 The **connections view** is the same popup over a log rather than a live list. `GET /connections`
 only states what is open right now, so `Service.qml` keeps its own record: every poll is diffed
 against the one before it, and an id that has stopped appearing is retained as a closed entry with
-the last figures it reported. The view draws open traffic as process → config flows, each as thick
-as the bytes it carried, with the pair under the cursor lit; past six processes or four configs the
+the last figures it reported. The view draws open traffic as process → config flows.
+Labels use the process path or the API's process name; internal core
+connections are labeled `mihomo · internal`. For unidentified TUN traffic, a local socket lookup
+fills a name only when the source address is local and exactly one matching socket has an owner
+visible to the current account. Ambiguous and forwarded traffic remains unidentified. Each flow
+is as thick as the bytes it carried, with the pair under the cursor lit; past six processes or four configs the
 smallest fold into `other`. Below it, the log stacks by process, destination, and state — Firefox's
 four open sockets to `github.com` are one row reading `×4`, and the ones it has finished with are a
 second, dimmed row. A bar behind each row is its bytes on a log scale. Open stacks sort above

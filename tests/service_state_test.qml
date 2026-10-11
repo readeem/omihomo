@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import "." as Omihomo
+import "Model.js" as Model
 
 // Quickshell links its QML modules into the `qs` executable, so this focused
 // service test runs as a tiny shell config rather than through qmltestrunner.
@@ -41,6 +42,8 @@ ShellRoot {
   Omihomo.Service { id: staleApiService; cliPath: "/usr/bin/true" }
   Omihomo.Service { id: redirectService; cliPath: "/usr/bin/true" }
   Omihomo.Service { id: snapshotService; cliPath: "/usr/bin/true" }
+  Omihomo.Service { id: connectionService }
+  Omihomo.Service { id: slowConnectionService; cliPath: "omihomo-fake-cli" }
   // Status from `true` is empty, so a started core never confirms.
   Omihomo.Service { id: settleService; cliPath: "/usr/bin/true"; settleTimeoutMs: 100 }
 
@@ -88,8 +91,39 @@ ShellRoot {
       stop()
       check(settleService.coreActive, false, "an unconfirmed start gives up after its deadline")
       check(settleService.lastError, "mihomo did not reach the requested state", "an unconfirmed start is reported")
-      finish()
+      slowConnectionCheck.start()
     }
+  }
+
+  Timer {
+    id: slowConnectionCheck
+    interval: 20
+    repeat: true
+    property int ticks: 0
+    property bool enriched: false
+    onTriggered: {
+      ticks += 1
+      slowConnectionService.applyConnections(JSON.stringify({downloadTotal: ticks, connections: [{
+        id: "slow", download: ticks, metadata: {
+          type: "Tun", network: "udp", sourceIP: "192.168.42.10", sourcePort: 53000
+        }
+      }]}))
+      check(slowConnectionService.connectionsDownload, ticks, "slow lookup cannot delay byte totals")
+      check(slowConnectionService.connectionLog.length, 1, "slow lookup cannot delay connection snapshots")
+      if (slowConnectionService.connectionLog.length > 0)
+        enriched = enriched || slowConnectionService.connectionLog[0].process === "browser"
+      if (ticks < 20) return
+      stop()
+      check(enriched, true, "lookup completes while faster snapshots keep arriving")
+      slowConnectionService.cliPath = ""
+      slowConnectionFinish.start()
+    }
+  }
+
+  Timer {
+    id: slowConnectionFinish
+    interval: 200
+    onTriggered: testRoot.finish()
   }
 
   function status(state, tun, autostart, redirect, uptime) {
@@ -213,6 +247,48 @@ ShellRoot {
     snapshotService.applyStatus(status("on", false, false, true, "2026-09-24 10:05:00"))
     check(snapshotService.groups.length, 0, "a restarted core drops the old groups")
     check(snapshotService.configTestState("A"), "", "a restarted core drops old latency results")
+
+    connectionService.applyStatus(status("on", true, false, false, "2026-09-24 10:00:00"))
+    connectionService.applyConfigs(JSON.stringify({mode: "rule", tun: {
+      enable: true, "auto-route": true, "route-exclude-address": ["192.168.0.0/16"]
+    }}))
+    check(Model.testRules([{type: "MATCH", target: "Proxy"}], "192.168.42.1",
+      connectionService.routing).bypassed, true, "live configs carry TUN exclusions into the tester")
+    var pending = Model.parseConnections(JSON.stringify({connections: [{id: "example", metadata: {
+      type: "Tun", network: "udp", sourceIP: "192.168.42.10", sourcePort: "53000"
+    }}]}))
+    connectionService.connectionLog = pending.items
+    connectionService._pendingConnections = pending
+    connectionService._connectionLookupRuntime = connectionService.runtimeKey
+    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
+      network: "udp", localIP: "0.0.0.0", localPort: 53000, peerPort: 0, process: "browser"
+    }]})
+    check(connectionService.connectionLog[0].process, "browser", "socket lookup enriches the recorded snapshot")
+    connectionService._pendingConnections = pending
+    connectionService.applyConnections('{"downloadTotal":49,"connections":[]}')
+    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
+      network: "udp", localIP: "0.0.0.0", localPort: 53000, peerPort: 0, process: "other"
+    }]})
+    check(connectionService.connectionLog[0].open, false, "late lookup cannot reopen a closed connection")
+    check(connectionService.connectionsDownload, 49, "late lookup cannot restore old byte totals")
+    connectionService._pendingConnections = pending
+    connectionService.applyConnections(JSON.stringify({connections: [{id: "example", metadata: {
+      type: "Tun", network: "udp", sourceIP: "192.168.42.10", sourcePort: 53001
+    }}]}))
+    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
+      network: "udp", localIP: "0.0.0.0", localPort: 53001, peerPort: 0, process: "other"
+    }]})
+    check(connectionService.connectionLog[0].process, "", "late lookup cannot label a changed endpoint")
+    connectionService._pendingConnections = pending
+    connectionService.startedMs += 1
+    connectionService.connectionLog = pending.items
+    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
+      network: "udp", localIP: "0.0.0.0", localPort: 53000, peerPort: 0, process: "browser"
+    }]})
+    check(connectionService.connectionLog[0].process, "", "old socket results cannot label another core run")
+    connectionService.forgetRuntime()
+    check(connectionService._pendingConnections, null, "runtime reset drops pending connection enrichment")
+    check(connectionService.routing.tunEnabled === true, false, "runtime reset drops old TUN routing")
 
     settleService.applyStatus(status("stopped", false, false))
     settleService.toggleCore()

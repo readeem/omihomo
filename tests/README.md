@@ -1,12 +1,16 @@
 # Tests
 
-Five suites, one runner:
+Six suites, one runner:
 
 - `model_test.js` exercises `Model.js`, the widget's parsing and formatting seam, under
   `node --test`. Everything the panel renders passes through it, and none of it needs QML.
+- `socket_processes_test.sh` checks the local socket lookup through the real CLI and model with
+  fake interface and socket data, including wildcard bindings, IPv6, absent owners, ambiguous
+  matches, and unavailable tools. It never opens a network connection or changes system state.
 - `service_state_test.sh` runs `Service.qml` in an isolated Quickshell config and verifies that
   a stale status response cannot repaint over a pending toggle, that an unconfirmed toggle gives
-  up after its deadline, and that a controller outage keeps the last snapshot. Its fake CLI is
+  up after its deadline, that a controller outage keeps the last snapshot, and that slow socket
+  lookups cannot delay connections or overwrite newer state. Its fake CLI is
   `/usr/bin/true`, so it cannot touch the real core, systemd unit, files, or controller.
 - `fake_controller_test.sh` runs `ping_state_test.qml` and `live_state_test.qml` against a fake
   controller. The first holds requests open to verify the in-progress, success, and persistent

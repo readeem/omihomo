@@ -1,6 +1,6 @@
 # Omihomo CLI
 
-`bin/omihomo` is the disk and systemd boundary for the plugin. The panel invokes this file by
+`bin/omihomo` is the local state and system boundary for the plugin. The panel invokes this file by
 absolute path from the plugin directory. The CLI does not expose mihomo API operations for group
 or config selection, latency, connections, or parameter lookup. A subscription update briefly
 captures and restores live selections as part of its config reload transaction.
@@ -35,7 +35,14 @@ omihomo set group <name>
 
 omihomo status
 omihomo api-info
+omihomo socket-processes
 ```
+
+`socket-processes` returns local interface addresses and TCP/UDP socket endpoints with process
+names visible to the current account. The panel uses this only to fill missing TUN process names
+when one local socket matches. Shared or unidentified sockets remain unnamed. It uses `ip` and
+`ss` from iproute2, with bounded execution and output, and needs no elevated permissions. If the
+tools are unavailable, it returns an empty table. It never queries the controller or writes state.
 
 The form-facing rule types are `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME`.
 `rule add` refuses a value or target containing a comma, which would start another field of the rule.
@@ -199,8 +206,9 @@ NetworkManager sends that probe over a socket bound to the physical interface, o
 tunnel, where a fake-ip address routes nowhere. Without the exemption the desktop reports limited
 connectivity while traffic flows normally.
 
-`find-process-mode` is always `always`, whatever the subscription says, so every connection names
-the process behind it and the panel's connections view can draw process → config flows. Mihomo's
+`find-process-mode` defaults to `always`, whatever the subscription says, so mihomo attempts to
+identify the process behind each connection for the panel's process → config flows. Lookup can
+still fail, particularly for wildcard-bound UDP sockets. Mihomo's
 own default looks a process up only when a `PROCESS-NAME` rule needs it. Set
 `config.find-process-mode` in the override to choose otherwise.
 

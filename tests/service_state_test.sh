@@ -17,6 +17,9 @@ cat >"$test_root/omihomo-fake-cli" <<'CLI'
 #!/usr/bin/env bash
 if [[ "${1:-} ${2:-}" == "sub list" ]]; then
   printf '[{"name":"work","url":"https://example.test/work","active":true}]\n'
+elif [[ "${1:-}" == "socket-processes" ]]; then
+  sleep 0.15
+  printf '{"addresses":["192.168.42.10"],"sockets":[{"network":"udp","localIP":"0.0.0.0","localPort":53000,"peerPort":0,"process":"browser"}]}\n'
 fi
 CLI
 chmod +x "$test_root/omihomo-fake-cli"
