@@ -1683,7 +1683,8 @@ Panel {
                     }
 
                     SmallButton {
-                      text: omihomo.permissionsOk ? "✓ permissions ok" : "↻ repair permissions"
+                      text: omihomo.permissionsOk ? "✓ permissions ok" : "repair permissions"
+                      iconText: omihomo.permissionsOk ? "" : "󰑐"
                       enabled: !omihomo.permissionsOk
                       tooltipText: "Repair permissions · R"
                       foreground: omihomo.permissionsOk ? root.foreground : root.urgent
@@ -1886,6 +1887,7 @@ Panel {
     foreground: danger ? root.urgent : (primary ? root.surface : root.foreground)
     fontFamily: root.fontFamily
     fontSize: Style.font.bodySmall
+    iconSize: Style.font.body
     horizontalPadding: Style.space(9)
     verticalPadding: Style.space(3)
     radius: root.controlRadius
@@ -2360,8 +2362,13 @@ Panel {
       }
 
       var i
-      for (i = 0; i < flows.links.length; i++) {
-        var link = flows.links[i]
+      var links = flows.links.slice().sort(function(a, b) {
+        return isHot(a.source, a.target) - isHot(b.source, b.target)
+      })
+      var blend = Qt.tint(root.surface, Util.alpha(root.foreground, 0.22))
+      var muted = Qt.rgba(blend.r, blend.g, blend.b, 1)
+      for (i = 0; i < links.length; i++) {
+        var link = links[i]
         var y1 = rowY(indexOf(sources, link.source), sources.length)
         var y2 = rowY(indexOf(targets, link.target), targets.length)
         var middle = (left + right) / 2
@@ -2369,7 +2376,7 @@ Panel {
         ctx.moveTo(left + 4, y1)
         ctx.bezierCurveTo(middle, y1, middle, y2, right - 4, y2)
         ctx.lineWidth = Math.max(1.5, Math.min(12, 3.5 * Math.log(Math.max(1, link.bytes / 2e4)) / Math.LN10))
-        ctx.strokeStyle = root.css(isHot(link.source, link.target) ? root.accent : Util.alpha(root.foreground, 0.22))
+        ctx.strokeStyle = root.css(isHot(link.source, link.target) ? root.accent : muted)
         ctx.stroke()
       }
 
@@ -2566,7 +2573,9 @@ Panel {
         }
 
         SmallButton {
-          text: card.pending ? "…" : "↻ update"
+          text: "update"
+          iconText: "󰑐"
+          iconSpinning: card.pending
           enabled: !card.pending
           tooltipText: "Update · u"
           onClicked: omihomo.updateSubscription(card.subName)
@@ -2635,7 +2644,8 @@ Panel {
         }
 
         SmallButton {
-          text: "↻ retry"
+          text: "retry"
+          iconText: "󰑐"
           primary: true
           onClicked: omihomo.updateSubscription(card.subName)
         }
