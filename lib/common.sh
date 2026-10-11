@@ -606,6 +606,19 @@ omi_resolve_primary_group() {
   ' "$source"
 }
 
+# The rules the merge puts between the user's prepended rules and the
+# subscription's, as a yq expression over `$override`. Both target GLOBAL, so
+# neither exists without a primary group.
+OMIHOMO_INJECTED_RULES_YQ='(([
+    "IP-CIDR," + strenv(OMIHOMO_TAILNET_RANGE) + ",GLOBAL,no-resolve",
+    "DOMAIN-SUFFIX,ts.net,GLOBAL"
+  ] | map(select($override.omihomo."tailnet-proxy" == true))) + ([
+    "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+    "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
+    "DOMAIN-SUFFIX,tailscale.com,GLOBAL",
+    "DOMAIN-SUFFIX,tailscale.io,GLOBAL"
+  ] | map(select($override.omihomo.tailscale == true))) | map(select(strenv(OMIHOMO_PRIMARY_GROUP) != "")))'
+
 omi_merge_runtime() {
   local source=$1 override=$2 destination=$3 primary
   primary=$(omi_resolve_primary_group "$source" "$override")
@@ -650,17 +663,7 @@ omi_merge_runtime() {
     .dns."fake-ip-filter" = (((.dns."fake-ip-filter" // []) | map(select(. != $connectivity))) +
       ([$connectivity] | map(select(. != "")))) |
     del(.dns."fake-ip-filter" | select(length == 0)) |
-    .rules = ($prepend + ([
-        "IP-CIDR," + strenv(OMIHOMO_TAILNET_RANGE) + ",GLOBAL,no-resolve",
-        "DOMAIN-SUFFIX,ts.net,GLOBAL"
-      ] | map(select(($tailnet == true) and (strenv(OMIHOMO_PRIMARY_GROUP) != "")))
-      ) + ([
-        "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
-        "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
-        "DOMAIN-SUFFIX,tailscale.com,GLOBAL",
-        "DOMAIN-SUFFIX,tailscale.io,GLOBAL"
-      ] | map(select(($tailscale == true) and (strenv(OMIHOMO_PRIMARY_GROUP) != "")))
-      ) + $rest) |
+    .rules = ($prepend + '"$OMIHOMO_INJECTED_RULES_YQ"' + $rest) |
     .listeners = (((.listeners // []) | map(select(.name != strenv(OMIHOMO_TAILSCALE_LISTENER)))) + ([{
         "name": strenv(OMIHOMO_TAILSCALE_LISTENER),
         "type": "mixed",

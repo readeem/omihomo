@@ -21,6 +21,7 @@ omihomo sub activate <name>
 
 omihomo rule add <type> <value> <target>
 omihomo rule list
+omihomo rule injected
 omihomo rule remove <index>
 omihomo rule raw [prepend|append|filter] <rule>
 
@@ -36,8 +37,11 @@ omihomo api-info
 ```
 
 The form-facing rule types are `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME`.
+`rule add` refuses a value or target containing a comma, which would start another field of the rule.
 `rule raw` is the CLI-only escape hatch for all other mihomo rule syntax. Raw rules go to the
 prepend list by default; `append` and `filter` are available only through this command.
+`rule injected` prints, as a JSON array, the rules Omihomo itself puts between your prepended rules
+and the subscription's for the Tailscale integration and the tailnet proxy, in runtime order.
 
 `sub update-due` refreshes each subscription once its saved `updated_at` plus
 `update_interval_hours` has elapsed. The response header `Profile-Update-Interval` supplies

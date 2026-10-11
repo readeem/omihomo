@@ -184,6 +184,7 @@ function validateRule(type, value, target) {
   if (text(target) === "") return "Pick a target"
   var v = text(value).trim()
   if (v === "") return "Value is required"
+  if ((v + target).indexOf(",") !== -1) return "No commas"
   if (type === "IP-CIDR") {
     return isCidr(v) ? "" : "Not a valid CIDR"
   }
@@ -251,6 +252,27 @@ function parseProxies(raw) {
   }
   groups.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0) })
   return { groups: groups, configs: configs }
+}
+
+// Everything a rule can send traffic to, as dropdown options: the built-ins,
+// then the groups, then every config the groups list, once each. A name with a
+// comma cannot be written into a rule, so it is left out.
+function ruleTargets(groups) {
+  var out = [{ value: "DIRECT", label: "DIRECT", description: "built-in" },
+    { value: "REJECT", label: "REJECT", description: "built-in" }]
+  var seen = new Set(["DIRECT", "REJECT"])
+  var i
+  function add(name, description) {
+    if (seen.has(name) || name.indexOf(",") !== -1) return
+    seen.add(name)
+    out.push({ value: name, label: name, description: description })
+  }
+  for (i = 0; i < groups.length; i++) add(text(groups[i].name), "group")
+  for (i = 0; i < groups.length; i++) {
+    var all = groups[i].all || []
+    for (var j = 0; j < all.length; j++) add(text(all[j]), "config")
+  }
+  return out
 }
 
 function userGroups(groups) {
@@ -515,9 +537,8 @@ function baseName(path) {
   return text(parts[parts.length - 1])
 }
 
-// `GET /rules` returns the merged list with no marker for ours. Our own rules
-// are prepended, so peel matching entries off the head and show the rest as
-// the subscription's — that is the dimmed, read-only view.
+// `GET /rules` returns the merged list with no marker for ours: the user's
+// prepended rules, then the ones Omihomo injects, then the subscription's.
 function parseApiRules(raw) {
   var data = parseJson(raw, null)
   var list = data && typeof data === "object" ? data.rules : null
@@ -535,19 +556,23 @@ function parseApiRules(raw) {
   return out
 }
 
-function stripOwnRules(apiRules, ownRules) {
-  var own = []
-  var i
-  for (i = 0; i < ownRules.length; i++) {
-    if (text(ownRules[i].kind) === "prepend") own.push(ownRules[i])
-  }
+// Peels our prepended rules and then Omihomo's injected ones off the head of
+// the merged list. A rule the runtime does not carry yet is skipped rather
+// than swallowing a subscription rule.
+function splitApiRules(apiRules, ownRules, injected) {
   var head = 0
-  for (i = 0; i < own.length && head < apiRules.length; i++) {
-    var mine = own[i]
+  var i
+  function peel(rule, typed) {
     var theirs = apiRules[head]
-    if (text(theirs.value) === text(mine.value) && text(theirs.target) === text(mine.target)) head++
+    if (!theirs || text(theirs.value) !== text(rule.value) || text(theirs.target) !== text(rule.target)) return
+    if (!typed || text(theirs.type).replace("IP-CIDR6", "IP-CIDR") === text(rule.type)) head++
   }
-  return apiRules.slice(head)
+  for (i = 0; i < ownRules.length; i++) {
+    if (text(ownRules[i].kind) === "prepend") peel(ownRules[i], false)
+  }
+  var own = head
+  for (i = 0; i < injected.length; i++) peel(ruleParts(injected[i]), true)
+  return { injected: apiRules.slice(own, head), subscription: apiRules.slice(head) }
 }
 
 // mihomo reports rule types as CamelCase ("DomainSuffix"); the config syntax
@@ -861,6 +886,7 @@ if (typeof module !== "undefined") {
     parseProxies: parseProxies,
     isSystemGroup: isSystemGroup,
     userGroups: userGroups,
+    ruleTargets: ruleTargets,
     primaryGroupName: primaryGroupName,
     groupByName: groupByName,
     groupForConfig: groupForConfig,
@@ -875,7 +901,7 @@ if (typeof module !== "undefined") {
     openConnectionCount: openConnectionCount,
     connectionHost: connectionHost,
     parseApiRules: parseApiRules,
-    stripOwnRules: stripOwnRules,
+    splitApiRules: splitApiRules,
     apiRuleType: apiRuleType,
     ruleQueryHost: ruleQueryHost,
     ruleVerdict: ruleVerdict,

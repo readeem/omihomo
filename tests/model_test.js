@@ -79,6 +79,8 @@ test("rule validation mirrors the CLI's per-type rules", () => {
   assert.equal(Model.validateRule("IP-CIDR", "10.0.0.0/8", "DIRECT"), "")
   assert.equal(Model.validateRule("IP-CIDR", "fd00::/64", "DIRECT"), "")
   assert.notEqual(Model.validateRule("IP-CIDR", "example.com", "DIRECT"), "")
+  assert.notEqual(Model.validateRule("PROCESS-NAME", "Firefox,REJECT", "Proxy"), "")
+  assert.notEqual(Model.validateRule("IP-CIDR", "10.0.0.0/8", "DIRECT,no-resolve"), "")
   assert.notEqual(Model.validateRule("IP-CIDR", "10.0.0.0/33", "DIRECT"), "")
   assert.notEqual(Model.validateRule("IP-CIDR", "300.0.0.0/8", "DIRECT"), "")
   assert.equal(Model.validateRule("DOMAIN-SUFFIX", "example.com", "Proxy"), "")
@@ -140,6 +142,7 @@ test("our own rules are peeled off the head of the merged list", () => {
     rules: [
       { type: "DomainSuffix", payload: "internal.example", proxy: "DIRECT" },
       { type: "ProcessName", payload: "syncthing", proxy: "DIRECT" },
+      { type: "DomainSuffix", payload: "tailscale.com", proxy: "GLOBAL" },
       { type: "DomainKeyword", payload: "google", proxy: "Proxy" },
       { type: "Match", payload: "", proxy: "Proxy" }
     ]
@@ -148,10 +151,23 @@ test("our own rules are peeled off the head of the merged list", () => {
     { index: 1, kind: "prepend", rule: "DOMAIN-SUFFIX,internal.example,DIRECT" },
     { index: 2, kind: "prepend", rule: "PROCESS-NAME,syncthing,DIRECT" }
   ]))
-  const theirs = Model.stripOwnRules(merged, own)
-  assert.deepEqual(theirs.map(r => r.value), ["google", ""])
+  const split = Model.splitApiRules(merged, own, ["DOMAIN-SUFFIX,tailscale.com,GLOBAL"])
+  assert.deepEqual(split.injected.map(r => r.value), ["tailscale.com"])
+  assert.deepEqual(split.subscription.map(r => r.value), ["google", ""])
   assert.equal(merged[0].type, "DOMAIN-SUFFIX")
-  assert.equal(merged[3].type, "MATCH")
+  assert.equal(merged[4].type, "MATCH")
+})
+
+test("injected rules the runtime does not carry yet are not peeled", () => {
+  const merged = Model.parseApiRules(JSON.stringify({
+    rules: [
+      { type: "DomainKeyword", payload: "tailscale.com", proxy: "GLOBAL" },
+      { type: "Match", payload: "", proxy: "Proxy" }
+    ]
+  }))
+  const split = Model.splitApiRules(merged, [], ["DOMAIN-SUFFIX,tailscale.com,GLOBAL"])
+  assert.equal(split.injected.length, 0)
+  assert.equal(split.subscription.length, 2)
 })
 
 test("append and filter rules never strip a subscription rule", () => {
@@ -161,7 +177,17 @@ test("append and filter rules never strip a subscription rule", () => {
   const own = Model.parseRules(JSON.stringify([
     { index: 1, kind: "append", rule: "DOMAIN-KEYWORD,google,Proxy" }
   ]))
-  assert.equal(Model.stripOwnRules(merged, own).length, 1)
+  assert.equal(Model.splitApiRules(merged, own, []).subscription.length, 1)
+})
+
+test("rule targets list the built-ins, then groups, then every config once", () => {
+  const groups = [
+    { name: "Proxy", all: ["Auto", "🇩🇪 Berlin", "DIRECT"] },
+    { name: "Auto", all: ["🇩🇪 Berlin", "🇯🇵 Tokyo", "constructor", "DIRECT,no-resolve"] }
+  ]
+  assert.deepEqual(Model.ruleTargets(groups).map(t => t.value + ":" + t.description),
+    ["DIRECT:built-in", "REJECT:built-in", "Proxy:group", "Auto:group", "🇩🇪 Berlin:config", "🇯🇵 Tokyo:config",
+      "constructor:config"])
 })
 
 test("mihomo rule types render as config syntax", () => {

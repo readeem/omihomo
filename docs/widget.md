@@ -93,8 +93,12 @@ domain, suffix, keyword, IPv4 CIDR, private GeoIP, and the final match. A rule t
 anything else — a DNS answer, a rule set, a geo database, the process — is marked `?`, and the
 verdict says how many such rules sat above the hit, because the core may stop at one of them. A bar
 under the tester shows how the rules divide between targets. Your rules are editable and deletable,
-and the add form under the list covers the four types from ticket #7; the subscription's rules
-follow, read-only. `n` opens the view with the form taking keys from anywhere in the panel.
+and the add form under the list covers the four types from ticket #7. The rules Omihomo injects for
+the Tailscale integration and the tailnet proxy follow under their own heading, read-only, as
+`omihomo rule injected` lists them; then the subscription's, read-only. The list keeps the order
+mihomo checks it in. A rule's target is DIRECT, REJECT, a group, or any config a group lists: `h`/`l`
+cycles through them, and activating the target swaps the list for a filterable picker. `n` opens the
+view with the form taking keys from anywhere in the panel.
 
 The **connections view** is the same popup over a log rather than a live list. `GET /connections`
 only states what is open right now, so `Service.qml` keeps its own record: every poll is diffed

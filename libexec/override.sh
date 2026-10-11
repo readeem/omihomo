@@ -26,6 +26,7 @@ validate_cidr() {
 validate_rule() {
   local type=$1 value=$2 target=$3
   [[ -n $target ]] || omi_error "rule target is required" 1
+  [[ $value$target != *,* ]] || omi_error "a rule value or target cannot contain a comma" 1
   case $type in
     DOMAIN-SUFFIX|DOMAIN-KEYWORD) validate_domain_value "$value" || omi_error "invalid $type value" 1 ;;
     IP-CIDR) validate_cidr "$value" || omi_error "invalid IP-CIDR value" 1 ;;
@@ -77,6 +78,21 @@ rule_list() {
      [.filter // [] | to_entries[] | {kind: "filter", local_index: (.key + 1), rule: .value}])
     | to_entries | map(.value + {index: (.key + 1)})
   ' <<<"$rules"
+}
+
+rule_injected() {
+  local active cache primary=
+  active=$(omi_active_name)
+  cache="$OMIHOMO_CACHE_DIR/${active}.yaml"
+  if [[ -n $active && -f $cache && -f $OMIHOMO_OVERRIDE_FILE ]]; then
+    primary=$(omi_resolve_primary_group "$cache" "$OMIHOMO_OVERRIDE_FILE")
+  fi
+  if [[ -z $primary ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  OMIHOMO_PRIMARY_GROUP=$primary OMIHOMO_TAILNET_RANGE=$OMIHOMO_TAILNET_RANGE \
+    omi_yq -o=json -I=0 ". as \$override | $OMIHOMO_INJECTED_RULES_YQ" "$OMIHOMO_OVERRIDE_FILE"
 }
 
 rule_remove() {
@@ -208,6 +224,7 @@ case ${1:-} in
     case ${2:-} in
       add) omi_with_lock rule_add "${3:-}" "${4:-}" "${5:-}" ;;
       list) rule_list ;;
+      injected) rule_injected ;;
       remove) omi_with_lock rule_remove "${3:-}" ;;
       raw) shift 2; omi_with_lock rule_raw "$@" ;;
       *) omi_error "unknown rule command" 1 ;;

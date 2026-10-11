@@ -84,7 +84,11 @@ Item {
   // ---- data ---------------------------------------------------------------
   property var subscriptions: []
   property var rules: []               // ours, from `omihomo rule list`
-  property var subscriptionRules: []   // the subscription's, read-only
+  property var injectedRuleSpecs: []   // Omihomo's, from `omihomo rule injected`
+  property var apiRules: []            // the runtime's merged list, from `GET /rules`
+  readonly property var ruleLayers: Model.splitApiRules(apiRules, rules, injectedRuleSpecs)
+  readonly property var injectedRules: ruleLayers.injected            // Omihomo's, read-only
+  readonly property var subscriptionRules: ruleLayers.subscription   // the subscription's, read-only
   signal ruleAdded()
   property var groups: []
   property var configEntries: ({})     // config name -> `GET /proxies` entry
@@ -225,6 +229,7 @@ Item {
     if (!panelOpen) return
     subsCmd[read](cli(["sub", "list"]))
     rulesCmd[read](cli(["rule", "list"]))
+    injectedRulesCmd[read](cli(["rule", "injected"]))
   }
 
   function refreshLive(afterWrite) {
@@ -743,10 +748,18 @@ Item {
   }
 
   Cmd {
+    id: injectedRulesCmd
+    onFinished: function(code, out) {
+      var specs = code === 0 ? Model.parseJson(out, []) : []
+      root.injectedRuleSpecs = Array.isArray(specs) ? specs : []
+    }
+  }
+
+  Cmd {
     id: apiRulesCmd
     input: root.apiHeader
     onFinished: function(code, out) {
-      root.subscriptionRules = code === 0 ? Model.stripOwnRules(Model.parseApiRules(out), root.rules) : []
+      root.apiRules = code === 0 ? Model.parseApiRules(out) : []
       if (code !== 0) root.noteApiFailure(code)
     }
   }

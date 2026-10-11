@@ -586,6 +586,25 @@ test_rule_validation_and_indexed_removal() {
   [[ $(jq 'length' <<<"$(run_cli rule list)") == 1 ]] || fail "rule was not removed"
 }
 
+# A comma would start the next field of the rule, so a value or a target
+# carrying one could rewrite where the rule sends traffic.
+test_a_rule_field_with_a_comma_is_refused() {
+  setup_test
+  trap teardown_test RETURN
+  export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
+  local field status
+  for field in 'PROCESS-NAME|Firefox,REJECT|Proxy' 'IP-CIDR|10.0.0.0/8|DIRECT,no-resolve'; do
+    IFS='|' read -r type value target <<<"$field"
+    set +e
+    run_cli rule add "$type" "$value" "$target" >/dev/null 2>"$TEST_ROOT/error"
+    status=$?
+    set -e
+    assert_eq "$status" 1
+    assert_file_contains "$TEST_ROOT/error" 'cannot contain a comma'
+  done
+  assert_eq "$(run_cli rule list)" '[]'
+}
+
 test_pretty_is_applied_by_dispatcher() {
   setup_test
   trap teardown_test RETURN
@@ -1331,6 +1350,7 @@ test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin() {
   # the generated ones have to sit behind the user's prepended ones.
   assert_eq "$(yq -r '.rules[0]' "$runtime")" 'DOMAIN-SUFFIX,mine.example,DIRECT'
   assert_eq "$(yq -r '.rules[1]' "$runtime")" 'IP-CIDR,100.64.0.0/10,DIRECT,no-resolve'
+  assert_eq "$(run_cli rule injected)" "$(yq -o=json -I=0 '.rules[1:5]' "$runtime")"
   assert_file_contains "$TEST_ROOT/privileged.log" 'tailscale on 7899'
 
   run_cli set tailscale off
@@ -1338,6 +1358,7 @@ test_tailscale_toggle_writes_the_listener_the_rules_and_the_dropin() {
   if grep -q 'tailscale.com' "$runtime"; then
     fail "turning the integration off must remove its rules"
   fi
+  assert_eq "$(run_cli rule injected)" '[]'
   assert_file_contains "$TEST_ROOT/privileged.log" 'tailscale off 7899'
 }
 
@@ -1357,6 +1378,7 @@ test_tailnet_proxy_routes_the_tailnet_through_global() {
   run_cli set tailnet-proxy on
   assert_eq "$(yq -r '.rules[0]' "$runtime")" 'IP-CIDR,100.64.0.0/10,GLOBAL,no-resolve'
   assert_eq "$(yq -r '.rules[1]' "$runtime")" 'DOMAIN-SUFFIX,ts.net,GLOBAL'
+  assert_eq "$(run_cli rule injected)" "$(yq -o=json -I=0 '.rules[0:6]' "$runtime")"
   assert_eq "$(yq -r '.tun."route-exclude-address" | contains(["100.64.0.0/10"])' "$runtime")" false
   assert_eq "$(yq -r '.tun."route-exclude-address" | contains(["100.100.100.100/32"])' "$runtime")" true
   assert_eq "$(yq -r '.tun."iproute2-rule-index"' "$runtime")" 5260
@@ -1561,6 +1583,7 @@ tests=(
   test_running_core_rejects_removing_active_subscription
   test_rule_filter_and_append_are_applied_to_runtime
   test_rule_validation_and_indexed_removal
+  test_a_rule_field_with_a_comma_is_refused
   test_pretty_is_applied_by_dispatcher
   test_status_exit_code_is_always_zero
   test_status_reports_stopped_for_installed_core

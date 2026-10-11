@@ -29,6 +29,7 @@ Panel {
   property bool uninstallArmed: false
   property int ruleTypeIndex: 0
   property int ruleTargetIndex: 0
+  property bool targetPicking: false
 
   readonly property string subFormUrl: subUrlField.text.trim()
   readonly property string ruleFormValue: ruleValueField.text
@@ -77,17 +78,17 @@ Panel {
     return at ? "tested " + Model.relativeSince(at, nowMs) : "not tested yet"
   }
 
-  readonly property var ruleTargets: {
-    var targets = ["DIRECT", "REJECT"]
-    for (var i = 0; i < visibleGroups.length; i++) targets.push(visibleGroups[i].name)
-    return targets
+  readonly property var ruleTargets: Model.ruleTargets(visibleGroups)
+  readonly property var visibleTargets: {
+    var needle = targetPicking ? targetFilterField.text.trim().toLowerCase() : ""
+    return ruleTargets.filter(function(target) { return target.value.toLowerCase().indexOf(needle) !== -1 })
   }
   readonly property string ruleType: Model.RULE_TYPES[Math.max(0, Math.min(ruleTypeIndex, Model.RULE_TYPES.length - 1))]
-  readonly property string ruleTarget: ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))]
+  readonly property string ruleTarget: ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))].value
   readonly property string ruleFormError: Model.validateRule(ruleType, ruleFormValue, ruleTarget)
 
   readonly property var ownHeadRules: omihomo.rules.filter(function(rule) { return rule.kind === "prepend" })
-  readonly property var effectiveRules: ownHeadRules.concat(omihomo.subscriptionRules)
+  readonly property var effectiveRules: ownHeadRules.concat(omihomo.injectedRules, omihomo.subscriptionRules)
   readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery)
   readonly property string ruleHitTarget: ruleTest.hit >= 0 ? effectiveRules[ruleTest.hit].target : ""
   readonly property var ruleTally: Model.ruleTargetTally(effectiveRules)
@@ -97,7 +98,12 @@ Panel {
     var i
     for (i = 0; i < omihomo.rules.length; i++) {
       var rule = omihomo.rules[i]
-      out.push({ kind: "own", i: i, rule: rule, eff: rule.kind === "prepend" ? head++ : -1 })
+      out.push({ kind: "own", s: "rule", i: i, rule: rule, eff: rule.kind === "prepend" ? head++ : -1 })
+    }
+    if (omihomo.injectedRules.length > 0) {
+      out.push({ kind: "head", title: "OMIHOMO · " + omihomo.injectedRules.length, note: "tailscale · read-only" })
+      for (i = 0; i < omihomo.injectedRules.length; i++)
+        out.push({ kind: "injected", s: "irule", i: i, rule: omihomo.injectedRules[i], eff: head++ })
     }
     out.push({
       kind: "head",
@@ -106,7 +112,7 @@ Panel {
       note: "read-only"
     })
     for (i = 0; i < omihomo.subscriptionRules.length; i++)
-      out.push({ kind: "sub", i: i, rule: omihomo.subscriptionRules[i], eff: head + i })
+      out.push({ kind: "sub", s: "srule", i: i, rule: omihomo.subscriptionRules[i], eff: head + i })
     return out
   }
 
@@ -185,8 +191,13 @@ Panel {
       rows.push({ s: "subUrl" }, { s: "subSubmit" })
       break
     case "rules":
+      if (targetPicking) {
+        for (i = 0; i < visibleTargets.length; i++) rows.push({ s: "target", i: i })
+        break
+      }
       rows.push({ s: "ruleTest" })
       for (i = 0; i < omihomo.rules.length; i++) rows.push({ s: "rule", i: i })
+      for (i = 0; i < omihomo.injectedRules.length; i++) rows.push({ s: "irule", i: i })
       for (i = 0; i < omihomo.subscriptionRules.length; i++) rows.push({ s: "srule", i: i })
       rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" }, { s: "ruleSubmit" })
       break
@@ -276,7 +287,8 @@ Panel {
     case "ruleTest": beginEdit(ruleTestField); break
     case "ruleType": cycleRuleType(1); break
     case "ruleValue": beginEdit(ruleValueField); break
-    case "ruleTarget": cycleRuleTarget(1); break
+    case "ruleTarget": openTargetPicker(); break
+    case "target": pickTargetAt(cursorRow.i); break
     case "ruleSubmit": submitRuleForm(); break
     case "conn": activateConnectionAt(cursorRow.i); break
     case "mode": cycleMode(1); break
@@ -333,7 +345,8 @@ Panel {
       if (key === "u") updateSelectedSubscription()
       else if (key === "a") { focusRow("subUrl"); beginEdit(subUrlField) }
     } else if (view === "rules") {
-      if (key === "/") { focusRow("ruleTest"); beginEdit(ruleTestField) }
+      if (key === "/" && targetPicking) beginEdit(targetFilterField)
+      else if (key === "/") { focusRow("ruleTest"); beginEdit(ruleTestField) }
     } else if (view === "conns") {
       if (key === "A") omihomo.closeAllConnections()
       else if (key === "L") omihomo.clearConnectionLog()
@@ -350,6 +363,7 @@ Panel {
     if (removeArmed !== "") { removeArmed = ""; return }
     if (uninstallArmed) { uninstallArmed = false; return }
     if (filterOpen) { closeFilter(); return }
+    if (targetPicking) { closeTargetPicker(); return }
     if (view !== "configs") { openView("configs"); return }
     close()
   }
@@ -363,6 +377,9 @@ Panel {
   }
 
   function hintsFor(name) {
+    if (name === "rules" && targetPicking) return [
+      { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
+      { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
     switch (name) {
     case "configs": return [
       { keys: "↵", label: "select", key: "enter" }, { keys: "d", label: "test", key: "d" },
@@ -398,6 +415,7 @@ Panel {
     removeArmed = ""
     uninstallArmed = false
     if (filterOpen) closeFilter()
+    if (targetPicking) closeTargetPicker()
     if (name === "conns") omihomo.refreshConnections()
     if (name === "configs" && browsedGroupEntry) {
       var at = visibleConfigs.indexOf(browsedGroupEntry.now)
@@ -471,6 +489,26 @@ Panel {
 
   function cycleRuleTarget(delta) {
     ruleTargetIndex = (ruleTargetIndex + delta + ruleTargets.length) % ruleTargets.length
+  }
+
+  function openTargetPicker() {
+    targetFilterField.text = ""
+    targetPicking = true
+    cursorActive = false
+    beginEdit(targetFilterField)
+  }
+
+  function closeTargetPicker() {
+    targetPicking = false
+    targetFilterField.text = ""
+    endEdit()
+    focusRow("ruleTarget")
+  }
+
+  function pickTargetAt(index) {
+    var target = visibleTargets[index]
+    if (target) ruleTargetIndex = ruleTargets.indexOf(target)
+    closeTargetPicker()
   }
 
   function chooseConfigAt(index) {
@@ -561,9 +599,14 @@ Panel {
     switch (cursorRow.s) {
     case "config": list = configList; break
     case "sub": list = subList; break
-    case "rule": list = ruleList; index = 1 + cursorRow.i; break
-    case "srule": list = ruleList; index = 2 + omihomo.rules.length + cursorRow.i; break
+    case "rule":
+    case "irule":
+    case "srule":
+      list = ruleList
+      index = ruleEntries.findIndex(function(entry) { return entry.s === cursorRow.s && entry.i === cursorRow.i })
+      break
     case "conn": list = connList; break
+    case "target": list = targetList; break
     }
     if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
     else if (view === "settings") scrollSettingIntoView(settingItems[cursorRow.s] || null)
@@ -1244,8 +1287,42 @@ Panel {
               }
             }
 
+            PanelField {
+              id: targetFilterField
+              visible: root.targetPicking
+              Layout.fillWidth: true
+              foreground: root.foreground
+              placeholderText: "Filter targets"
+              verticalPadding: Style.space(4)
+              onAccepted: root.pickTargetAt(0)
+              onActiveFocusChanged: root.fieldFocusChanged(targetFilterField, activeFocus)
+              Keys.onEscapePressed: root.closeTargetPicker()
+              Keys.onDownPressed: {
+                root.endEdit()
+                root.focusRow("target", 0)
+              }
+            }
+
+            ScrollList {
+              id: targetList
+              visible: root.targetPicking
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              spacing: Style.space(1)
+              model: root.visibleTargets
+
+              delegate: TargetRow {
+                required property var modelData
+                required property int index
+                width: targetList.rowWidth
+                target: modelData
+                rowIndex: index
+              }
+            }
+
             ScrollList {
               id: ruleList
+              visible: !root.targetPicking
               Layout.fillWidth: true
               Layout.fillHeight: true
               model: root.ruleEntries
@@ -1304,10 +1381,10 @@ Panel {
 
               SmallButton {
                 text: "→ " + root.ruleTarget + " ▾"
-                tooltipText: "Target · h l"
+                tooltipText: "Target · ↵ pick · h l cycle"
                 hasCursor: root.at("ruleTarget")
                 onHovered: function(on) { if (on) root.focusRow("ruleTarget") }
-                onClicked: root.cycleRuleTarget(1)
+                onClicked: root.openTargetPicker()
               }
 
               SmallButton {
@@ -2327,6 +2404,8 @@ Panel {
     implicitWidth: chipRow.implicitWidth + Style.space(20)
     implicitHeight: chipRow.implicitHeight + Style.space(8)
     radius: Style.cornerRadius > 0 ? height / 2 : 0
+    gradient: null
+    color: current ? Util.alpha(root.accent, hasCursor ? 0.24 : 0.16) : (hasCursor ? Util.alpha(root.foreground, 0.09) : "transparent")
     borderSpec: Border.flat(current ? Util.alpha(root.accent, 0.5) : root.outline, 1)
     onActivated: root.browseGroupAt(chip.rowIndex)
 
@@ -2338,7 +2417,7 @@ Panel {
       PanelText {
         anchors.verticalCenter: parent.verticalCenter
         text: chip.groupName
-        color: chip.current ? root.foreground : root.dim
+        color: chip.current || chip.hasCursor ? root.foreground : root.dim
       }
 
       Rectangle {
@@ -2587,6 +2666,34 @@ Panel {
     }
   }
 
+  component TargetRow: NavRow {
+    id: targetRow
+
+    property var target: ({})
+
+    section: "target"
+    current: targetRow.target.value === root.ruleTarget
+    implicitHeight: Style.space(26)
+    onActivated: root.pickTargetAt(targetRow.rowIndex)
+
+    RowLayout {
+      anchors.fill: parent
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      spacing: Style.space(8)
+
+      NameText {
+        Layout.fillWidth: true
+        text: targetRow.target.label || ""
+        bold: targetRow.current
+      }
+      PanelText {
+        text: targetRow.target.description || ""
+        color: root.faint
+      }
+    }
+  }
+
   component RuleRow: NavRow {
     id: ruleRow
 
@@ -2599,7 +2706,7 @@ Panel {
     readonly property bool hit: testing && root.ruleTest.hit >= 0 && entry.eff === root.ruleTest.hit
     readonly property bool below: testing && root.ruleTest.hit >= 0 && (entry.eff < 0 || entry.eff > root.ruleTest.hit)
 
-    section: own ? "rule" : "srule"
+    section: entry.s || ""
     rowIndex: entry.i === undefined ? -1 : entry.i
     current: hit
     implicitHeight: Style.space(22)
@@ -2612,38 +2719,55 @@ Panel {
       spacing: Style.space(8)
 
       Item {
+        id: rail
+
+        readonly property real knot: Style.space(8)
+        readonly property real knotTop: Math.round((height - knot) / 2)
+        readonly property real stroke: Style.space(2)
+        readonly property real lineX: Math.round((width - stroke) / 2)
+        readonly property color tint: ruleRow.testing && !ruleRow.below ? root.accent : root.outline
+
         Layout.fillHeight: true
         implicitWidth: Style.space(14)
 
         Rectangle {
-          anchors.horizontalCenter: parent.horizontalCenter
-          visible: !ruleRow.below
-          width: Style.space(2)
-          y: ruleRow.entry.eff === 0 ? parent.height / 2 : 0
-          height: ruleRow.hit ? Math.max(0, parent.height / 2 - y) : parent.height - y
-          color: ruleRow.testing && !ruleRow.below ? root.accent : root.outline
+          visible: !ruleRow.below && ruleRow.entry.eff !== 0
+          x: rail.lineX
+          width: rail.stroke
+          height: rail.knotTop
+          color: rail.tint
+        }
+
+        Rectangle {
+          visible: !ruleRow.below && !ruleRow.hit
+          x: rail.lineX
+          y: rail.knotTop + rail.knot
+          width: rail.stroke
+          height: parent.height - y
+          color: rail.tint
         }
 
         Repeater {
-          model: ruleRow.below ? 4 : 0
+          model: ruleRow.below ? [0, 2 * rail.stroke, rail.knotTop + rail.knot + rail.stroke] : []
           Rectangle {
-            required property int index
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: index * Style.space(6)
-            width: Style.space(2)
-            height: Style.space(2)
+            required property real modelData
+            x: rail.lineX
+            y: modelData
+            width: rail.stroke
+            height: rail.stroke
             color: root.outline
           }
         }
 
         Rectangle {
-          anchors.centerIn: parent
-          width: Style.space(8)
+          x: Math.round((parent.width - width) / 2)
+          y: rail.knotTop
+          width: rail.knot
           height: width
           radius: width / 2
-          color: ruleRow.hit ? root.accent : root.surface
-          border.width: Style.space(2)
-          border.color: ruleRow.testing && !ruleRow.below ? root.accent : root.outline
+          color: ruleRow.hit ? root.accent : "transparent"
+          border.width: rail.stroke
+          border.color: rail.tint
         }
       }
 
