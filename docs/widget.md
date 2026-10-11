@@ -245,7 +245,8 @@ It renders the real `Panel.qml` offscreen in Quickshell at 2× and saves each vi
 `preview.png` from the configs, connections, and rules views over the Tokyo Night wallpaper. Each
 view is 420×720 plus a one-pixel wallpaper edge; the preview is a 1600×900 desktop at 1.5×.
 
-Everything that could vary is pinned, so the same commit gives the same bytes:
+Everything that could vary is pinned, so a commit gives the same images on the same Omarchy
+shell, Qt, font, and wallpaper:
 
 - `tools/screenshots/data/` is the invented subscription, configs, rules, connections, and
   traffic. The fake `omihomo` and `curl` next to it answer the panel from those files, so no
@@ -253,7 +254,8 @@ Everything that could vary is pinned, so the same commit gives the same bytes:
   names and documentation addresses (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) there.
 - `tools/screenshots/theme/` is the theme and font, read from a throwaway `HOME`. A `hyprctl`
   stub keeps the running desktop's rounding and gaps out.
-- Times are relative to the run: uptime, update ages, and the latency test all read the same.
+- Times are relative to the run and sit mid-unit, so uptime, update ages, and connection ages
+  read the same.
 
 `KeyboardPanel.qml` there replaces Omarchy's layer-shell window with the same card drawn in place,
 because offscreen Quickshell has no layer shell. The images still follow the installed Omarchy

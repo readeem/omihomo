@@ -14,8 +14,16 @@ for need in qs jq "$shell/Commons" "$shell/Ui" "$wallpaper"; do
 done
 
 umask 077
+work= child=
+cleanup() {
+  trap '' INT TERM
+  [[ -z $child ]] || { kill -TERM "$child" 2>/dev/null; wait "$child" || true; }
+  [[ -z $work ]] || rm -rf -- "$work"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 work=$(mktemp -d /tmp/omihomo-shots.XXXXXX)
-trap 'rm -rf -- "$work"' EXIT
 
 # A private HOME holds the theme and font, so nothing of the desktop running
 # this leaks into the images, and the fake bin directory shadows every command
@@ -38,8 +46,11 @@ env -i PATH="$work/fakebin:/usr/bin" HOME="$work/home" TZ=UTC LANG=C.UTF-8 \
   QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_SCALE_FACTOR=2 \
   QT_QPA_PLATFORMTHEME= QT_QUICK_CONTROLS_STYLE=Fusion \
   OMIHOMO_SHOTS_DATA="$here/data" OMIHOMO_SHOTS_STATE="$work/state" OMIHOMO_SHOTS_OUT="$work/out" \
-  OMIHOMO_SHOTS_STARTED=$(($(date +%s) - 12000)) OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
-  timeout 60s qs --no-color -p "$config" >"$log" 2>&1 || true
+  OMIHOMO_SHOTS_STARTED=$(($(date +%s) - 12030)) OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
+  timeout -k 5s 60s qs --no-color -p "$config" >"$log" 2>&1 &
+child=$!
+wait "$child" || true
+child=
 
 grep -q CAPTURE_DONE "$log" || { cat "$log" >&2; printf 'capture failed\n' >&2; exit 1; }
 mkdir -p "$out/assets/screenshots"
