@@ -16,6 +16,8 @@ omihomo sub add            # reads the URL from stdin
 omihomo sub list
 omihomo sub remove <name>
 omihomo sub update <name>
+omihomo sub resume <name>
+omihomo sub resume-url                   # subscription URL on stdin
 omihomo sub update-due
 omihomo sub update-on-start
 omihomo sub activate <name>
@@ -59,10 +61,19 @@ The provider's header is documented in the [Mistgate subscription guide](https:/
 It is the entry point for `omihomo-subscription-update.timer`, which checks once per minute and
 catches missed checks after login or resume. Each deadline is checked under the shared file
 lock, so overlapping checks and manual updates cannot download the same due subscription twice.
-A successful manual refresh resets the deadline. Failed refreshes leave it unchanged and are
-retried at the next check; one failing subscription does not prevent the others from updating.
-Each successful import/update commits the effective interval alongside its cache and timestamp;
-a changed provider interval takes effect only when that transaction succeeds.
+A successful manual refresh resets the deadline. Failed refreshes leave the last successful
+configuration unchanged, but persist a separate request deadline at least one provider interval
+later. Longer `Retry-After` delays, in seconds or HTTP-date form, extend that deadline. Download,
+validation and reload failures share this protection; one failing subscription does not prevent
+the others from updating. Manual requests are at least 60 seconds apart and cannot bypass a
+failure cooldown. An interrupted download also retains its reserved deadline.
+HTTP 401 and 403 pause requests indefinitely for that URL. After resolving access,
+`sub resume <name>` clears the pause, retaining the one-minute minimum. For a URL whose first import failed,
+or which was removed, pass the URL on stdin to `sub resume-url`, then retry `sub add`.
+Neither resume command downloads anything or clears a rate-limit cooldown on an unpaused URL.
+Request state survives restarts and removing/reimporting the same URL.
+Each successful import/update commits the effective interval alongside its cache and timestamp.
+Request cooldowns honor a successfully fetched interval header even if applying the content fails.
 With no subscriptions or no installed core, the command succeeds without creating state.
 
 The timer is independent of core autostart. An update never starts a stopped core. For a running
@@ -74,7 +85,7 @@ connection timeout and a 60-second overall timeout.
 The oneshot service has no whole-batch timeout, so a long sequence of slow failed downloads
 cannot repeatedly prevent healthy later subscriptions from being checked.
 
-`sub update-on-start` refreshes all subscriptions regardless of their deadlines when autostart
+`sub update-on-start` refreshes only due subscriptions, respecting request cooldowns, when autostart
 is enabled and the core is running. The core unit starts a separate oneshot service ordered after
 it, so startup does not wait for downloads and a refresh failure cannot stop the core. The command
 waits up to two minutes for the controller, then uses the same refresh transactions as manual
@@ -132,6 +143,7 @@ Exit codes are:
 | 15 | tailscaled is not installed |
 | 20 | Subscription content was rejected by Mihomo |
 | 21 | Subscription fetch failed |
+| 22 | Subscription request is cooling down, paused, or its request state is invalid |
 
 `status` is the exception: it always exits `0` and returns one stable object. Its `state` is
 `not-installed`, `stopped`, `starting`, `degraded`, or `on`; `detail` and unknown fields are null
@@ -147,6 +159,7 @@ The state directory is `$XDG_DATA_HOME/omihomo`, falling back to `~/.local/share
 
 ```text
 subscriptions.json       array of {name, url, updated_at, update_interval_hours, userinfo}
+requests/<sha256>.json    private per-URL request deadlines and authorization pause
   cache/<name>.yaml        validated config or generated raw-subscription wrapper
 override.yaml            global user-owned settings and rule lists
 runtime.yaml             merged YAML loaded by mihomo
@@ -164,6 +177,9 @@ write and Omihomo uses it as both a cache filename and a CLI argument, it is str
 separators and control characters, trimmed, and capped at 64 characters; a name already taken
 gets a numeric suffix. Adding a URL that is already on the list is an error. A subscription keeps
 the name it was added under: `sub update` refreshes its YAML and quota, not its name.
+
+HTTP providers embedded in a full config retain Mihomo's independent download and retry
+schedules. Omihomo's request cooldowns apply to the subscription URL it downloads itself.
 
 Fetches identify as `clash.meta`. `OMIHOMO_USER_AGENT` overrides the string for a server that wants
 a different one. Omihomo accepts full Mihomo YAML and raw subscription formats supported by the

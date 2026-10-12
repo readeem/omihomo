@@ -29,20 +29,92 @@ subscription_userinfo_json() {
     '{upload: (if $upload == "" then null else ($upload | tonumber) end), download: (if $download == "" then null else ($download | tonumber) end), total: (if $total == "" then null else ($total | tonumber) end), expire: (if $expire == "" then null else ($expire | tonumber) end)}'
 }
 
-# `--compressed` is not an optimisation here. Some subscription servers answer
-# with `content-encoding: gzip` whether or not the client asked for it, and
-# without this curl writes the compressed bytes out verbatim, so every step
-# downstream sees binary instead of a subscription.
-#
-# The URL goes in through curl's config on stdin. HTTPS is required for the
-# request and every redirect, and the file size limit bounds the decoded body.
+subscription_request_load() {
+  local digest record
+  digest=$(printf '%s' "$1" | sha256sum)
+  REQUEST_FILE="$OMIHOMO_DATA_DIR/requests/${digest%% *}.json"
+  REQUEST_AT=0 REQUEST_AUTO_AFTER=0 REQUEST_MANUAL_AFTER=0 REQUEST_PAUSED=false
+  [[ -f $REQUEST_FILE ]] || return 0
+  record=$(jq -er '
+    select(.paused | type == "boolean") |
+    select([.attempted_at, .automatic_after, .manual_after] |
+      all(.[]; type == "number" and . >= 0 and . == floor and . <= 9007199254740991)) |
+    [.attempted_at, .automatic_after, .manual_after, .paused] | @tsv' "$REQUEST_FILE") || {
+    omi_error "invalid subscription request state; refusing to download" 22
+    return 22
+  }
+  read -r REQUEST_AT REQUEST_AUTO_AFTER REQUEST_MANUAL_AFTER REQUEST_PAUSED <<<"$record"
+}
+
+subscription_request_save() {
+  local temporary
+  mkdir -p "${REQUEST_FILE%/*}" || return $?
+  temporary=$(mktemp "${REQUEST_FILE%/*}/.request.XXXXXX") || return $?
+  if jq -n --argjson attempted "$REQUEST_AT" --argjson automatic "$REQUEST_AUTO_AFTER" \
+    --argjson manual "$REQUEST_MANUAL_AFTER" --argjson paused "$REQUEST_PAUSED" \
+    '{attempted_at: $attempted, automatic_after: $automatic, manual_after: $manual, paused: $paused}' >"$temporary" &&
+    omi_atomic_move "$temporary" "$REQUEST_FILE"; then
+    return 0
+  else
+    local status=$?
+    rm -f "$temporary"
+    return "$status"
+  fi
+}
+
+subscription_request_allowed() {
+  subscription_request_load "$1" || return $?
+  local after=$REQUEST_MANUAL_AFTER
+  [[ ${2:-manual} != automatic ]] || after=$REQUEST_AUTO_AFTER
+  [[ $REQUEST_PAUSED == false ]] && (($(date +%s) >= after))
+}
+
+subscription_request_complete() {
+  subscription_request_load "$1" || return $?
+  REQUEST_MANUAL_AFTER=$((REQUEST_AT + 60))
+  subscription_request_save
+}
+
 fetch_subscription() {
-  local url=$1 body=$2 headers=$3
+  local url=$1 body=$2 headers=$3 interval status=0 http retry retry_at=0
+  if ! subscription_request_allowed "$url"; then
+    if [[ $REQUEST_PAUSED == true ]]; then
+      omi_error "subscription requests paused after HTTP 401/403; use sub resume <name> after resolving access" 22
+    else
+      omi_error "subscription request cooldown is active; try again later" 22
+    fi
+    return 22
+  fi
+  interval=$(OMIHOMO_URL=$url jq -r '[.[] | select(.url == $ENV.OMIHOMO_URL) | .update_interval_hours][0] |
+    if type == "number" and . > 0 and . == floor and . <= 2147483647 then . else 12 end' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  REQUEST_AT=$(date +%s)
+  REQUEST_AUTO_AFTER=$((REQUEST_AT + interval * 3600))
+  REQUEST_MANUAL_AFTER=$REQUEST_AUTO_AFTER
+  subscription_request_save || return $?
   url=${url//\\/\\\\}
-  if ! (ulimit -f "$OMIHOMO_MAX_FILE_KB" &&
+  (ulimit -f "$OMIHOMO_MAX_FILE_KB" &&
     "$OMIHOMO_CURL" -fsSL --compressed --proto =https --proto-redir =https \
       --connect-timeout 10 --max-time 60 --max-filesize "${OMIHOMO_MAX_FILE_KB}K" \
-      -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" --config - <<<"url = \"${url//\"/\\\"}\""); then
+      -A "$OMIHOMO_USER_AGENT" -D "$headers" -o "$body" --config - <<<"url = \"${url//\"/\\\"}\"") || status=$?
+  http=$(awk '/^HTTP\// {code=$2; gsub(/\r/, "", code)} END {print code}' "$headers")
+  if ((status == 0)); then
+    interval=$(subscription_update_interval_hours "$headers")
+    REQUEST_AUTO_AFTER=$((REQUEST_AT + interval * 3600))
+    REQUEST_MANUAL_AFTER=$REQUEST_AUTO_AFTER
+  else
+    [[ $http != 401 && $http != 403 ]] || REQUEST_PAUSED=true
+    retry=$(subscription_header "$headers" retry-after)
+    if [[ $retry =~ ^[0-9]{1,10}$ ]]; then
+      retry_at=$(($(date +%s) + 10#$retry))
+    elif [[ -n $retry && ${#retry} -le 128 ]]; then
+      retry_at=$(date -u -d "$retry" +%s 2>/dev/null) || retry_at=0
+      [[ $retry_at =~ ^[0-9]{1,10}$ ]] || retry_at=0
+    fi
+    ((retry_at <= REQUEST_AUTO_AFTER)) || REQUEST_AUTO_AFTER=$retry_at
+    REQUEST_MANUAL_AFTER=$REQUEST_AUTO_AFTER
+  fi
+  subscription_request_save || return $?
+  if ((status != 0)); then
     omi_error "subscription fetch failed" 21
   fi
 }
@@ -322,6 +394,7 @@ subscription_add() {
   omi_atomic_move "$body" "$OMIHOMO_CACHE_DIR/${name}.yaml"
   omi_atomic_move "$temporary" "$OMIHOMO_SUBSCRIPTIONS_FILE"
   rm -f "$headers"
+  subscription_request_complete "$url" || return $?
   # Nothing active means nothing works: `core start` refuses without an active
   # subscription, and the panel has no groups to show. Adding the first one is
   # the user asking to use it, so it becomes active here. A later add does not
@@ -437,24 +510,24 @@ subscription_update() {
     omi_atomic_move "$runtime" "$OMIHOMO_RUNTIME_FILE"
   fi
   rm -f "$headers" "$previous_provider"
+  subscription_request_complete "$url"
 }
 
-# Each subscription is checked under the same lock as manual changes. A
-# successful manual refresh resets the provider's deadline as well. Failed
-# downloads keep updated_at unchanged and are retried on the next timer tick.
 subscription_update_if_due() {
-  local name=$1 updated now interval
+  local name=$1 updated now interval url status=0
   [[ -f $OMIHOMO_SUBSCRIPTIONS_FILE ]] || return 0
   subscription_exists "$name" || return 0
   updated=$(jq -r --arg name "$name" '.[] | select(.name == $name) |
     (.updated_at | try fromdateiso8601 catch 0)' "$OMIHOMO_SUBSCRIPTIONS_FILE")
-  # Records imported before interval metadata existed use the same 12-hour
-  # default as a response with no valid Profile-Update-Interval header.
   interval=$(jq -r --arg name "$name" '.[] | select(.name == $name) |
     (.update_interval_hours // 12) |
     if type == "number" and . > 0 and . == floor and . <= 2147483647 then . else 12 end' "$OMIHOMO_SUBSCRIPTIONS_FILE")
   now=$(date +%s)
   ((now - updated >= interval * 3600)) || return 0
+  url=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .url' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  subscription_request_allowed "$url" automatic || status=$?
+  ((status != 1)) || return 0
+  ((status == 0)) || return "$status"
   subscription_update "$name"
 }
 
@@ -469,20 +542,37 @@ subscription_update_batch() {
   return "$status"
 }
 
-# A core can take minutes to come up while it downloads geodata. Exit 12 tells
-# the startup unit to try again later; a failed download does not.
 subscription_update_on_start() {
   [[ -s $OMIHOMO_SUBSCRIPTIONS_FILE ]] && omi_core_installed &&
     omi_unit_enabled && omi_unit_active || return 0
   local deadline=$((SECONDS + ${OMIHOMO_STARTUP_READY_TIMEOUT:-120}))
   while ((SECONDS < deadline)); do
     if omi_api_reachable; then
-      subscription_update_batch update
+      subscription_update_batch
       return $?
     fi
     sleep 1
   done
   omi_error "core controller was not ready for the startup subscription refresh" 12
+}
+
+subscription_resume() {
+  local name=${1:-} url
+  subscription_exists "$name" || { omi_error "subscription not found: $name" 1; return 1; }
+  url=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .url' "$OMIHOMO_SUBSCRIPTIONS_FILE")
+  subscription_resume_url <<<"$url"
+}
+
+subscription_resume_url() {
+  local url
+  IFS= read -r url || [[ -n $url ]] || { omi_error "pass the subscription URL on stdin" 1; return 1; }
+  [[ $url =~ ^https://[^[:space:][:cntrl:]]+$ ]] || { omi_error "subscription URL must use https" 1; return 1; }
+  subscription_request_load "$url" || return $?
+  [[ $REQUEST_PAUSED == true ]] || { omi_error "subscription requests are not paused" 1; return 1; }
+  REQUEST_PAUSED=false
+  REQUEST_AUTO_AFTER=$((REQUEST_AT + 60))
+  REQUEST_MANUAL_AFTER=$REQUEST_AUTO_AFTER
+  subscription_request_save
 }
 
 subscription_remove() {
@@ -542,6 +632,8 @@ case ${1:-} in
   list) subscription_list ;;
   remove) omi_with_lock subscription_remove "${2:-}" ;;
   update) omi_with_lock subscription_update "${2:-}" ;;
+  resume) omi_with_lock subscription_resume "${2:-}" ;;
+  resume-url) omi_with_lock subscription_resume_url ;;
   update-due) subscription_update_batch ;;
   update-on-start) subscription_update_on_start ;;
   update-if-due) omi_with_lock subscription_update_if_due "${2:-}" ;;

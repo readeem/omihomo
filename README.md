@@ -100,17 +100,26 @@ login or resume.
 
 Checks run every minute, even with the panel closed or the core stopped. A refresh keeps the core's
 running or stopped state, mode, and TUN state, and the selected configs that still exist in their
-groups. A failed download keeps the previous configuration and retries on the next check.
+groups. A failed refresh keeps the previous configuration and waits at least the provider's
+interval before another request. Longer `Retry-After` delays are respected. This also applies
+when a download succeeds but validation or reloading fails.
 
 Autostart is enabled by default on new installs. When enabled, every core start also refreshes
-all subscriptions, even before their scheduled deadlines. This runs separately after the core
+subscriptions that are due, using the same deadlines and cooldowns. This runs separately after the core
 starts, so an unavailable provider leaves the cached configuration running. Existing installs
 keep their autostart setting, including an explicit choice to disable it.
 
 Each successful import or update records the interval and its timestamp, so a provider can change
 the interval in any response. A failed update keeps both previous values. Every download and
 controller call has its own timeout. The batch as a whole has none, so a slow subscription cannot
-stop later ones from being checked.
+stop later ones from being checked. Manual downloads are at least one minute apart and respect
+failure cooldowns. HTTP 401 or 403 pauses requests for that URL until access is resolved and
+`omihomo sub resume <name>` is run. Cooldowns and pauses survive restarts and removing/reimporting
+the same URL. A failed first import can be retried after its cooldown with `sub add`; if access
+was denied, use `omihomo sub resume-url` with that URL on stdin after resolving access.
+
+These limits cover Omihomo's subscription downloads. HTTP proxy and rule providers embedded
+in a full config still use Mihomo's independent refresh and retry schedules.
 
 `core install` enables the user timer, and `core sync` adds it to existing installs when the
 updated widget loads. To turn automatic refresh off or back on:

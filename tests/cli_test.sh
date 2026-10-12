@@ -185,6 +185,7 @@ test_raw_update_replaces_the_provider_payload() {
     fail "import discarded the validated provider payload"
 
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-base64.txt"
+  advance_test_clock 60
   run_cli sub update raw
 
   current=$(yq -r '."proxy-providers".subscription.path' "$cache")
@@ -197,6 +198,7 @@ test_raw_update_replaces_the_provider_payload() {
 
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_SUBSCRIPTION_FIXTURE="$REPO_ROOT/tests/fixtures/raw-plain.txt"
+  advance_test_clock 60
   run_cli sub update raw
   previous=$current
   current=$(yq -r '."proxy-providers".subscription.path' "$TEST_ROOT/live.yaml")
@@ -326,6 +328,7 @@ test_invalid_subscription_update_keeps_previous_cache() {
   local stderr status
   stderr=$(mktemp)
   set +e
+  advance_test_clock 60
   run_cli sub update work 2>"$stderr"
   status=$?
   set -e
@@ -461,6 +464,7 @@ test_subscriptions_require_https_and_keep_urls_out_of_argv() {
   fi
   export OMIHOMO_TEST_TITLE=work
   run_cli sub add <<<'https://example.test/subscription/work?token=s3cret'
+  advance_test_clock 60
   run_cli sub update work
   ! grep -q s3cret "$TEST_ROOT/curl-argv.log" || fail "the subscription token reached curl's arguments"
   assert_file_contains "$TEST_ROOT/curl-argv.log" '--proto-redir =https'
@@ -505,6 +509,7 @@ test_active_update_reloads_without_restarting_the_unit() {
   run_cli sub activate work
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_SUBSCRIPTION_BODY='proxies: []'
+  advance_test_clock 60
   run_cli sub update work
   assert_file_contains "$TEST_ROOT/curl-put.log" '/configs?force=true'
 }
@@ -529,6 +534,7 @@ test_failed_active_raw_update_keeps_previous_cache_and_runtime() {
   stderr=$(mktemp)
 
   set +e
+  advance_test_clock 60
   run_cli sub update work 2>"$stderr"
   status=$?
   set -e
@@ -977,6 +983,7 @@ test_an_existing_override_gains_proxied_dns() {
   assert_eq "$(yq -r '.dns."default-nameserver"[0]' "$runtime")" 'https://1.1.1.1/dns-query#DIRECT'
   assert_eq "$(yq -r '.dns."proxy-server-nameserver"[0]' "$runtime")" 'https://1.1.1.1/dns-query#DIRECT'
   assert_eq "$(yq -o=json -I=0 '.dns.fallback' "$runtime")" '[]'
+  advance_test_clock 60
   run_cli sub update work
   assert_eq "$(yq -r '.dns."enhanced-mode"' "$runtime")" redir-host
 }
@@ -994,6 +1001,7 @@ test_explicit_resolvers_survive_sync_and_subscription_updates() {
     .config.dns."proxy-server-nameserver" = ["tls://149.112.112.112"]' "$override"
 
   run_cli core sync
+  advance_test_clock 60
   run_cli sub update work
 
   assert_eq "$(yq -r '.dns.nameserver[0]' "$runtime")" 'https://9.9.9.9/dns-query#DIRECT'
@@ -1010,6 +1018,7 @@ test_an_explicit_dns_mode_survives_subscription_updates() {
   run_cli sub add <<<https://example.test/subscription/work
   yq -i '.config.dns."enhanced-mode" = "fake-ip"' "$XDG_DATA_HOME/omihomo/override.yaml"
 
+  advance_test_clock 60
   run_cli sub update work
 
   assert_eq "$(yq -r '.config.dns."enhanced-mode"' "$XDG_DATA_HOME/omihomo/override.yaml")" fake-ip

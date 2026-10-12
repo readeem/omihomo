@@ -23,6 +23,9 @@ Six suites, one runner:
   connection restoration, removed configs, rollback, and timer installation on upgrade. It
   also checks provider intervals, the 12-hour fallback, metadata changes committed only on
   success, legacy records and healthy subscriptions behind long sequences of slow failures.
+  Request-limit checks cover persistent cooldowns across manual/startup/timer calls,
+  `Retry-After` seconds and HTTP dates, authorization pauses and explicit resumption,
+  remove/reimport, local application failures, owner-only state and corrupted state.
 
 `real_provider_test.sh` is an optional contract check against the installed Mihomo binary. It
 starts an isolated core in a temporary directory, verifies plain and base64 share-link providers,
