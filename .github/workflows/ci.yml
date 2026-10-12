@@ -46,7 +46,7 @@ jobs:
 
   widget:
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 5
     # Arch packages Quickshell, the runtime the QML service tests need.
     container: archlinux:base@sha256:4e77cf2ea5f410e6f8be5abf93ccf17ce2436e87a138c167208356711a405dbd
     steps:
