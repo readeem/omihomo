@@ -11,7 +11,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 
 [![Omarchy 4](https://img.shields.io/badge/Omarchy-4-7aa2f7)](https://omarchy.org)
 [![Bar widget](https://img.shields.io/badge/plugin-bar%20widget-bb9af7)](manifest.json)
-[![License: MIT](https://img.shields.io/badge/license-MIT-9ece6a)](LICENSE)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-9ece6a)](LICENSE)
 
 ![Omihomo's configs, connections, and rules views open over the Omarchy desktop](preview.png)
 
@@ -233,7 +233,40 @@ docs/                         CLI and widget reference, ADRs
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+GNU General Public License, version 3 only (`GPL-3.0-only`). See [LICENSE](LICENSE).
 
-Omihomo installs and drives mihomo but does not bundle or redistribute it. mihomo is licensed under
-GPL-3.0 and comes from the AUR as `mihomo-bin`.
+mihomo is licensed under GPL-3.0. Omihomo is moving the core into its own daemon, which embeds
+mihomo as a Go library, so Omihomo's release binary will contain mihomo. Until then, Omihomo
+installs mihomo from the AUR as `mihomo-bin`.
+
+Code contributed before the change to GPL-3.0-only was released under the MIT License. Its copyright
+and permission notice is preserved below.
+
+<details>
+<summary>Original MIT license notice</summary>
+
+```text
+MIT License
+
+Copyright (c) 2026 Readeem
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+</details>
