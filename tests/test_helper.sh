@@ -6,6 +6,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_PATH=${PATH}
 
 setup_test() {
+  unset OMIHOMO_TEST_HTTP_STATUS OMIHOMO_TEST_RETRY_AFTER OMIHOMO_TEST_NOW
   unset OMIHOMO_TEST_TITLE OMIHOMO_TEST_NO_TITLE OMIHOMO_TEST_SUBSCRIPTION_BODY OMIHOMO_TEST_SUBSCRIPTION_FIXTURE OMIHOMO_TEST_UNIT_ACTIVE OMIHOMO_TEST_UNIT_ENABLED OMIHOMO_TEST_ACTIVE_ENTER OMIHOMO_TEST_API_UNREACHABLE OMIHOMO_TEST_FETCH_FAIL OMIHOMO_TEST_PKGS OMIHOMO_TEST_PERMISSIONS OMIHOMO_TUN_DEVICE OMIHOMO_TAILSCALED_BIN OMIHOMO_TEST_INVOCATION OMIHOMO_TEST_JOURNAL OMIHOMO_TEST_GZIP_ALWAYS OMIHOMO_TEST_PUT_FAIL OMIHOMO_TEST_TUN_STUCK OMIHOMO_TEST_TUN_FAIL OMIHOMO_TEST_CONNECTIVITY_URI OMIHOMO_TEST_ACL_EXTRA OMIHOMO_STARTUP_READY_TIMEOUT
   TEST_ROOT=$(mktemp -d)
   export TEST_ROOT
@@ -144,6 +145,11 @@ if [[ ${OMIHOMO_TEST_API_UNREACHABLE:-no} == yes && $url == *127.0.0.1* ]]; then
 fi
 if [[ $url == *subscription* ]]; then
   printf '%s\n' "$agent" >>"$TEST_ROOT/curl-agent.log"
+  if [[ -n ${OMIHOMO_TEST_HTTP_STATUS:-} ]]; then
+    printf 'HTTP/2 %s\r\n' "$OMIHOMO_TEST_HTTP_STATUS" >"$headers"
+    [[ -z ${OMIHOMO_TEST_RETRY_AFTER:-} ]] || printf 'Retry-After: %s\r\n' "$OMIHOMO_TEST_RETRY_AFTER" >>"$headers"
+    exit 22
+  fi
   if [[ -n ${OMIHOMO_TEST_FETCH_FAIL_PREFIX:-} && $url == "$OMIHOMO_TEST_FETCH_FAIL_PREFIX"* ]]; then
     sleep "${OMIHOMO_TEST_FETCH_FAIL_DELAY:-0}"
     exit 1
@@ -299,6 +305,19 @@ EOF
 
 teardown_test() {
   rm -rf "$TEST_ROOT"
+}
+
+advance_test_clock() {
+  export OMIHOMO_TEST_NOW=$(( ${OMIHOMO_TEST_NOW:-$(/usr/bin/date +%s)} + $1 ))
+  cat >"$TEST_ROOT/bin/date" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  '+%s') printf '%s\n' "$OMIHOMO_TEST_NOW" ;;
+  '-u +%Y-%m-%dT%H:%M:%SZ') /usr/bin/date -u -d "@$OMIHOMO_TEST_NOW" +%Y-%m-%dT%H:%M:%SZ ;;
+  *) /usr/bin/date "$@" ;;
+esac
+EOF
+  chmod +x "$TEST_ROOT/bin/date"
 }
 
 fail() {

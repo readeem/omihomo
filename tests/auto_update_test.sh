@@ -8,15 +8,7 @@ setup_refresh_test() {
   export OMIHOMO_TEST_INTERVAL_HEADER='Profile-Update-Interval: 6'
   export OMIHOMO_MIHOMO_BIN="$TEST_ROOT/bin/mihomo"
   export OMIHOMO_TEST_NOW=1735732800 # 2025-01-01 12:00 UTC
-  cat >"$TEST_ROOT/bin/date" <<'EOF'
-#!/usr/bin/env bash
-if [[ $* == '+%s' ]]; then
-  printf '%s\n' "$OMIHOMO_TEST_NOW"
-else
-  /usr/bin/date -u -d "@$OMIHOMO_TEST_NOW" +%Y-%m-%dT%H:%M:%SZ
-fi
-EOF
-  chmod +x "$TEST_ROOT/bin/date"
+  advance_test_clock 0
   run_cli sub add <<<https://example.test/subscription/work
 }
 
@@ -25,6 +17,18 @@ age_subscription() {
   jq --arg name "$name" --arg updated "$timestamp" \
     'map(if .name == $name then .updated_at = $updated else . end)' "$file" >"$file.tmp"
   mv "$file.tmp" "$file"
+  local url digest request updated interval
+  url=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .url' "$file")
+  digest=$(printf '%s' "$url" | sha256sum)
+  request="$XDG_DATA_HOME/omihomo/requests/${digest%% *}.json"
+  if [[ -f $request ]]; then
+    updated=$(/usr/bin/date -u -d "$timestamp" +%s)
+    interval=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .update_interval_hours // 12' "$file")
+    jq --argjson updated "$updated" --argjson interval "$interval" '
+      .attempted_at = $updated | .automatic_after = ($updated + $interval * 3600) |
+      .manual_after = ($updated + 60)' "$request" >"$request.tmp"
+    mv "$request.tmp" "$request"
+  fi
 }
 
 fetch_count() { wc -l <"$TEST_ROOT/curl-agent.log"; }
@@ -39,6 +43,7 @@ proxy-groups:
     type: select
     proxies: [First, "Chosen / Москва"]
 rules: ["MATCH,Group / Выбор"]'
+  advance_test_clock 60
   run_cli sub update work
   run_cli set mode global
   yq -i '.config.tun.enable = true' "$XDG_DATA_HOME/omihomo/override.yaml"
@@ -46,6 +51,7 @@ rules: ["MATCH,Group / Выбор"]'
   cp "$XDG_DATA_HOME/omihomo/runtime.yaml" "$TEST_ROOT/live.yaml"
   printf '{"Group / Выбор":{"type":"Selector","all":["First","Chosen / Москва"],"now":"Chosen / Москва"}}\n' >"$TEST_ROOT/proxies.json"
   export OMIHOMO_TEST_UNIT_ACTIVE=yes
+  export OMIHOMO_TEST_NOW=1735732800
   age_subscription
 }
 
@@ -68,20 +74,25 @@ test_manual_refresh_resets_the_deadline() {
   setup_refresh_test
   trap teardown_test RETURN
   age_subscription
+  advance_test_clock 60
   run_cli sub update work
   run_cli sub update-due
   assert_eq "$(fetch_count)" 2
 }
 
-test_startup_refreshes_all_subscriptions_before_their_deadlines() {
+test_startup_only_refreshes_due_subscriptions() {
   setup_refresh_test
   trap teardown_test RETURN
   run_cli sub add <<<https://example.test/subscription/second
   export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_NOW=1735732860
   run_cli sub update-on-start
-  assert_eq "$(fetch_count)" 4
-  assert_eq "$(run_cli sub list | jq '[.[].updated_at] | unique | .[]' -r)" 2025-01-01T12:01:00Z
+  assert_eq "$(fetch_count)" 2
+  age_subscription
+  run_cli sub update-on-start
+  assert_eq "$(fetch_count)" 3
+  run_cli sub update-on-start
+  assert_eq "$(fetch_count)" 3
   [[ ! -e $TEST_ROOT/systemctl.log ]] || fail "startup refresh changed the core lifecycle"
 }
 
@@ -117,6 +128,8 @@ test_startup_failure_keeps_cache_and_refreshes_other_subscriptions() {
   export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes
   export OMIHOMO_TEST_NOW=1735732860
   export OMIHOMO_TEST_FETCH_FAIL_URL=https://example.test/subscription/work
+  age_subscription
+  age_subscription second
   set +e
   run_cli sub update-on-start 2>"$TEST_ROOT/error"
   status=$?
@@ -124,7 +137,7 @@ test_startup_failure_keeps_cache_and_refreshes_other_subscriptions() {
   assert_eq "$status" 1
   assert_eq "$(<"$XDG_DATA_HOME/omihomo/cache/work.yaml")" "$cache"
   assert_eq "$(<"$XDG_DATA_HOME/omihomo/runtime.yaml")" "$runtime"
-  assert_eq "$(run_cli sub list | jq -r '.[] | select(.name == "work") | .updated_at')" 2025-01-01T12:00:00Z
+  assert_eq "$(run_cli sub list | jq -r '.[] | select(.name == "work") | .updated_at')" 2025-01-01T06:00:00Z
   assert_eq "$(run_cli sub list | jq -r '.[] | select(.name == "second") | .updated_at')" 2025-01-01T12:01:00Z
 }
 
@@ -157,7 +170,10 @@ test_failed_download_keeps_state_and_retries() {
   assert_eq "$(<"$XDG_DATA_HOME/omihomo/cache/work.yaml")" "$cache"
   export OMIHOMO_TEST_FETCH_FAIL=no
   run_cli sub update-due
-  assert_eq "$(run_cli sub list | jq -r '.[0].updated_at')" 2025-01-01T12:00:00Z
+  assert_eq "$(run_cli sub list)" "$before"
+  advance_test_clock 21600
+  run_cli sub update-due
+  assert_eq "$(run_cli sub list | jq -r '.[0].updated_at')" 2025-01-01T18:00:00Z
 }
 
 test_refresh_does_not_start_a_stopped_core() {
@@ -326,7 +342,8 @@ test_absent_and_invalid_intervals_default_to_twelve_hours() {
     'Profile-Update-Interval: 1.5' 'Profile-Update-Interval: invalid' \
     'Profile-Update-Interval: 12e0' 'Profile-Update-Interval: 999999999999999999999'; do
     export OMIHOMO_TEST_INTERVAL_HEADER="$header"
-    run_cli sub update work
+    advance_test_clock 60
+  run_cli sub update work
     assert_eq "$(jq -r '.[0].update_interval_hours' "$XDG_DATA_HOME/omihomo/subscriptions.json")" 12
   done
   age_subscription work 2025-01-01T01:00:00Z # 11 hours old
@@ -367,14 +384,15 @@ test_successful_refresh_commits_interval_changes_and_failed_reload_keeps_them() 
   assert_eq "$status" 12
   assert_eq "$(<"$file")" "$before"
   unset OMIHOMO_TEST_PUT_FAIL
+  advance_test_clock 86400
   run_cli sub update work
   assert_eq "$(jq -r '.[0].update_interval_hours' "$file")" 24
-  age_subscription work 2024-12-31T13:00:00Z
   local downloads
   downloads=$(fetch_count)
+  advance_test_clock 86399
   run_cli sub update-due
   assert_eq "$(fetch_count)" "$downloads"
-  export OMIHOMO_TEST_NOW=1735736400
+  advance_test_clock 1
   run_cli sub update-due
   assert_eq "$(fetch_count)" "$((downloads + 1))"
 }
@@ -398,6 +416,7 @@ test_slow_failures_do_not_starve_the_healthy_tail() {
   # Scale 60-second downloads and the old 10-minute limit by 1/1000.
   export OMIHOMO_TEST_FETCH_FAIL_DELAY=0.06
   for round in 1 2; do
+    export OMIHOMO_TEST_NOW=$((1735732800 + (round - 1) * 21600))
     age_subscription work
     set +e
     if [[ $batch_budget == infinity || -z $batch_budget ]]; then
@@ -408,13 +427,206 @@ test_slow_failures_do_not_starve_the_healthy_tail() {
     status=$?
     set -e
     assert_eq "$status" 1
-    assert_eq "$(jq -r '.[] | select(.name == "work") | .updated_at' "$file")" 2025-01-01T12:00:00Z
+    assert_eq "$(jq -r '.[] | select(.name == "work") | .updated_at' "$file")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   done
   assert_eq "$(grep -c '^clash.meta$' "$TEST_ROOT/curl-agent.log")" 23
 }
 
+test_failures_wait_for_the_interval_across_all_request_paths() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  age_subscription
+  export OMIHOMO_TEST_FETCH_FAIL=yes
+  local before status
+  before=$(fetch_count)
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "download should fail"
+  advance_test_clock 60
+  run_cli sub update-due
+  export OMIHOMO_TEST_UNIT_ENABLED=yes OMIHOMO_TEST_UNIT_ACTIVE=yes
+  run_cli sub update-on-start
+  status=0
+  run_cli sub update work 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 22
+  assert_eq "$(fetch_count)" "$((before + 1))"
+  unset OMIHOMO_TEST_FETCH_FAIL
+  advance_test_clock 21540
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" "$((before + 2))"
+}
+
+test_retry_after_survives_removal_and_reimport() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  age_subscription
+  export OMIHOMO_TEST_HTTP_STATUS=429 OMIHOMO_TEST_RETRY_AFTER=86400
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "429 should fail"
+  run_cli sub remove work
+  advance_test_clock 43200
+  local before status=0
+  before=$(fetch_count)
+  run_cli sub add <<<https://example.test/subscription/work 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 22
+  assert_eq "$(fetch_count)" "$before"
+  unset OMIHOMO_TEST_HTTP_STATUS OMIHOMO_TEST_RETRY_AFTER
+  advance_test_clock 43200
+  run_cli sub add <<<https://example.test/subscription/work
+  assert_eq "$(fetch_count)" "$((before + 1))"
+}
+
+test_http_date_retry_after_is_respected() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  age_subscription
+  export OMIHOMO_TEST_HTTP_STATUS=503 OMIHOMO_TEST_RETRY_AFTER='Thu, 02 Jan 2025 12:00:00 GMT'
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "503 should fail"
+  unset OMIHOMO_TEST_HTTP_STATUS OMIHOMO_TEST_RETRY_AFTER
+  advance_test_clock 86399
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 2
+  advance_test_clock 1
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 3
+}
+
+test_numeric_retry_after_starts_when_the_response_arrives() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  age_subscription
+  mv "$TEST_ROOT/bin/date" "$TEST_ROOT/bin/fixed-date"
+  cat >"$TEST_ROOT/bin/date" <<'EOF'
+#!/usr/bin/env bash
+if [[ $* == '+%s' && -f $TEST_ROOT/response-arrived ]]; then
+  printf '%s\n' "$((OMIHOMO_TEST_NOW + 45))"
+else
+  exec "$TEST_ROOT/bin/fixed-date" "$@"
+fi
+EOF
+  mv "$TEST_ROOT/bin/curl" "$TEST_ROOT/bin/fixture-curl"
+  cat >"$TEST_ROOT/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+status=0
+"$TEST_ROOT/bin/fixture-curl" "$@" || status=$?
+touch "$TEST_ROOT/response-arrived"
+exit "$status"
+EOF
+  chmod +x "$TEST_ROOT/bin/date" "$TEST_ROOT/bin/curl"
+  export OMIHOMO_TEST_HTTP_STATUS=429 OMIHOMO_TEST_RETRY_AFTER=86400
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "429 should fail"
+  unset OMIHOMO_TEST_HTTP_STATUS OMIHOMO_TEST_RETRY_AFTER
+  export OMIHOMO_TEST_NOW=$((1735732800 + 86400 - 1))
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 2
+  export OMIHOMO_TEST_NOW=$((1735732800 + 86400))
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 3
+}
+
+test_authorization_failures_pause_until_explicitly_resumed() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  age_subscription
+  export OMIHOMO_TEST_HTTP_STATUS=403
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "403 should fail"
+  advance_test_clock 604800
+  run_cli sub update-due
+  local status=0
+  run_cli sub update work 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 22
+  assert_eq "$(fetch_count)" 2
+  unset OMIHOMO_TEST_HTTP_STATUS
+  run_cli sub resume work
+  run_cli sub update work
+  assert_eq "$(fetch_count)" 3
+}
+
+test_local_failures_do_not_redownload_on_the_next_tick() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  age_subscription
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY='INVALID: true'
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "invalid YAML should fail"
+  advance_test_clock 60
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 2
+  export OMIHOMO_TEST_SUBSCRIPTION_BODY='proxies: []'
+  export OMIHOMO_TEST_UNIT_ACTIVE=yes OMIHOMO_TEST_API_UNREACHABLE=yes
+  advance_test_clock 21540
+  run_cli sub update-due 2>"$TEST_ROOT/error" && fail "controller snapshot should fail"
+  advance_test_clock 60
+  run_cli sub update-due
+  assert_eq "$(fetch_count)" 3
+}
+
+test_manual_requests_have_a_persistent_minimum_spacing() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  local status=0
+  run_cli sub update work 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 22
+  assert_eq "$(fetch_count)" 1
+  advance_test_clock 60
+  run_cli sub update work 2>"$TEST_ROOT/first-error" &
+  local first=$!
+  run_cli sub update work 2>"$TEST_ROOT/error" &
+  local second=$!
+  local first_status=0 second_status=0
+  wait "$first" || first_status=$?
+  wait "$second" || second_status=$?
+  assert_eq "$((first_status + second_status))" 22
+  assert_eq "$(fetch_count)" 2
+}
+
+test_failed_first_import_can_be_explicitly_resumed_without_bypassing_spacing() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  export OMIHOMO_TEST_HTTP_STATUS=401
+  run_cli sub add <<<https://example.test/subscription/new 2>"$TEST_ROOT/error" && fail "401 should fail"
+  run_cli sub resume-url <<<https://example.test/subscription/new
+  unset OMIHOMO_TEST_HTTP_STATUS
+  local status=0
+  run_cli sub add <<<https://example.test/subscription/new 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 22
+  assert_eq "$(fetch_count)" 2
+  advance_test_clock 60
+  run_cli sub add <<<https://example.test/subscription/new
+  assert_eq "$(fetch_count)" 3
+}
+
+test_request_state_is_private_and_corruption_fails_closed() {
+  setup_refresh_test
+  trap teardown_test RETURN
+  local request before status=0
+  request=$(printf '%s\n' "$XDG_DATA_HOME"/omihomo/requests/*.json)
+  assert_eq "$(/usr/bin/stat -c %a "${request%/*}")" 700
+  assert_eq "$(/usr/bin/stat -c %a "$request")" 600
+  ! grep -q 'https://' "$request" || fail "request state contains a URL"
+  chmod 755 "${request%/*}"
+  chmod 644 "$request"
+  run_cli sub update work 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 22
+  assert_eq "$(/usr/bin/stat -c %a "${request%/*}")" 700
+  assert_eq "$(/usr/bin/stat -c %a "$request")" 600
+  printf '{}\n' >"$request"
+  advance_test_clock 86400
+  before=$(fetch_count)
+  status=0
+  run_cli sub update-due 2>"$TEST_ROOT/error" || status=$?
+  assert_eq "$status" 1
+  run_cli sub update work 2>"$TEST_ROOT/error" || true
+  assert_eq "$(fetch_count)" "$before"
+}
+
 tests=(
-  test_startup_refreshes_all_subscriptions_before_their_deadlines
+  test_failures_wait_for_the_interval_across_all_request_paths
+  test_retry_after_survives_removal_and_reimport
+  test_http_date_retry_after_is_respected
+  test_numeric_retry_after_starts_when_the_response_arrives
+  test_authorization_failures_pause_until_explicitly_resumed
+  test_local_failures_do_not_redownload_on_the_next_tick
+  test_manual_requests_have_a_persistent_minimum_spacing
+  test_failed_first_import_can_be_explicitly_resumed_without_bypassing_spacing
+  test_request_state_is_private_and_corruption_fails_closed
+  test_startup_only_refreshes_due_subscriptions
   test_startup_skips_refresh_when_autostart_is_disabled_or_core_is_stopped
   test_startup_asks_to_be_retried_when_the_core_never_becomes_ready
   test_startup_failure_keeps_cache_and_refreshes_other_subscriptions
