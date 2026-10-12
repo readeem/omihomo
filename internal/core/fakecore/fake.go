@@ -4,6 +4,7 @@ package fakecore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -80,6 +81,9 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.applyErr != nil {
+		if errors.Is(c.applyErr, core.ErrStopped) {
+			c.running = false
+		}
 		return c.applyErr
 	}
 	if !c.running {
@@ -188,7 +192,7 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 	if !c.running {
 		return protocol.Connections{}, core.ErrNotRunning
 	}
-	out := protocol.Connections{Connections: slices.Clone(c.connections)}
+	out := protocol.Connections{Open: len(c.connections), Connections: slices.Clone(c.connections)}
 	for _, conn := range c.connections {
 		out.UploadTotal += conn.Upload
 		out.DownloadTotal += conn.Download

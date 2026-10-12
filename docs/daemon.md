@@ -2,8 +2,8 @@
 
 `cmd/omihomo` is one Go binary: `omihomo daemon` is the root system service that hosts the proxy
 core, and every other subcommand is a client of its socket. This page covers the socket protocol,
-who may use it, and the command line. The core interface is `internal/core`; until the embedded
-core lands, the daemon runs only the in-memory fake (`--core fake`), which proxies nothing.
+who may use it, the command line, and the core. The core interface is `internal/core`; the daemon
+hosts mihomo in-process behind it, or the in-memory fake (`--core fake`), which proxies nothing.
 
 ## Socket and owner
 
@@ -80,12 +80,18 @@ the Go types in `internal/protocol`. Status is:
 ```json
 {"state":"on","detail":"","active_subscription":"","primary_group":"","mode":"rule",
  "tun":false,"tun_redirect":false,"tailscale":false,"tailscale_present":true,
- "tailnet_proxy":false,"started_at":1791741355865,"tun_bypass":[]}
+ "tailnet_proxy":false,"started_at":1791741355865,"tun_bypass":["0.0.0.0/8","10.0.0.0/8",...]}
 ```
 
 `state` is `stopped`, `starting`, `on` or `degraded`; `detail` says why a start failed. A new
 `started_at` is a new runtime, and anything read from the previous one is stale. `settings.set`
 on a running proxy applies the change to the core first; if the core refuses it, nothing changes.
+`tun_bypass` is the address space TUN routes around: loopback, private, CGNAT, link-local,
+documentation and multicast ranges. With `tailnet_proxy` the tailnet leaves it, all but
+Tailscale's MagicDNS address.
+
+Connections lists at most the 1000 newest connections, so the list fits in one message; `open`
+counts them all, and the totals cover them all.
 
 ### Streams
 
@@ -98,7 +104,7 @@ After `subscribe`, the daemon pushes events between replies:
 | Stream | Data | When |
 | --- | --- | --- |
 | `status` | Status | on every change |
-| `groups` | `{"groups":[Group]}` | after a selection, a delay test, or a new runtime |
+| `groups` | `{"groups":[Group]}` | after a selection, a delay test, a new runtime, or a change the core made itself, checked every 5 seconds |
 | `rules` | `{"rules":[Rule]}` | when the runtime's rules change |
 | `traffic` | `{"up","down"}` bytes per second | every second while running |
 | `connections` | Connections | every second while running |
@@ -147,7 +153,7 @@ omihomo conn list | close <id>... | close --all
 omihomo egress
 omihomo watch [stream...]
 omihomo version
-omihomo daemon [--core fake] [--socket PATH] [--owner-file PATH]
+omihomo daemon [--core mihomo|fake] [--home DIR] [--socket PATH] [--owner-file PATH] [--profile FILE]
 ```
 
 Each command is one call. The result is one JSON line on stdout, indented with `--pretty`; a call
@@ -172,13 +178,81 @@ Errors are one line on stderr.
 
 ## Running it
 
-`omihomo daemon` logs to stderr, which the journal collects. Under a `Type=notify` unit it reports
-`READY=1` once it serves and `STOPPING=1` on shutdown; `SIGTERM` disconnects every client and
-stops the core. For development, against the fake core:
+`omihomo daemon` logs to stderr, which the journal collects; mihomo logs its warnings and errors
+to stdout. Under a `Type=notify` unit it reports `READY=1` once it serves and `STOPPING=1` on
+shutdown; `SIGTERM` disconnects every client and stops the core. The daemon runs with umask
+`077`, so everything it writes, the core's selection cache included, is root's alone.
+
+Build it the way mihomo's releases are built, with gVisor, which TUN without redirect needs:
 
 ```sh
-go build -o /tmp/omihomo ./cmd/omihomo
+CGO_ENABLED=0 go build -tags with_gvisor -trimpath -o /tmp/omihomo ./cmd/omihomo
+```
+
+For development, against the fake core:
+
+```sh
 dir=$(mktemp -d) && id -u > "$dir/owner" && chmod 600 "$dir/owner"
 /tmp/omihomo daemon --core fake --socket "$dir/sock" --owner-file "$dir/owner" &
 OMIHOMO_SOCKET="$dir/sock" /tmp/omihomo start
 ```
+
+Until the daemon downloads subscriptions itself, `--profile` runs the proxies, groups, rules and
+inline rule providers of a Clash YAML file, and logs what it leaves out: proxy providers and
+rule providers that are not inline, with the rules that use them. It allowlists nothing, so give
+it only a file you trust. TUN needs root:
+
+```sh
+sudo install -d -m 711 /run/omihomo-dev
+sudo sh -c "id -u $USER > /run/omihomo-dev/owner && chmod 600 /run/omihomo-dev/owner"
+sudo /tmp/omihomo daemon --home /run/omihomo-dev/core --socket /run/omihomo-dev/sock \
+  --owner-file /run/omihomo-dev/owner --profile ~/subscription.yaml &
+export OMIHOMO_SOCKET=/run/omihomo-dev/sock
+/tmp/omihomo start && /tmp/omihomo set tun on
+```
+
+## The mihomo core
+
+`internal/core/mihomo` is the only package that imports mihomo; a test fails the build when
+another one does, or when mihomo's controller (`hub`, `hub/route`) is linked. mihomo keeps its
+state in package globals, so a process hosts one core, and `--home` (default
+`/var/lib/omihomo/core`) is its directory for the selection cache and geodata.
+
+The core builds mihomo's whole config itself. A profile contributes proxies, groups, rules and
+inline rule sets; everything else is fixed by the core:
+
+- no controller, secret or dashboard, and no inbound but `127.0.0.1:7890`, plus
+  `127.0.0.1:7899` for tailscaled when the Tailscale integration is on;
+- DNS over HTTPS to Cloudflare, through the global group, and `+.ts.net` to Tailscale's
+  resolver;
+- TUN as the `omihomo` device with auto-route, `any:53` DNS hijack, the daemon's bypass, and
+  `tailscale0` excluded; gVisor, or the mixed stack when redirect is on;
+- a `GLOBAL` group on the primary group: the one named in settings, else the first `select`
+  group, else the first group. Global mode and Omihomo's own Tailscale rules go through it, and
+  a profile's own `GLOBAL` is dropped;
+- no geodata source, so mihomo never fetches anything as root: GEOIP and GEOSITE rules need their
+  files in `--home` already, or the config fails to apply.
+
+`apply` is all or nothing. A config that does not parse changes nothing: mihomo applies a
+config's general settings to the running engine while it parses, so the core parses in the
+running mode and sets the new one only once the config is accepted, and a value mihomo panics
+on fails the apply instead. mihomo applies a config whatever fails on the way and only logs it,
+so the core reads its log: if TUN, the local proxy port or the Tailscale port does not come up,
+the core stops, puts the previous config back if there was one, and the error carries mihomo's
+reason. When the previous config does not come back either, the proxy stays stopped and the
+daemon shows it so, with both reasons in `detail`.
+
+Before applying, the core also refuses what mihomo would accept and quietly run differently: a
+rule whose value would move its target (only logic and regex rules may have commas in their
+value), a rule set with lines mihomo cannot read, and a group interval, timeout or tolerance out
+of range, which crashes mihomo's health check.
+
+Stopping applies an empty config: no inbounds, no TUN and no DNS. mihomo cannot cancel a dial in
+flight and tracks a connection only once its dial is through, so for the dial timeout after a
+stop (5 seconds) the core closes whatever lands; what such a connection sends in the few
+milliseconds before that still gets out. Selections persist in `cache.db` across restarts.
+
+mihomo pins `golang.org/x/net` at a release with advisories govulncheck finds reachable; `go.mod`
+requires a newer one. It copies mihomo's `replace` of protobuf, which CI checks against mihomo's
+on every change, and sets `godebug default=go1.20` to match mihomo's runtime defaults.
+Dependabot proposes mihomo bumps.

@@ -319,10 +319,12 @@ type Connection struct {
 	StartedAt       int64  `json:"started_at"`
 }
 
-// Connections is a snapshot of what is open now.
+// Connections is a snapshot of what is open now. Connections lists the
+// newest of them when there are too many for one message; Open counts all.
 type Connections struct {
 	UploadTotal   int64        `json:"upload_total"`
 	DownloadTotal int64        `json:"download_total"`
+	Open          int          `json:"open"`
 	Connections   []Connection `json:"connections"`
 }
 

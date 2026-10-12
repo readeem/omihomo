@@ -154,7 +154,7 @@ func TestArgumentsAreChecked(t *testing.T) {
 		{"conn", "close", "--all", "abc"},
 		{"status", "--verbose"},
 		{"daemon", "--core", "fake", "extra"},
-		{"daemon"},
+		{"daemon", "--core", "nope"},
 	} {
 		if code, _, errOut := run(t, "", args...); code != cli.ExitUsage || !strings.Contains(errOut, "USAGE") {
 			t.Errorf("%v: exit %d, stderr %q", args, code, errOut)

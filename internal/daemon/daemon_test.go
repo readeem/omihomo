@@ -11,8 +11,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -589,5 +591,78 @@ func TestShutdownStopsTheCore(t *testing.T) {
 	case <-c.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("client not disconnected")
+	}
+}
+
+func TestTheCoreRunsTheProfileAndSettings(t *testing.T) {
+	profile := core.Profile{Proxies: []core.Proxy{{Name: "Tokyo", Type: "vless"}}}
+	h := serve(t, os.Getuid(), daemon.WithProfile(profile))
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{PrimaryGroup: ptr("Proxy")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	cfg, _ := h.core.Config()
+	if len(cfg.Profile.Proxies) != 1 || cfg.Profile.Proxies[0].Name != "Tokyo" || cfg.PrimaryGroup != "Proxy" {
+		t.Fatalf("core runs %+v", cfg)
+	}
+	if !slices.Contains(cfg.TUNBypass, netip.MustParsePrefix("192.168.0.0/16")) {
+		t.Errorf("TUN would route the LAN: %v", cfg.TUNBypass)
+	}
+}
+
+func TestStatusShowsWhatTUNBypasses(t *testing.T) {
+	h := serve(t, os.Getuid())
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	st := call[protocol.Status](t, c, protocol.OpStatus, nil)
+	if !slices.Contains(st.TUNBypass, "100.64.0.0/10") || slices.Contains(st.TUNBypass, "100.100.100.100/32") {
+		t.Fatalf("bypass = %v, want the tailnet bypassed", st.TUNBypass)
+	}
+	cfg, _ := h.core.Config()
+	if len(cfg.TUNBypass) != len(st.TUNBypass) {
+		t.Errorf("status shows %v, the core bypasses %v", st.TUNBypass, cfg.TUNBypass)
+	}
+
+	// Proxying the tailnet sends it into TUN, all but MagicDNS.
+	st = call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{TailnetProxy: ptr(true)})
+	if slices.Contains(st.TUNBypass, "100.64.0.0/10") || !slices.Contains(st.TUNBypass, "100.100.100.100/32") {
+		t.Fatalf("bypass with the tailnet proxied = %v", st.TUNBypass)
+	}
+	cfg, _ = h.core.Config()
+	if !slices.Contains(cfg.TUNBypass, netip.MustParsePrefix("100.100.100.100/32")) {
+		t.Errorf("the core bypasses %v", cfg.TUNBypass)
+	}
+}
+
+func TestGroupChangesTheCoreMakesArePushed(t *testing.T) {
+	h := serve(t, os.Getuid(), daemon.WithGroupsRefresh(20*time.Millisecond))
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	call[protocol.Empty](t, c, protocol.OpSubscribe, protocol.StreamsArgs{Streams: []string{"groups"}})
+	next(t, c, "groups")
+
+	// As an automatic group would after a health check, without a call.
+	if err := h.core.Select(context.Background(), "Proxy", "Frankfurt"); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var groups protocol.GroupList
+		json.Unmarshal(next(t, c, "groups"), &groups)
+		if groups.Groups[0].Now == "Frankfurt" {
+			break
+		}
+	}
+}
+
+func TestACoreThatStopsOnAFailedChangeIsShownStopped(t *testing.T) {
+	h := serve(t, os.Getuid())
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	h.core.FailApply(fmt.Errorf("TUN did not start; the previous config did not come back either: %w", core.ErrStopped))
+	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: ptr(true)}); err.Code != protocol.CodeCore {
+		t.Fatalf("failed change = %v", err)
+	}
+	st := call[protocol.Status](t, c, protocol.OpStatus, nil)
+	if st.State != protocol.StateStopped || !strings.Contains(st.Detail, "did not come back") || st.TUN {
+		t.Fatalf("status = %+v, want stopped with the reason and the old settings", st)
 	}
 }

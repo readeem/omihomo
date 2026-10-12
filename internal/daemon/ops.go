@@ -30,13 +30,60 @@ type settings struct {
 
 func defaultSettings() settings { return settings{mode: protocol.ModeRule} }
 
-func (s settings) config() core.Config {
+// tunBypass is the address space that never leaves through TUN: loopback,
+// the private, CGNAT and link-local ranges, the documentation and multicast
+// blocks, and their IPv6 equivalents. Without it auto-route swallows the
+// LAN, and the router, printers and local DNS stop answering once TUN is up.
+//
+// The multicast and reserved space stops just short of the last address:
+// sing-tun cannot put a range that runs to it in an nftables interval set,
+// and TUN redirect then never starts.
+var tunBypass = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	tailnetRange,
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("240.0.0.0/5"),
+	netip.MustParsePrefix("::/127"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("ff00::/9"),
+}
+
+var (
+	tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
+	// Tailscale's MagicDNS resolver sits inside the tailnet range but must
+	// still be answered by Tailscale when the rest of the tailnet is proxied.
+	tailscaleDNS = netip.MustParsePrefix("100.100.100.100/32")
+)
+
+func (s settings) bypass() []netip.Prefix {
+	if !s.tailnetProxy {
+		return slices.Clone(tunBypass)
+	}
+	out := slices.DeleteFunc(slices.Clone(tunBypass), func(p netip.Prefix) bool { return p == tailnetRange })
+	return append(out, tailscaleDNS)
+}
+
+func (s settings) config(profile core.Profile) core.Config {
 	return core.Config{
 		Mode:         s.mode,
 		TUN:          s.tun,
 		TUNRedirect:  s.tunRedirect,
 		Tailscale:    s.tailscale,
 		TailnetProxy: s.tailnetProxy,
+		PrimaryGroup: s.primaryGroup,
+		TUNBypass:    s.bypass(),
+		Profile:      profile,
 	}
 }
 
@@ -181,6 +228,10 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 func (d *server) status() protocol.Status {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	bypass := []string{}
+	for _, p := range d.settings.bypass() {
+		bypass = append(bypass, p.String())
+	}
 	return protocol.Status{
 		State:            d.state,
 		Detail:           d.detail,
@@ -192,7 +243,7 @@ func (d *server) status() protocol.Status {
 		TailscalePresent: d.cfg.tailscalePresent(),
 		TailnetProxy:     d.settings.tailnetProxy,
 		StartedAt:        d.startedAt,
-		TUNBypass:        []string{},
+		TUNBypass:        bypass,
 	}
 }
 
@@ -299,7 +350,7 @@ func (d *server) start(ctx context.Context) (any, *protocol.Error) {
 	d.setState(protocol.StateStarting, "")
 	d.publish(ctx)
 	d.mu.Lock()
-	cfg := d.settings.config()
+	cfg := d.settings.config(d.cfg.profile)
 	d.mu.Unlock()
 	if err := d.core.Apply(ctx, cfg); err != nil {
 		d.log.Error("start the proxy", "err", err)
@@ -378,8 +429,12 @@ func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (a
 	}
 
 	if running {
-		if err := d.core.Apply(ctx, next.config()); err != nil {
+		if err := d.core.Apply(ctx, next.config(d.cfg.profile)); err != nil {
 			d.log.Error("apply settings", "err", err)
+			if errors.Is(err, core.ErrStopped) {
+				d.setState(protocol.StateStopped, err.Error())
+				d.publish(ctx)
+			}
 			return nil, coreError(err)
 		}
 	}

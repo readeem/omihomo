@@ -35,6 +35,8 @@ type config struct {
 	egressURL        string
 	tailscalePresent func() bool
 	maxClients       int
+	profile          core.Profile
+	groupsEvery      time.Duration
 }
 
 // WithOwnerFile reads the owner from path instead of owner.DefaultPath. The
@@ -60,6 +62,16 @@ func WithEgressURL(url string) ConfigOpt {
 // WithTailscaleProbe reports whether tailscaled is installed.
 func WithTailscaleProbe(present func() bool) ConfigOpt {
 	return func(c *config) { set(&c.tailscalePresent, present, present != nil) }
+}
+
+// WithProfile is the subscription content the proxy runs.
+func WithProfile(p core.Profile) ConfigOpt { return func(c *config) { c.profile = p } }
+
+// WithGroupsRefresh is how often the groups stream is checked for changes
+// the core made on its own, such as an automatic group picking another
+// proxy after a health check.
+func WithGroupsRefresh(d time.Duration) ConfigOpt {
+	return func(c *config) { set(&c.groupsEvery, d, d > 0) }
 }
 
 // WithMaxClients bounds how many clients are served at once.
@@ -117,7 +129,8 @@ func New(c core.Core, opts ...ConfigOpt) Daemon {
 			_, err := exec.LookPath("tailscaled")
 			return err == nil
 		},
-		maxClients: 16,
+		maxClients:  16,
+		groupsEvery: 5 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -248,10 +261,21 @@ func (d *server) admit(ctx context.Context, conn net.Conn) {
 func (d *server) tick(ctx context.Context) {
 	t := time.NewTicker(d.cfg.tick)
 	defer t.Stop()
+	groups := time.NewTicker(d.cfg.groupsEvery)
+	defer groups.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-groups.C:
+			// The core changes groups on its own too; a push goes out only
+			// when they differ from the last one.
+			if d.running() && d.listening(protocol.StreamGroups) {
+				d.pubMu.Lock()
+				d.publishLocked(ctx, protocol.StreamGroups, nil)
+				d.pubMu.Unlock()
+			}
+			continue
 		case <-t.C:
 		}
 		if !d.running() {

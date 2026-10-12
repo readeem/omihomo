@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # mihomo is the embedded core. Only direct requirements are bumped: the
+  # rest is what mihomo pins, and moves with it.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: direct
+    commit-message:
+      prefix: "build(deps)"
