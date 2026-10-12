@@ -46,6 +46,7 @@ jobs:
 
   widget:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Arch packages Quickshell, the runtime the QML service tests need.
     container: archlinux:base@sha256:4e77cf2ea5f410e6f8be5abf93ccf17ce2436e87a138c167208356711a405dbd
     steps:
@@ -70,6 +71,7 @@ jobs:
           rm -rf .omarchy
       # As an ordinary account, the way the suites run on a desktop.
       - name: tests/run
+        timeout-minutes: 5
         run: |
           useradd --create-home tester
           chown -R tester: .

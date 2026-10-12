@@ -29,7 +29,7 @@ cp "$here/service_state_test.qml" "$test_root/shell.qml"
 cp "$project_root/widget/Service.qml" "$project_root/widget/Model.js" "$test_root/"
 cp -r /usr/share/omarchy/shell/Commons "$test_root/"
 
-output=$(WAYLAND_DISPLAY= QT_QPA_PLATFORM=offscreen timeout 5s qs --no-color -p "$test_root" 2>&1) || {
+output=$(WAYLAND_DISPLAY= QT_QPA_PLATFORM=offscreen timeout --kill-after=2s 5s qs --no-color -p "$test_root" 2>&1) || {
   printf '%s\n' "$output" >&2
   exit 1
 }

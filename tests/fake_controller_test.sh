@@ -23,7 +23,7 @@ for suite in ping_state_test live_state_test; do
   cp -r /usr/share/omarchy/shell/Commons "$config/"
 
   output=$(PATH="$config/bin:$PATH" FAKE_CONTROLLER_STATE=$config WAYLAND_DISPLAY= \
-    QT_QPA_PLATFORM=offscreen timeout 8s qs --no-color -p "$config" 2>&1) || {
+    QT_QPA_PLATFORM=offscreen timeout --kill-after=2s 8s qs --no-color -p "$config" 2>&1) || {
     printf '%s\n' "$output" >&2
     exit 1
   }
