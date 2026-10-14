@@ -30,10 +30,6 @@ jobs:
         run: |
           go test -race $(go list ./... | grep -v /internal/core/mihomo$)
           go test -tags with_gvisor ./internal/core/mihomo
-      # Official mihomo releases build with gVisor, which TUN without
-      # redirect needs.
-      - name: build
-        run: CGO_ENABLED=0 go build -tags with_gvisor -trimpath -o /dev/null ./cmd/omihomo
       # A replace only applies in the main module, so ours copies mihomo's;
       # a bump that changes theirs must change ours.
       - name: mihomo replace
@@ -43,6 +39,9 @@ jobs:
           diff <(go mod edit -json "$upstream" | jq -S .Replace) <(go mod edit -json | jq -S .Replace)
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  package:
+    uses: ./.github/workflows/package.yml
 
   widget:
     runs-on: ubuntu-latest

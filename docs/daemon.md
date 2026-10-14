@@ -5,6 +5,47 @@ core, and every other subcommand is a client of its socket. This page covers the
 who may use it, the command line, and the core. The core interface is `internal/core`; the daemon
 hosts mihomo in-process behind it, or the in-memory fake (`--core fake`), which proxies nothing.
 
+## Install on Arch Linux
+
+Install the binary package from the AUR as your ordinary user, then give that account access
+to the daemon:
+
+```sh
+yay -S omihomo-bin
+sudo /usr/bin/omihomo claim
+/usr/bin/omihomo status
+```
+
+The plugin checkout provides `bin/omihomo-install` to run the first two commands in order. Run
+that script without `sudo`; it requests privileges only for claiming the daemon (and when yay
+installs the package). If installation fails it does not claim; if claiming fails the script
+returns an error. The absolute binary path avoids the plugin's existing `bin/omihomo` shell CLI.
+The current widget still uses that legacy CLI; migration to the daemon and wiring its install
+button to this new entrypoint are separate work.
+
+The package installs `/usr/bin/omihomo`, `omihomo.service`, `omihomo.socket`, and a tmpfiles rule
+for `/var/lib/omihomo`. It enables both units and starts them when systemd is running. Before
+claiming, the socket belongs to root and the daemon refuses every client. `claim` records the
+non-root account that invoked `sudo` (or `pkexec`) in `/var/lib/omihomo/owner`, writes
+`/etc/systemd/system/omihomo.socket.d/owner.conf`, reloads systemd and restarts both units
+so the socket reaches the daemon with the correct ownership. Every claim performs that
+restart, including a retry after a failed systemd command. Running `sudo /usr/bin/omihomo claim`
+from another account transfers access to that account; it does not create shared access.
+Running it again from the same account repairs the setup and restarts the daemon.
+
+The service runs as root because systemd-resolved authorizes the TUN DNS setup by effective
+uid 0. There is no dedicated system user and no sysusers file. The service limits capabilities,
+system calls, devices and filesystem access; its state directory is root-owned with mode
+`0700`. See [the service sandbox research](research/2026-10-11-hardened-root-tun-service.md)
+for its constraints. The release build disables EasyTier because its JIT conflicts with
+`MemoryDenyWriteExecute=yes`.
+
+Upgrades restart an already running daemon. Removing the package disables and stops both
+units but preserves `/var/lib/omihomo` and the ownership drop-in, so reinstalling can reuse the
+state. Logs are available with `journalctl -u omihomo.service`.
+
+Package publication and maintainer setup are described in [Release workflow](release.md).
+
 ## Socket and owner
 
 The daemon listens on `/run/omihomo/omihomo.sock`. Under systemd the socket comes from socket
@@ -153,6 +194,7 @@ omihomo conn list | close <id>... | close --all
 omihomo egress
 omihomo watch [stream...]
 omihomo version
+sudo /usr/bin/omihomo claim
 omihomo daemon [--core mihomo|fake] [--home DIR] [--socket PATH] [--owner-file PATH] [--profile FILE]
 ```
 
@@ -186,7 +228,7 @@ shutdown; `SIGTERM` disconnects every client and stops the core. The daemon runs
 Build it the way mihomo's releases are built, with gVisor, which TUN without redirect needs:
 
 ```sh
-CGO_ENABLED=0 go build -tags with_gvisor -trimpath -o /tmp/omihomo ./cmd/omihomo
+CGO_ENABLED=0 go build -tags with_gvisor,no_easytier -trimpath -o /tmp/omihomo ./cmd/omihomo
 ```
 
 For development, against the fake core:

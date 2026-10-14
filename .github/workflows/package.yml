@@ -1,0 +1,113 @@
+name: Package
+
+# Builds the release tarball and the AUR package from it, then installs that
+# package in a clean Arch container and checks what it installed. CI runs it
+# on every change so a tag never finds a broken package; the release workflow
+# publishes what it produces.
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: manifest.json's version, which the tarball and the package carry
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # gVisor is what TUN without redirect needs, as in mihomo's own
+      # releases. no_easytier drops the one outbound that JITs, which the
+      # unit's MemoryDenyWriteExecute= would kill. The tarball is built from
+      # the commit alone, so building one commit again gives the same bytes.
+      - name: build
+        id: build
+        run: |
+          version=$(jq -r .version manifest.json)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "manifest.json version $version is not X.Y.Z"; exit 1; }
+          name=omihomo-$version
+          stage=dist/$name
+          mkdir -p "$stage"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_gvisor,no_easytier -trimpath \
+            -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
+            -o "$stage/omihomo" ./cmd/omihomo
+          install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles LICENSE "$stage/"
+          tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --numeric-owner \
+            -C dist -cf - "$name" | gzip -n > "dist/$name-x86_64.tar.gz"
+          rm -r "$stage"
+          (cd dist && sha256sum "$name-x86_64.tar.gz" > "$name-x86_64.tar.gz.sha256")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 "dist/$name-x86_64.tar.gz.sha256")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: dist/
+          retention-days: 7
+
+  aur:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: archlinux:base@sha256:4e77cf2ea5f410e6f8be5abf93ccf17ce2436e87a138c167208356711a405dbd
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - name: install tools
+        run: pacman -Syu --noconfirm --needed base-devel namcap
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+      # aur/ is exactly what goes to the AUR. makepkg finds the tarball in
+      # its build directory, so nothing is downloaded and the checksum is
+      # checked against the file the release will publish.
+      - name: render the PKGBUILD
+        run: |
+          mkdir aur
+          cp packaging/aur/PKGBUILD packaging/aur/omihomo.install aur/
+          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^sha256sums=.*/sha256sums=('$SHA256')/" aur/PKGBUILD
+          grep -qx "pkgver=$VERSION" aur/PKGBUILD
+          grep -qx "sha256sums=('$SHA256')" aur/PKGBUILD
+          useradd --create-home builder
+          mkdir build
+          cp aur/* "dist/omihomo-$VERSION-x86_64.tar.gz" build/
+          chown -R builder: aur build
+          runuser -u builder -- sh -c 'cd aur && makepkg --printsrcinfo > .SRCINFO'
+      - name: build the package
+        run: |
+          runuser -u builder -- sh -c 'cd build && makepkg --nodeps'
+          namcap aur/PKGBUILD build/omihomo-bin-*.pkg.tar.zst
+      # Outside a booted systemd the install script can only enable the units,
+      # which is what this checks along with the files themselves. The
+      # threshold is the unit's exposure, 2.8, so loosening the sandbox fails.
+      - name: install and check the package
+        run: |
+          pacman -U --noconfirm build/omihomo-bin-*.pkg.tar.zst
+          omihomo version | grep -q "^omihomo v$VERSION "
+          systemctl is-enabled omihomo.socket omihomo.service
+          systemd-analyze verify /usr/lib/systemd/system/omihomo.socket /usr/lib/systemd/system/omihomo.service
+          systemd-analyze security --offline=yes --threshold=28 /usr/lib/systemd/system/omihomo.service
+          pacman -R --noconfirm omihomo-bin
+          test ! -e /etc/systemd/system/multi-user.target.wants/omihomo.service
+          test ! -e /etc/systemd/system/sockets.target.wants/omihomo.socket
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aur
+          path: aur/
+          include-hidden-files: true
+          retention-days: 7

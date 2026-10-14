@@ -1,0 +1,67 @@
+# The hardened unit from docs/research/2026-10-11-hardened-root-tun-service.md.
+# It runs as root because systemd-resolved authorizes sing-tun's resolvectl
+# calls by euid 0 alone; the bounding set and the sandbox are what limit it.
+# The binary is built with -tags no_easytier, which MemoryDenyWriteExecute=
+# requires.
+[Unit]
+Description=Omihomo proxy daemon
+Documentation=https://github.com/readeem/omihomo/blob/main/docs/daemon.md
+# Subscription downloads want a network; resolvectl wants resolved.
+# Ordering only.
+Wants=network-online.target
+After=network-online.target systemd-resolved.service
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/omihomo daemon
+Restart=on-failure
+# No User=: euid 0 is what systemd-resolved authorizes.
+
+# TUN, rtnetlink, nfnetlink, SO_MARK
+CapabilityBoundingSet=CAP_NET_ADMIN
+# Raw ICMP; unprivileged ICMP fallback exists
+CapabilityBoundingSet=CAP_NET_RAW
+# Process lookup: fd/exe links, other users' fd directories. With
+# CAP_SYS_PTRACE the filesystem sandbox below guards against bugs, not against
+# a compromised daemon (/proc/1/root).
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+
+# Root-owned private state; root needs no DAC capabilities here.
+StateDirectory=omihomo
+StateDirectoryMode=0700
+UMask=0077
+
+# Read-only OS; uid 0 still owns /etc, so this matters.
+ProtectSystem=strict
+# exe paths still resolve (d_path)
+ProtectHome=yes
+PrivateTmp=yes
+# The only device the daemon opens
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectKernelTunables=yes
+# Kernel-triggered tun/nf_tables autoload unaffected
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+# Also enforces ntp.write-to-system off
+ProtectClock=yes
+ProtectHostname=yes
+PrivateIPC=yes
+
+# Bus, widget socket, resolvectl, netlink, traffic
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# ptrace and pidfd_getfd are already outside @system-service.
+SystemCallFilter=~@privileged process_vm_readv process_vm_writev
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

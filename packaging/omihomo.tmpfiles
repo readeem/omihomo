@@ -1,0 +1,3 @@
+# The daemon's state, root's alone. The service's StateDirectory= creates it
+# too; this makes it exist for `omihomo claim` before the daemon first runs.
+d /var/lib/omihomo 0700 root root -
