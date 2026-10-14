@@ -181,11 +181,12 @@ func (a *app) root() *ffcli.Command {
 			nargs(0, protocol.OpEgress, nil)),
 		a.watchCommand(),
 		a.versionCommand(),
+		a.claimCommand(),
 		a.daemonCommand(),
 	)
-	root.LongHelp = "Every command but daemon is one call to the daemon's socket, printed as one JSON\n" +
-		"line. Flags go before arguments; -- ends the flags. OMIHOMO_SOCKET points at another\n" +
-		"socket. Run omihomo <command> -h for more."
+	root.LongHelp = "Every command but claim and daemon is one call to the daemon's socket, printed as\n" +
+		"one JSON line. Flags go before arguments; -- ends the flags. OMIHOMO_SOCKET points at\n" +
+		"another socket. Run omihomo <command> -h for more."
 	exec := root.Exec
 	root.Exec = func(ctx context.Context, args []string) error {
 		if len(args) == 1 && args[0] == "help" {

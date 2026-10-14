@@ -2,6 +2,8 @@
 set -euo pipefail
 here=$(dirname "$0")
 
+"$here/install_test.sh"
+
 command -v node >/dev/null 2>&1 || {
   printf 'tests require node for the widget model tests\n' >&2
   exit 2

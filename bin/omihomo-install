@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run from the account that should own the daemon, without sudo around this
+# script: yay builds as that account and claim records sudo's invoking uid.
+yay -S omihomo-bin
+sudo /usr/bin/omihomo claim

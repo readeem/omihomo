@@ -1,0 +1,32 @@
+# pacman runs these before its own daemon-reload hook, so each reloads first.
+# In a chroot, or anywhere systemd is not running, only enabling is possible.
+
+booted() {
+  [ -d /run/systemd/system ]
+}
+
+post_install() {
+  systemctl enable omihomo.socket omihomo.service
+  if booted; then
+    systemd-tmpfiles --create omihomo.conf
+    systemctl daemon-reload
+    systemctl start omihomo.socket omihomo.service
+  fi
+  echo '==> Run "sudo omihomo claim" from the account that will use Omihomo.'
+}
+
+# The new binary only runs once the service restarts.
+post_upgrade() {
+  booted || return 0
+  systemctl daemon-reload
+  systemctl try-restart omihomo.service
+}
+
+# /var/lib/omihomo stays: removing the package keeps subscriptions, settings
+# and the owner. Deleting it is a manual step.
+pre_remove() {
+  systemctl disable omihomo.socket omihomo.service
+  if booted; then
+    systemctl stop omihomo.service omihomo.socket
+  fi
+}
