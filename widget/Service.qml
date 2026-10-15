@@ -282,8 +282,8 @@ Item {
   // more slowly: the owner may claim the install, or update it, meanwhile.
   function disconnected() {
     helloTimer.stop()
-    failPending()
     if (link === "ready" || link === "connecting") link = "connecting"
+    failPending()
     downloadRate = 0
     uploadRate = 0
     reconnectTimer.restart()

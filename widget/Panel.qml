@@ -88,8 +88,7 @@ Panel {
   readonly property string ruleTarget: ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))].value
   readonly property string ruleFormError: Model.validateRule(ruleType, ruleFormValue, ruleTarget)
 
-  readonly property var ownHeadRules: omihomo.rules.filter(function(rule) { return rule.kind === "prepend" })
-  readonly property var effectiveRules: ownHeadRules.concat(omihomo.injectedRules, omihomo.subscriptionRules)
+  readonly property var effectiveRules: omihomo.rules.concat(omihomo.injectedRules, omihomo.subscriptionRules)
   readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery, omihomo.routing)
   readonly property string ruleHitTarget: ruleTest.hit >= 0 ? effectiveRules[ruleTest.hit].target : ""
   readonly property var ruleTally: Model.ruleTargetTally(effectiveRules)
@@ -97,10 +96,8 @@ Panel {
     var out = [{ kind: "head", title: "YOURS · " + omihomo.rules.length, note: "checked first" }]
     var head = 0
     var i
-    for (i = 0; i < omihomo.rules.length; i++) {
-      var rule = omihomo.rules[i]
-      out.push({ kind: "own", s: "rule", i: i, rule: rule, eff: rule.kind === "prepend" ? head++ : -1 })
-    }
+    for (i = 0; i < omihomo.rules.length; i++)
+      out.push({ kind: "own", s: "rule", i: i, rule: omihomo.rules[i], eff: head++ })
     if (omihomo.injectedRules.length > 0) {
       out.push({ kind: "head", title: "OMIHOMO · " + omihomo.injectedRules.length, note: "tailscale · read-only" })
       for (i = 0; i < omihomo.injectedRules.length; i++)
@@ -549,7 +546,7 @@ Panel {
       beginEdit(rulesView.valueField)
       return
     }
-    omihomo.addRule(ruleType, ruleFormValue, ruleTarget)
+    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget)
   }
 
   function openFilter() {

@@ -97,13 +97,6 @@ NavRow {
       elide: Text.ElideRight
     }
 
-    PanelText {
-      theme: ruleRow.theme
-      visible: ruleRow.own && !!ruleRow.rule && ruleRow.rule.kind !== "prepend"
-      text: ruleRow.rule && ruleRow.rule.kind ? ruleRow.rule.kind : ""
-      color: ruleRow.theme.faint
-    }
-
     Tag {
       theme: ruleRow.theme
       text: ruleRow.rule ? ruleRow.rule.target : ""
