@@ -461,7 +461,7 @@ func (d *server) removeSubscription(ctx context.Context, name string) (any, *pro
 
 // ensureGeodata downloads the geodata files p needs that are missing. A
 // file that cannot be downloaded fails the call: the rules that need it
-// would not load.
+// would not load. The caller holds opMu.
 func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
 	for _, f := range d.core.Geodata(p) {
 		if _, err := os.Stat(f.Path); err == nil {
@@ -469,25 +469,32 @@ func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("geodata %s: %w", filepath.Base(f.Path), err)
 		}
-		if err := d.fetchGeodata(ctx, f, p); err != nil {
+		tmp, err := d.downloadGeodata(ctx, f)
+		if err != nil {
+			return err
+		}
+		err = d.installGeodata(f, tmp, p)
+		os.Remove(tmp)
+		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d *server) fetchGeodata(ctx context.Context, f core.GeodataFile, p core.Profile) error {
+// downloadGeodata saves what f's URL holds beside f's path and returns
+// where; the caller removes it.
+func (d *server) downloadGeodata(ctx context.Context, f core.GeodataFile) (string, error) {
 	name := filepath.Base(f.Path)
 	d.log.Info("downloading geodata", "file", name)
 	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: f.URL, Timeout: geodataTimeout})
 	if err != nil {
-		return fmt.Errorf("the rules need geodata %s, which did not download: %w", name, err)
+		return "", fmt.Errorf("the rules need geodata %s, which did not download: %w", name, err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(f.Path), "."+name+"-*")
 	if err != nil {
-		return fmt.Errorf("save geodata %s: %w", name, err)
+		return "", fmt.Errorf("save geodata %s: %w", name, err)
 	}
-	defer os.Remove(tmp.Name())
 	_, err = tmp.Write(resp.Body)
 	if err == nil {
 		err = tmp.Sync()
@@ -496,20 +503,30 @@ func (d *server) fetchGeodata(ctx context.Context, f core.GeodataFile, p core.Pr
 		err = cerr
 	}
 	if err != nil {
-		return fmt.Errorf("save geodata %s: %w", name, err)
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("save geodata %s: %w", name, err)
 	}
-	// What is in place keeps working until a download proves usable.
-	if err := d.core.CheckGeodata(f, tmp.Name(), p); err != nil {
+	return tmp.Name(), nil
+}
+
+// installGeodata puts the download at tmp in place as f once the core finds
+// it usable for p: what is in place keeps working until then. The caller
+// holds opMu, so p is what runs and what is stored.
+func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) error {
+	name := filepath.Base(f.Path)
+	if err := d.core.CheckGeodata(f, tmp, p); err != nil {
 		return fmt.Errorf("the geodata %s that downloaded is not usable: %w", name, err)
 	}
-	if err := os.Rename(tmp.Name(), f.Path); err != nil {
+	if err := os.Rename(tmp, f.Path); err != nil {
 		return fmt.Errorf("save geodata %s: %w", name, err)
 	}
 	return nil
 }
 
 // refreshGeodata downloads again the geodata in use that is older than
-// geodataAge. The core reads the new files on its next apply.
+// geodataAge. The core reads the new files on its next apply. It checks a
+// download against the rules current when it is put in place, not those
+// current when it began.
 func (d *server) refreshGeodata(ctx context.Context) {
 	d.mu.Lock()
 	p := runConfig(d.settings, d.profile).Profile
@@ -519,7 +536,17 @@ func (d *server) refreshGeodata(ctx context.Context) {
 		if err != nil || d.cfg.now().Sub(info.ModTime()) < geodataAge {
 			continue
 		}
-		if err := d.fetchGeodata(ctx, f, p); err != nil {
+		tmp, err := d.downloadGeodata(ctx, f)
+		if err == nil {
+			d.opMu.Lock()
+			d.mu.Lock()
+			current := runConfig(d.settings, d.profile).Profile
+			d.mu.Unlock()
+			err = d.installGeodata(f, tmp, current)
+			d.opMu.Unlock()
+			os.Remove(tmp)
+		}
+		if err != nil {
 			d.log.Warn("geodata update failed", "err", err)
 		}
 	}

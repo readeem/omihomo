@@ -116,11 +116,18 @@ func (c *Core) CheckGeodata(f core.GeodataFile, path string, p core.Profile) err
 		if domains == 0 {
 			return errors.New("the site list is empty")
 		}
-		for _, name := range siteCategories(p) {
-			if !slices.ContainsFunc(list.Entry, func(e *router.GeoSite) bool {
+		// mihomo loads CN whenever it opens the list, and removes a list
+		// where that fails; the rules need their own categories too. Each
+		// is built the way mihomo builds it.
+		for _, name := range append([]string{"CN"}, siteCategories(p)...) {
+			i := slices.IndexFunc(list.Entry, func(e *router.GeoSite) bool {
 				return strings.EqualFold(e.CountryCode, name) && len(e.Domain) > 0
-			}) {
-				return fmt.Errorf("the site list has no category %q, which the rules use", name)
+			})
+			if i < 0 {
+				return fmt.Errorf("the site list has no category %q", name)
+			}
+			if _, err := router.NewSuccinctMatcherGroup(list.Entry[i].Domain); err != nil {
+				return fmt.Errorf("the site list's category %q does not load", name)
 			}
 		}
 		return nil

@@ -105,6 +105,20 @@ func TestASiteListNeedsTheCategoriesInUse(t *testing.T) {
 	if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
 		t.Error("a list without the category was taken")
 	}
+	// mihomo loads CN whatever the rules use, and builds every category.
+	for name, bad := range map[string]*router.GeoSiteList{
+		"no CN": {Entry: []*router.GeoSite{{CountryCode: "GOOGLE", Domain: []*router.Domain{{Type: router.Domain_Domain, Value: "google.com"}}}}},
+		"broken regex": {Entry: []*router.GeoSite{
+			list.Entry[0],
+			{CountryCode: "GOOGLE", Domain: []*router.Domain{{Type: router.Domain_Regex, Value: "["}}},
+		}},
+	} {
+		data, _ := proto.Marshal(bad)
+		os.WriteFile(path, data, 0o600)
+		if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
+			t.Errorf("%s: taken", name)
+		}
+	}
 	// One empty entry is a valid message but no list.
 	os.WriteFile(path, []byte{0x0a, 0x00}, 0o600)
 	if err := shared.CheckGeodata(f, path, core.Profile{}); err == nil {

@@ -340,8 +340,9 @@ apart. Subscription records show the last error and the next refresh.
 
 Geodata the rules need (`GEOIP`, `GEOSITE`, ASN rules, in rule sets too) is downloaded into the
 core's home before the core runs them, from MetaCubeX's releases, and again once it is a week
-old. A download replaces the file in place only once the core has opened it and found the site
-categories the rules use: mihomo exits on a database it cannot read. Without the files the proxy does not start.
+old. A download replaces the file in place only once the core has opened it and built the site
+categories the rules use, and `CN`, which mihomo loads on every start, against the rules current
+at that moment: mihomo exits on a database it cannot read. Without the files the proxy does not start.
 
 ## The mihomo core
 
