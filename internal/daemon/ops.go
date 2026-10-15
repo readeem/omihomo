@@ -421,6 +421,24 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 	return nil
 }
 
+// acceptContent reports why subscription content p would not run with s: it runs
+// p when p is to be what runs and the proxy is on, and only checks it
+// otherwise, so content that fails is never stored as one that works. The
+// caller holds opMu.
+func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Profile, runs bool) *protocol.Error {
+	if runs && d.running() {
+		return d.reapply(ctx, s, p)
+	}
+	cfg := runConfig(s, p)
+	if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
+		return fail(protocol.CodeFetch, "%v", err)
+	}
+	if err := d.core.Check(ctx, cfg); err != nil {
+		return fail(protocol.CodeRejected, "the core would not run it: %v", err)
+	}
+	return nil
+}
+
 func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (any, *protocol.Error) {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()

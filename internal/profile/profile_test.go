@@ -3,12 +3,14 @@ package profile
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -331,5 +333,67 @@ func TestUsageAndInterval(t *testing.T) {
 		if got := Interval(h).String(); got != want {
 			t.Errorf("interval %q = %s, want %s", value, got, want)
 		}
+	}
+}
+
+// Values that would crash or stall the root daemon are refused.
+func TestHostileValuesAreRefused(t *testing.T) {
+	for _, m := range []map[string]any{
+		{"name": "h", "type": "hysteria", "server": "a.example", "ports": "443,444", "hop-interval": -1, "auth-str": "x", "up": "1", "down": "1"},
+		{"name": "h", "type": "hysteria", "server": "a.example", "ports": "443,444", "hop-interval": 1 << 40, "auth-str": "x", "up": "1", "down": "1"},
+		{"name": "h2", "type": "hysteria2", "server": "a.example", "ports": "443,444", "hop-interval": "5-99999999999", "password": "x"},
+		{"name": "h2", "type": "hysteria2", "server": "a.example", "ports": "443,444", "hop-interval": "-1", "password": "x"},
+		{"name": "t", "type": "trojan", "server": "a.example", "port": 443, "password": "x", "smux": map[string]any{"enabled": true, "max-streams": -5}},
+	} {
+		if _, err := Proxy(m); err == nil {
+			t.Errorf("%v was kept", m)
+		}
+	}
+	px, err := Proxy(map[string]any{"name": "t", "type": "trojan", "server": "a.example", "port": 443, "password": "x",
+		"certificate": "-----BEGIN/../cache.db", "private-key": "-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----"})
+	if err != nil || px.Options["certificate"] != nil || px.Options["private-key"] != nil {
+		t.Errorf("a path that looks like PEM was kept: %v %v", px.Options, err)
+	}
+
+	p, _ := build(t, `
+proxies:
+  - {name: Tokyo, type: trojan, server: a.example, port: 443, password: pw}
+proxy-groups:
+  - {name: Proxy, type: select, proxies: [Tokyo]}
+rule-providers:
+  c: {type: inline, behavior: classical, payload: ["DOMAIN-REGEX,^(a+)+$", "DOMAIN,ok.example"]}
+rules:
+  - DOMAIN-REGEX,^(a+)+$,REJECT
+  - AND,((NETWORK,tcp),(PROCESS-NAME-REGEX,^(a+)+$)),REJECT
+  - DOMAIN,foo-regex.example,DIRECT
+  - RULE-SET,c,REJECT
+  - MATCH,Proxy
+`, nil)
+	if got := ruleLines(p); !slices.Equal(got, []string{"DOMAIN,foo-regex.example,DIRECT", "RULE-SET,c,REJECT", "MATCH,,Proxy"}) {
+		t.Errorf("rules %v", got)
+	}
+	if !slices.Equal(p.RuleSets[0].Payload, []string{"DOMAIN,ok.example"}) {
+		t.Errorf("rule set %v", p.RuleSets[0].Payload)
+	}
+}
+
+// A filter that backtracks forever fails the subscription in bounded time.
+func TestCatastrophicFiltersAreBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("proxies:\n")
+	for i := range 200 {
+		fmt.Fprintf(&b, "  - {name: %s%d, type: direct}\n", strings.Repeat("a", 30), i)
+	}
+	b.WriteString("proxy-groups:\n  - {name: All, type: select, include-all: true, filter: '^(a+)+$'}\nrules: [MATCH,All]\n")
+	doc, err := Read([]byte(b.String()), links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	began := time.Now()
+	if _, _, err := doc.Build(nil); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("build = %v", err)
+	}
+	if d := time.Since(began); d > 2*filterBudget {
+		t.Fatalf("filters ran %s", d)
 	}
 }

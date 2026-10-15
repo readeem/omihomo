@@ -103,6 +103,9 @@ const MaxConnections = 1000
 // stopped. Implementations must be safe for concurrent use.
 type Core interface {
 	Apply(ctx context.Context, cfg Config) error
+	// Check reports why cfg would not run, without running it or changing
+	// what runs. Geodata it needs must be in place, as for Apply.
+	Check(ctx context.Context, cfg Config) error
 	Stop(ctx context.Context) error
 
 	Groups(ctx context.Context) ([]protocol.Group, error)

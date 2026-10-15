@@ -2,6 +2,7 @@ package profile
 
 import (
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"maps"
@@ -507,10 +508,29 @@ func (p *hysteria) check() error {
 			return fmt.Errorf("protocol %q is not supported", *proto)
 		}
 	}
+	if p.HopInterval != nil && *p.HopInterval > maxHopInterval {
+		return fmt.Errorf("hop-interval must be at most %d seconds", maxHopInterval)
+	}
 	return checkEndpoint(p.Server, p.Port, p.Ports != nil)
 }
 
+// maxHopInterval bounds a port hop interval in seconds. mihomo turns it into
+// a ticker, and one that overflows the duration panics where nothing can
+// recover it.
+const maxHopInterval = 24 * 60 * 60
+
 func (p *hysteria2) check() error {
+	if p.HopInterval != nil {
+		lo, hi, ok := strings.Cut(*p.HopInterval, "-")
+		if !ok {
+			hi = lo
+		}
+		a, err1 := strconv.ParseUint(strings.TrimSpace(lo), 10, 32)
+		b, err2 := strconv.ParseUint(strings.TrimSpace(hi), 10, 32)
+		if err1 != nil || err2 != nil || a > b || b > maxHopInterval {
+			return fmt.Errorf("hop-interval must be seconds, or a range of them, up to %d", maxHopInterval)
+		}
+	}
 	return checkEndpoint(p.Server, p.Port, p.Ports != nil)
 }
 
@@ -597,12 +617,14 @@ func lookup(m map[string]any, key string) (any, bool) {
 // isInline reports whether s holds what mihomo reads inline rather than as
 // a path to a file.
 func isInline(kind, s string) bool {
-	pem := strings.HasPrefix(strings.TrimSpace(s), "-----BEGIN")
+	// mihomo falls back to reading a file when PEM does not decode, so
+	// only PEM that does counts as inline.
+	block, _ := pem.Decode([]byte(strings.TrimSpace(s)))
 	if kind == "ssh" {
 		// mihomo reads the key inline only when it says PRIVATE KEY.
-		return pem && strings.Contains(s, "PRIVATE KEY")
+		return block != nil && strings.Contains(s, "PRIVATE KEY")
 	}
-	return pem
+	return block != nil
 }
 
 func readValue(raw any, v reflect.Value, path string) error {
@@ -704,16 +726,29 @@ func optInt(raw any) (int, error) {
 	rv := reflect.ValueOf(raw)
 	switch {
 	case rv.CanInt() && rv.Int() >= math.MinInt && rv.Int() <= math.MaxInt:
-		return int(rv.Int()), nil
+		return checkInt(int(rv.Int()))
 	case rv.CanUint() && rv.Uint() <= math.MaxInt:
-		return int(rv.Uint()), nil
+		return checkInt(int(rv.Uint()))
 	case rv.CanFloat() && rv.Float() == math.Trunc(rv.Float()) && math.Abs(rv.Float()) < 1<<53:
-		return int(rv.Float()), nil
+		return checkInt(int(rv.Float()))
 	case rv.Kind() == reflect.String:
 		n, err := strconv.ParseInt(rv.String(), 10, 0)
-		return int(n), err
+		if err != nil {
+			return 0, err
+		}
+		return checkInt(int(n))
 	}
 	return 0, errors.New("not a whole number")
+}
+
+// checkInt keeps every proxy number between 0 and MaxInt32. No proxy field
+// is negative, and mihomo turns some into durations or buffer sizes without
+// checking them, where a negative or huge one panics.
+func checkInt(n int) (int, error) {
+	if n < 0 || n > math.MaxInt32 {
+		return 0, fmt.Errorf("%d is out of range", n)
+	}
+	return n, nil
 }
 
 // optBool takes a bool, or a number that is true unless 0. Like mihomo, it

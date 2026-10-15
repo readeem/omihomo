@@ -131,6 +131,16 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 	return nil
 }
 
+func (c *Core) Check(ctx context.Context, cfg core.Config) error {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	if cfg.TUN && !cfg.TUNRedirect && !features.WithGVisor {
+		return errors.New("TUN without redirect needs the gVisor stack, which this build lacks")
+	}
+	_, err := prepare(cfg)
+	return err
+}
+
 // afterRestoreStop lets a test act between a restore's stop and its apply.
 var afterRestoreStop = func() {}
 

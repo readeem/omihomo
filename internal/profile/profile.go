@@ -151,7 +151,8 @@ const wrapperGroup = "Proxy"
 // what only it fed. dropped names what was left out, for the log; it never
 // quotes credentials.
 func (d *Document) Build(bodies map[string][]byte) (p core.Profile, dropped []string, err error) {
-	b := &builder{doc: d, bodies: bodies, names: map[string]bool{}, dropped: slices.Clone(d.dropped)}
+	b := &builder{doc: d, bodies: bodies, names: map[string]bool{}, dropped: slices.Clone(d.dropped),
+		deadline: time.Now().Add(filterBudget)}
 	for _, name := range builtins {
 		b.names[name] = true
 	}
@@ -219,6 +220,7 @@ type builder struct {
 	topLevel int
 	// fromProvider maps each provider to the names of its proxies.
 	fromProvider map[string][]string
+	deadline     time.Time
 }
 
 func (b *builder) drop(format string, args ...any) {
@@ -280,7 +282,7 @@ func (b *builder) providers() error {
 			b.drop("proxy provider %q: only http and inline providers are read", name)
 			continue
 		}
-		f, err := newFilter(def)
+		f, err := b.newFilter(def)
 		if err != nil {
 			b.drop("proxy provider %q: %v", name, err)
 			continue
@@ -301,8 +303,13 @@ func (b *builder) providers() error {
 				b.drop("proxy provider %q, proxy %d: %v", name, i+1, err)
 				continue
 			}
-			if !f.keep(px) {
+			if keep, err := f.keep(px); err != nil {
+				return err
+			} else if !keep {
 				continue
+			}
+			if len(b.proxies) >= maxProxies {
+				return fmt.Errorf("%w: its providers hold more proxies than omihomo runs", ErrInvalid)
 			}
 			px.Name = b.unique(px.Name)
 			b.proxies = append(b.proxies, px)
@@ -333,14 +340,19 @@ func (b *builder) providerProxies(body []byte) ([]map[string]any, error) {
 type filter struct {
 	include, exclude []*regexp2.Regexp
 	excludeTypes     []string
+	// deadline is shared by every filter of one Build.
+	deadline time.Time
 }
 
-// A provider's or a group's filter runs on remote input, so it gets a
-// bounded time per name.
-const matchTimeout = 100 * time.Millisecond
+// Filters are remote regexes run by a backtracking engine, so all of one
+// subscription's matching together gets filterBudget, and a filter that
+// runs out fails the subscription.
+const filterBudget = 2 * time.Second
 
-func newFilter(def map[string]any) (filter, error) {
-	var f filter
+var errFilterTime = fmt.Errorf("%w: its filters take too long to match", ErrInvalid)
+
+func (b *builder) newFilter(def map[string]any) (filter, error) {
+	f := filter{deadline: b.deadline}
 	compile := func(key string) ([]*regexp2.Regexp, error) {
 		s, _ := def[key].(string)
 		var out []*regexp2.Regexp
@@ -352,7 +364,6 @@ func newFilter(def map[string]any) (filter, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s does not compile", key)
 			}
-			re.MatchTimeout = matchTimeout
 			out = append(out, re)
 		}
 		return out, nil
@@ -372,22 +383,34 @@ func newFilter(def map[string]any) (filter, error) {
 	return f, nil
 }
 
-func (f filter) keep(px core.Proxy) bool {
+func (f filter) keep(px core.Proxy) (bool, error) {
 	if slices.Contains(f.excludeTypes, strings.ToLower(px.Type)) {
-		return false
+		return false, nil
 	}
-	match := func(res []*regexp2.Regexp) bool {
+	match := func(res []*regexp2.Regexp) (bool, error) {
 		for _, re := range res {
-			if ok, err := re.MatchString(px.Name); ok && err == nil {
-				return true
+			left := time.Until(f.deadline)
+			if left <= 0 {
+				return false, errFilterTime
+			}
+			re.MatchTimeout = left
+			ok, err := re.MatchString(px.Name)
+			if err != nil {
+				return false, errFilterTime
+			}
+			if ok {
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	}
-	if len(f.include) > 0 && !match(f.include) {
-		return false
+	if len(f.include) > 0 {
+		if ok, err := match(f.include); !ok || err != nil {
+			return false, err
+		}
 	}
-	return !match(f.exclude)
+	excluded, err := match(f.exclude)
+	return !excluded, err
 }
 
 // groupTypes are the group types modelled. relay is deprecated in mihomo
@@ -431,6 +454,10 @@ func (b *builder) groups() ([]core.Group, error) {
 		all = append(all, pending{group: core.Group{Name: name, Type: typ, Options: opts}, def: def, members: members})
 	}
 
+	types := map[string]string{}
+	for _, px := range b.proxies {
+		types[px.Name] = px.Type
+	}
 	var out []core.Group
 	for _, p := range all {
 		g := p.group
@@ -449,14 +476,18 @@ func (b *builder) groups() ([]core.Group, error) {
 				b.drop("group %q: member %v does not exist", g.Name, v)
 			}
 		}
-		f, err := newFilter(p.def)
+		f, err := b.newFilter(p.def)
 		if err != nil {
 			return nil, fmt.Errorf("%w: group %q: %v", ErrInvalid, g.Name, err)
 		}
 		includeAll := p.def["include-all"] == true
 		if includeAll || p.def["include-all-proxies"] == true {
 			for _, px := range b.proxies[:b.topLevel] {
-				if f.keep(px) {
+				keep, err := f.keep(px)
+				if err != nil {
+					return nil, err
+				}
+				if keep {
 					add(px.Name)
 				}
 			}
@@ -471,10 +502,6 @@ func (b *builder) groups() ([]core.Group, error) {
 				}
 			}
 		}
-		types := map[string]string{}
-		for _, px := range b.proxies {
-			types[px.Name] = px.Type
-		}
 		for _, provider := range providers {
 			names, ok := b.fromProvider[provider]
 			if !ok {
@@ -482,7 +509,11 @@ func (b *builder) groups() ([]core.Group, error) {
 				continue
 			}
 			for _, name := range names {
-				if f.keep(core.Proxy{Name: name, Type: types[name]}) {
+				keep, err := f.keep(core.Proxy{Name: name, Type: types[name]})
+				if err != nil {
+					return nil, err
+				}
+				if keep {
 					add(name)
 				}
 			}
@@ -603,6 +634,9 @@ func (b *builder) ruleSets() []core.RuleSet {
 			b.drop("rule provider %q: %v", name, err)
 			continue
 		}
+		if behavior == "classical" {
+			payload = slices.DeleteFunc(payload, hasRegex)
+		}
 		out = append(out, core.RuleSet{Name: name, Behavior: behavior, Payload: payload})
 	}
 	return out
@@ -635,7 +669,7 @@ func (b *builder) rules(sets []core.RuleSet) []core.Rule {
 		case err != nil:
 			b.drop("rule %d: malformed", i+1)
 			continue
-		case !slices.Contains(ruleTypes, r.Type):
+		case !slices.Contains(ruleTypes, r.Type) || hasRegex(r.Type+","+r.Value):
 			b.drop("rule %d: type %s is not supported", i+1, r.Type)
 			continue
 		case !b.names[r.Target]:

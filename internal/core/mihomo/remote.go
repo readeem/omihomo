@@ -7,11 +7,20 @@ import (
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
+	mlog "github.com/metacubex/mihomo/log"
 
 	"github.com/readeem/omihomo/internal/core"
 )
 
+// ParseLinks silences mihomo's log while it converts: the converter logs a
+// link it cannot read whole, credentials included. It holds the apply lock,
+// which is what else sets the log level.
 func (c *Core) ParseLinks(data []byte) ([]map[string]any, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	level := mlog.Level()
+	mlog.SetLevel(mlog.SILENT)
+	defer mlog.SetLevel(level)
 	return convert.ConvertsV2Ray(data)
 }
 

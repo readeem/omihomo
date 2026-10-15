@@ -2,6 +2,7 @@ package profile
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -33,14 +34,22 @@ func ParseRule(line string) (core.Rule, error) {
 }
 
 // ruleTypes are the rule types a subscription may use. SUB-RULE is left
-// out: sub-rules are not modelled.
+// out: sub-rules are not modelled. So are the regex rules: mihomo matches
+// them with a backtracking engine and no time limit, on every connection,
+// so a remote regex could hold the root daemon's CPU.
 var ruleTypes = []string{
-	"DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD", "DOMAIN-REGEX", "GEOSITE",
+	"DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD", "GEOSITE",
 	"GEOIP", "SRC-GEOIP", "IP-ASN", "SRC-IP-ASN", "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR",
 	"IP-SUFFIX", "SRC-IP-SUFFIX", "SRC-PORT", "DST-PORT", "IN-PORT", "IN-TYPE", "IN-USER", "IN-NAME",
-	"PROCESS-PATH", "PROCESS-PATH-REGEX", "PROCESS-NAME", "PROCESS-NAME-REGEX", "UID", "NETWORK",
+	"PROCESS-PATH", "PROCESS-NAME", "UID", "NETWORK",
 	"DSCP", "RULE-SET", "AND", "OR", "NOT", "MATCH",
 }
+
+// hasRegex reports whether a rule line, or a rule nested in a logic rule,
+// is a regex rule.
+func hasRegex(line string) bool { return regexRule.MatchString(line) }
+
+var regexRule = regexp.MustCompile(`(?i)(?:^|[(,])\s*[A-Z-]*-REGEX\s*,`)
 
 // ruleParams are the trailing flags a rule may carry.
 var ruleParams = []string{"no-resolve", "src"}

@@ -493,11 +493,13 @@ func TestGeodataIsDownloadedBeforeTheCoreNeedsIt(t *testing.T) {
 	})
 	h := serveCore(t, os.Getuid(), c0, o.opts()...)
 	c := h.dial(t)
-	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	if err := callErr(t, c, protocol.OpStart, nil); err.Code != protocol.CodeCore || !strings.Contains(err.Message, "geoip.metadb") {
-		t.Fatalf("start without reachable geodata = %v", err)
+	// Content is checked by the core before it is kept, and the core needs
+	// the geodata for that.
+	if err := callErr(t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")}); err.Code != protocol.CodeFetch || !strings.Contains(err.Message, "geoip.metadb") {
+		t.Fatalf("add without reachable geodata = %v", err)
 	}
 	o.set("/geoip.metadb", page{body: "mmdb"})
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	if b, err := os.ReadFile(geoip); err != nil || string(b) != "mmdb" {
 		t.Fatalf("geodata = %q, %v", b, err)
@@ -520,5 +522,54 @@ func waitFor(t *testing.T, ok func() bool) {
 			t.Fatal("timed out")
 		case <-time.After(5 * time.Millisecond):
 		}
+	}
+}
+
+// A refresh whose provider fails, or whose content the core would not run,
+// is not stored, whether or not the proxy runs it.
+func TestIncompleteOrUnrunnableRefreshesAreNotKept(t *testing.T) {
+	o := newOrigin(t)
+	withAds := strings.Replace(workYAML, "rules:\n", "rule-providers:\n  ads: {type: http, behavior: domain, url: \""+o.URL+"/ads\"}\nrules:\n  - RULE-SET,ads,REJECT\n", 1)
+	o.set("/work", page{body: withAds})
+	o.set("/ads", page{body: "payload: [+.ads.example]\n"})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	name := protocol.NameArgs{Name: "127.0.0.1"}
+
+	o.set("/ads", page{status: http.StatusServiceUnavailable})
+	h.clock.advance(time.Minute)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeFetch || !strings.Contains(err.Message, "ads") {
+		t.Fatalf("an update whose provider failed = %v", err)
+	}
+	o.set("/ads", page{body: "payload: [+.ads.example]\n"})
+	h.core.FailCheck(fmt.Errorf("refused"))
+	h.clock.advance(time.Hour)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeRejected {
+		t.Fatalf("an update the core would not run = %v", err)
+	}
+	h.core.FailCheck(nil)
+
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	cfg, _ := h.core.Config()
+	if len(cfg.Profile.RuleSets) != 1 || cfg.Profile.Rules[0].Type != "RULE-SET" {
+		t.Fatalf("the core runs %+v", cfg.Profile)
+	}
+}
+
+// A refresh that got no answer is retried within minutes, however far off
+// the regular refresh is.
+func TestARefreshNothingAnsweredIsRetriedSoon(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithRefreshCheck(10*time.Millisecond))...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	o.Close()
+	h.clock.advance(time.Minute)
+	callErr(t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: "127.0.0.1"})
+	list := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil)
+	if s := list.Subscriptions[0]; s.NextUpdate-h.clock.Now().UnixMilli() > time.Minute.Milliseconds() {
+		t.Fatalf("next try in %s", time.Duration(s.NextUpdate-h.clock.Now().UnixMilli())*time.Millisecond)
 	}
 }

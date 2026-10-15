@@ -67,7 +67,10 @@ func ms(t time.Time) int64 { return t.UnixMilli() }
 
 // nextUpdate is when the refresh loop next asks sub's server.
 func nextUpdate(sub state.Subscription) int64 {
-	return max(sub.UpdatedAt+sub.IntervalSeconds*1000, sub.RetryAt)
+	if sub.RetryAt != 0 {
+		return sub.RetryAt
+	}
+	return sub.UpdatedAt + sub.IntervalSeconds*1000
 }
 
 func (d *server) subscriptionList() protocol.SubscriptionList {
@@ -141,8 +144,14 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 	for _, p := range providers {
 		r, err := d.fetcher.Get(ctx, fetch.Request{URL: p.URL})
 		if err != nil {
-			d.log.Warn("a provider did not download", "subscription", name, "provider", p.Name, "err", err)
-			continue
+			// Without it the rules it feeds would be left out, and with them
+			// whatever they block: the content is incomplete, not new.
+			derr := &downloadError{err: fail(protocol.CodeFetch, "provider %q: %v", p.Name, err)}
+			var serr *fetch.StatusError
+			if errors.As(err, &serr) {
+				derr.answered, derr.retryAfter = true, serr.RetryAfter
+			}
+			return nil, derr
 		}
 		dl.snap.Providers[p.Key()] = r.Body
 	}
@@ -197,10 +206,8 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	settings := d.settings
 	d.mu.Unlock()
 
-	if activate {
-		if err := d.reapply(ctx, settings, dl.profile); err != nil {
-			return nil, err
-		}
+	if err := d.acceptContent(ctx, settings, dl.profile, activate); err != nil {
+		return nil, err
 	}
 	if err := d.store.SaveSnapshot(sub.ID, dl.snap); err != nil {
 		return nil, fail(protocol.CodeInternal, "the subscription could not be saved: %v", err)
@@ -259,22 +266,29 @@ func (d *server) updateSubscription(ctx context.Context, name string) (any, *pro
 	if err != nil {
 		return nil, err
 	}
-	now := d.cfg.now()
+	return d.refresh(ctx, sub.ID, true)
+}
+
+// mayAsk says why the owner may not ask sub's server now, or nil.
+func mayAsk(sub state.Subscription, now time.Time) *protocol.Error {
 	if wait := time.UnixMilli(sub.LastAttempt).Add(manualGap).Sub(now); wait > 0 {
-		return nil, fail(protocol.CodeConflict, "%s was asked %s ago; try again in %s",
+		return fail(protocol.CodeConflict, "%s was asked %s ago; try again in %s",
 			sub.Name, now.Sub(time.UnixMilli(sub.LastAttempt)).Round(time.Second), wait.Round(time.Second))
 	}
 	if sub.HeldUntil > ms(now) {
-		return nil, fail(protocol.CodeConflict, "the server of %s asked to wait until %s",
+		return fail(protocol.CodeConflict, "the server of %s asked to wait until %s",
 			sub.Name, time.UnixMilli(sub.HeldUntil).Format(time.DateTime))
 	}
-	return d.refresh(ctx, sub.ID)
+	return nil
 }
 
 // refresh downloads subscription id again and, when it works, makes it the
 // subscription's content, running it if it is active and the proxy runs.
-// Whatever fails leaves the content that worked before in place.
-func (d *server) refresh(ctx context.Context, id string) (any, *protocol.Error) {
+// Whatever fails leaves the content that worked before in place. The
+// deadlines are read under refreshMu, so a request queued behind another
+// sees what that one recorded: a manual one is refused, and a scheduled one
+// that is no longer due does nothing.
+func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *protocol.Error) {
 	d.refreshMu.Lock()
 	defer d.refreshMu.Unlock()
 	d.mu.Lock()
@@ -286,6 +300,13 @@ func (d *server) refresh(ctx context.Context, id string) (any, *protocol.Error) 
 	d.mu.Unlock()
 	if i < 0 {
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
+	}
+	if manual {
+		if err := mayAsk(sub, d.cfg.now()); err != nil {
+			return nil, err
+		}
+	} else if nextUpdate(sub) > ms(d.cfg.now()) {
+		return nil, nil
 	}
 
 	dl, derr := d.download(ctx, sub.Name, sub.URL)
@@ -308,14 +329,12 @@ func (d *server) refresh(ctx context.Context, id string) (any, *protocol.Error) 
 	if !exists {
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
 	}
-	if active {
-		if err := d.reapply(ctx, settings, dl.profile); err != nil {
-			// Its interval still counts: the server answered.
-			interval = profile.Interval(dl.header)
-			d.failRefresh(sub, now, interval, true, 0, err.Message)
-			d.publish(ctx)
-			return nil, err
-		}
+	if err := d.acceptContent(ctx, settings, dl.profile, active); err != nil {
+		// Its interval still counts: the server answered.
+		interval = profile.Interval(dl.header)
+		d.failRefresh(sub, now, interval, true, 0, err.Message)
+		d.publish(ctx)
+		return nil, err
 	}
 	if err := d.store.SaveSnapshot(id, dl.snap); err != nil {
 		return nil, fail(protocol.CodeInternal, "the subscription could not be saved: %v", err)
@@ -364,23 +383,24 @@ func (d *server) failRefresh(sub state.Subscription, now time.Time, interval tim
 }
 
 func (d *server) activateSubscription(ctx context.Context, name string) (any, *protocol.Error) {
+	// Under opMu, so the subscription cannot be removed in between.
+	d.opMu.Lock()
+	defer d.opMu.Unlock()
 	sub, perr := d.findSub(name)
 	if perr != nil {
 		return nil, perr
 	}
-	p, err := d.loadProfile(sub)
-	if err != nil {
-		return nil, fail(protocol.CodeRejected, "%s cannot be read: %v", sub.Name, err)
-	}
-	d.opMu.Lock()
-	defer d.opMu.Unlock()
 	d.mu.Lock()
 	next, settings := d.subs, d.settings
 	d.mu.Unlock()
 	if next.Active == sub.ID {
 		return d.status(), nil
 	}
-	if err := d.reapply(ctx, settings, p); err != nil {
+	p, err := d.loadProfile(sub)
+	if err != nil {
+		return nil, fail(protocol.CodeRejected, "%s cannot be read: %v", sub.Name, err)
+	}
+	if err := d.acceptContent(ctx, settings, p, true); err != nil {
 		return nil, err
 	}
 	next.Active = sub.ID
@@ -546,6 +566,6 @@ func (d *server) refreshDue(ctx context.Context) {
 			return
 		}
 		// A refresh records its own failure and retry time.
-		d.refresh(ctx, id)
+		d.refresh(ctx, id, false)
 	}
 }

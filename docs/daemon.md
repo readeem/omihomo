@@ -305,6 +305,9 @@ structs (`internal/profile`) and anything they do not model is dropped:
   certificate field that is not inline PEM, since mihomo would read it as a file.
 - Groups of the types select, url-test, fallback and load-balance, with their test options.
 - Rules of the known types; `SUB-RULE` is dropped, and so is a rule whose target or rule set is.
+  Regex rules (`DOMAIN-REGEX`, `PROCESS-NAME-REGEX`, `PROCESS-PATH-REGEX`), alone, nested in a
+  logic rule or in a rule set, are dropped too: mihomo matches them on every connection with a
+  backtracking engine and no time limit.
 - Proxy and rule providers of type `http` with an HTTPS URL, which the daemon downloads, and
   `inline` ones. Proxy providers are expanded into proxies, with their filters and name prefix
   and suffix; rule providers become rule sets, `yaml` or `text` (`mrs` is dropped). `file`
@@ -312,7 +315,11 @@ structs (`internal/profile`) and anything they do not model is dropped:
 - Nothing else: ports, listeners, LAN access, DNS, TUN, hosts, sniffer, the controller, the
   clock and geodata sources all belong to the daemon.
 
-A group left without members fails the subscription rather than reroute the rules that use it.
+Numbers a proxy carries are between 0 and 2³¹−1, and port hop intervals at most a day, since
+mihomo turns them into timers without checking. Group and provider filters are regexes too; all
+of one subscription's filtering gets two seconds, and running out fails it. A group left without
+members fails the subscription rather than reroute the rules that use it, and so does a provider
+that does not download: without it the rules it feeds, and whatever they block, would be gone.
 Share links, plain or base64, and a YAML of bare proxies run in one `Proxy` select group that
 `MATCH` sends everything to. A subscription names itself from `profile-title` (base64 when it
 says so), else the `content-disposition` filename, else the URL's host, made safe and at most 64
@@ -321,8 +328,8 @@ active.
 
 The daemon refreshes each subscription after the `profile-update-interval` its server sent, in
 hours, 12 by default, checking once a minute. A failed refresh never replaces what works: content
-that does not read, or that the running core refuses, leaves the previous content running and
-stored. A refresh nothing answered is retried after a minute, doubling up to the interval; one the
+is kept only once the core has run it, when it is active and the proxy is on, or else checked
+that it would; whatever fails leaves the previous content running and stored. A refresh nothing answered is retried after a minute, doubling up to the interval; one the
 server refused or whose content was unusable waits a whole interval. A `Retry-After` holds every
 request, the owner's too, until it passes, and the owner's own refreshes are at least a minute
 apart. Subscription records show the last error and the next refresh.

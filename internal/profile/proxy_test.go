@@ -57,7 +57,7 @@ var commonProxies = []map[string]any{
 	{"name": "http", "type": "http", "server": "a.example", "port": 8080, "username": "u", "password": "pw",
 		"tls": true, "sni": "b.example", "headers": map[string]any{"X-Id": "1"}},
 	{"name": "ssh", "type": "ssh", "server": "a.example", "port": 22, "username": "u", "password": "pw",
-		"private-key": "-----BEGIN OPENSSH PRIVATE KEY-----\nAA\n-----END OPENSSH PRIVATE KEY-----\n",
+		"private-key": "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n",
 		"host-key":    []any{"ssh-ed25519 AAAA"}},
 	{"name": "anytls", "type": "anytls", "server": "a.example", "port": 443, "password": "pw", "sni": "b.example",
 		"client-fingerprint": "chrome", "udp": true, "alpn": []any{"h2"}, "idle-session-timeout": 30},

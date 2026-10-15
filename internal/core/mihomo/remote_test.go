@@ -1,9 +1,12 @@
 package mihomo
 
 import (
+	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/readeem/omihomo/internal/core"
@@ -42,5 +45,29 @@ func TestGeodataFollowsTheRules(t *testing.T) {
 	}
 	if got := files(p); !slices.Equal(got, []string{"geoip.metadb", "GeoLite2-ASN.mmdb"}) && !slices.Equal(got, []string{"geoip.metadb", "ASN.mmdb"}) {
 		t.Errorf("geodata %v", got)
+	}
+}
+
+// A link the converter cannot read is logged by it, token and all; none of
+// that may reach the journal.
+func TestParseLinksLogsNoCredentials(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// mihomo writes to the stdout it found at init, so the descriptor is
+	// what has to move.
+	saved, err := syscall.Dup(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.Dup2(int(w.Fd()), 1)
+	shared.ParseLinks([]byte("vmess://not-base64-s3cret\nvless://s3cret@[bad::host:443?x=%zz#Bad\ntrojan://pw@example.com:443#Ok\n"))
+	syscall.Dup2(saved, 1)
+	syscall.Close(saved)
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if strings.Contains(string(out), "s3cret") {
+		t.Fatalf("logged %q", out)
 	}
 }

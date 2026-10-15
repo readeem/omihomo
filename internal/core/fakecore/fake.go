@@ -28,6 +28,7 @@ type Core struct {
 	running     bool
 	cfg         core.Config
 	applyErr    error
+	checkErr    error
 	groups      []protocol.Group
 	connections []protocol.Connection
 	geodata     func(core.Profile) []core.GeodataFile
@@ -72,6 +73,20 @@ func (c *Core) FailApply(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.applyErr = err
+}
+
+// FailCheck makes every following Check fail with err, or succeed again
+// with nil.
+func (c *Core) FailCheck(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.checkErr = err
+}
+
+func (c *Core) Check(ctx context.Context, cfg core.Config) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.checkErr
 }
 
 // Config is the config the core last applied, and whether it is running.
