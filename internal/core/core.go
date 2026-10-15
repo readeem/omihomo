@@ -125,4 +125,22 @@ type Core interface {
 	// DialContext opens a connection routed by the running config, as if a
 	// local application had made it through the proxy.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+
+	// ParseLinks reads a list of share links, plain or base64, into proxies
+	// written the way a subscription's YAML writes them: "name", "type" and
+	// the protocol's fields. They are remote content, still to be
+	// allowlisted. It works whether or not the core runs.
+	ParseLinks(data []byte) ([]map[string]any, error)
+
+	// Geodata names the files the rules of p match against, with where each
+	// is downloaded from. The daemon fetches the ones missing before an
+	// Apply; the core never fetches them itself.
+	Geodata(p Profile) []GeodataFile
+}
+
+// GeodataFile is one geodata file a profile needs: Path is absolute, URL is
+// HTTPS.
+type GeodataFile struct {
+	Path string
+	URL  string
 }

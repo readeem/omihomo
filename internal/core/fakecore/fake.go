@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +30,7 @@ type Core struct {
 	applyErr    error
 	groups      []protocol.Group
 	connections []protocol.Connection
+	geodata     func(core.Profile) []core.GeodataFile
 }
 
 var _ core.Core = (*Core)(nil)
@@ -180,10 +184,16 @@ func (c *Core) Rules(ctx context.Context) ([]protocol.Rule, error) {
 	if !c.running {
 		return nil, core.ErrNotRunning
 	}
-	return []protocol.Rule{
-		{Type: "DOMAIN-SUFFIX", Value: "google.com", Target: "DIRECT", Source: protocol.SourceSubscription},
-		{Type: "MATCH", Value: "", Target: "Proxy", Source: protocol.SourceSubscription},
-	}, nil
+	var rules []protocol.Rule
+	for _, r := range c.cfg.Profile.Rules {
+		if r.Source == protocol.SourceUser {
+			rules = append(rules, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: r.Source})
+		}
+	}
+	return append(rules,
+		protocol.Rule{Type: "DOMAIN-SUFFIX", Value: "google.com", Target: "DIRECT", Source: protocol.SourceSubscription},
+		protocol.Rule{Type: "MATCH", Value: "", Target: "Proxy", Source: protocol.SourceSubscription},
+	), nil
 }
 
 func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
@@ -230,4 +240,44 @@ func (c *Core) DialContext(ctx context.Context, network, address string) (net.Co
 	}
 	var d net.Dialer
 	return d.DialContext(ctx, network, address)
+}
+
+// ParseLinks reads one link per line as scheme://password@server:port#name,
+// enough for tests; it knows no protocol and decodes no base64.
+func (c *Core) ParseLinks(data []byte) ([]map[string]any, error) {
+	var out []map[string]any
+	for line := range strings.Lines(string(data)) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		u, err := url.Parse(line)
+		if err != nil || u.Scheme == "" || u.Hostname() == "" {
+			continue
+		}
+		port, _ := strconv.Atoi(u.Port())
+		out = append(out, map[string]any{"name": u.Fragment, "type": u.Scheme, "server": u.Hostname(),
+			"port": port, "password": u.User.Username()})
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no links")
+	}
+	return out, nil
+}
+
+// SetGeodata makes Geodata answer with need, or nothing when need is nil.
+func (c *Core) SetGeodata(need func(core.Profile) []core.GeodataFile) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.geodata = need
+}
+
+func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
+	c.mu.Lock()
+	need := c.geodata
+	c.mu.Unlock()
+	if need == nil {
+		return nil
+	}
+	return need(p)
 }

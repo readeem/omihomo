@@ -94,15 +94,17 @@ func (e *Error) Error() string { return e.Message }
 const (
 	CodeBadRequest  = "bad_request" // not a request, or args that do not decode
 	CodeUnknownOp   = "unknown_op"
-	CodeInvalid     = "invalid"     // args decode but a value is not allowed
-	CodeNotFound    = "not_found"   // a named group, proxy or connection does not exist
-	CodeNotRunning  = "not_running" // the call needs the proxy running
-	CodeConflict    = "conflict"    // the call contradicts the current state
-	CodeUnsupported = "unsupported" // a known op this daemon does not implement yet
-	CodeBusy        = "busy"        // too many calls or clients at once
-	CodeForbidden   = "forbidden"   // the peer is not the owner
-	CodeCore        = "core_failed" // the core refused or failed the change
-	CodeTooLarge    = "too_large"   // the result does not fit in one message
+	CodeInvalid     = "invalid"      // args decode but a value is not allowed
+	CodeNotFound    = "not_found"    // a named group, proxy or connection does not exist
+	CodeNotRunning  = "not_running"  // the call needs the proxy running
+	CodeConflict    = "conflict"     // the call contradicts the current state
+	CodeUnsupported = "unsupported"  // a known op this daemon does not implement yet
+	CodeBusy        = "busy"         // too many calls or clients at once
+	CodeForbidden   = "forbidden"    // the peer is not the owner
+	CodeCore        = "core_failed"  // the core refused or failed the change
+	CodeTooLarge    = "too_large"    // the result does not fit in one message
+	CodeFetch       = "fetch_failed" // a download failed
+	CodeRejected    = "rejected"     // downloaded content is not usable
 	CodeInternal    = "internal"
 )
 
@@ -142,6 +144,8 @@ const (
 	StreamRules       = "rules"       // RuleList, whenever the runtime's rules change
 	StreamTraffic     = "traffic"     // Traffic, once a second while running
 	StreamConnections = "connections" // Connections, once a second while running
+	// SubscriptionList, on every change, a refresh the daemon ran included
+	StreamSubscriptions = "subscriptions"
 )
 
 // Proxy states.
@@ -207,15 +211,26 @@ type SettingsArgs struct {
 	PrimaryGroup *string `json:"primary_group,omitempty"`
 }
 
-// Subscription is one remote source of groups, proxies and rules.
+// Subscription is one remote source of groups, proxies and rules. Its URL
+// stays in the daemon: it usually carries an access token.
 type Subscription struct {
-	Name      string `json:"name"`
-	UpdatedAt int64  `json:"updated_at"`
-	Upload    *int64 `json:"upload"`
-	Download  *int64 `json:"download"`
-	Total     *int64 `json:"total"`
-	Expire    *int64 `json:"expire"`
-	Active    bool   `json:"active"`
+	Name string `json:"name"`
+	// UpdatedAt is unix milliseconds of the last download that was
+	// accepted.
+	UpdatedAt int64 `json:"updated_at"`
+	// Upload, Download and Total are bytes and Expire unix seconds, as the
+	// server reports them; null when it does not.
+	Upload   *int64 `json:"upload"`
+	Download *int64 `json:"download"`
+	Total    *int64 `json:"total"`
+	Expire   *int64 `json:"expire"`
+	Active   bool   `json:"active"`
+	// Interval is how often the daemon refreshes it, in seconds.
+	Interval int64 `json:"interval"`
+	// NextUpdate is unix milliseconds of the next automatic refresh.
+	NextUpdate int64 `json:"next_update"`
+	// Error says why the last refresh failed; empty when it did not.
+	Error string `json:"error"`
 }
 
 // SubscriptionList is every subscription, in the order they were added.

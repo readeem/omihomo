@@ -111,8 +111,13 @@ or `{}`.
 | `connections.list` | | Connections |
 | `connections.close` | `{"ids":[...]}` or `{"all":true}` | `{}` |
 | `egress.check` | | `{"ip","latency"}`, measured through the proxy |
-| `subscriptions.list`, `.add` `{"url"}`, `.update`/`.activate`/`.remove` `{"name"}` | | not implemented yet: `unsupported` |
-| `rules.add` `{"type","value","target"}`, `rules.remove` `{"index"}` | | not implemented yet: `unsupported` |
+| `subscriptions.list` | | `{"subscriptions":[Subscription]}` in the order they were added |
+| `subscriptions.add` | `{"url"}` | Subscription |
+| `subscriptions.update` | `{"name"}` | Subscription |
+| `subscriptions.activate` | `{"name"}` | Status |
+| `subscriptions.remove` | `{"name"}` | `{}` |
+| `rules.add` | `{"type","value","target"}` | `{"rules":[Rule]}` |
+| `rules.remove` | `{"index"}`, 1-based among the owner's rules | `{"rules":[Rule]}` |
 
 Autostart and repair are gone by design: the service starts at boot and restores the last
 on/off state, and as a root service it has no permissions to repair. The field-level shapes are
@@ -127,6 +132,7 @@ the Go types in `internal/protocol`. Status is:
 `state` is `stopped`, `starting`, `on` or `degraded`; `detail` says why a start failed. A new
 `started_at` is a new runtime, and anything read from the previous one is stale. `settings.set`
 on a running proxy applies the change to the core first; if the core refuses it, nothing changes.
+While the proxy is stopped, `rules.list` returns the owner's rules only.
 `tun_bypass` is the address space TUN routes around: loopback, private, CGNAT, link-local,
 documentation and multicast ranges. With `tailnet_proxy` the tailnet leaves it, all but
 Tailscale's MagicDNS address.
@@ -148,9 +154,10 @@ After `subscribe`, the daemon pushes events between replies:
 | `groups` | `{"groups":[Group]}` | after a selection, a delay test, a new runtime, or a change the core made itself, checked every 5 seconds |
 | `rules` | `{"rules":[Rule]}` | when the runtime's rules change |
 | `traffic` | `{"up","down"}` bytes per second | every second while running |
+| `subscriptions` | `{"subscriptions":[Subscription]}` | on every change, a refresh the daemon ran itself included |
 | `connections` | Connections | every second while running |
 
-The first three are state streams. Subscribing to one pushes its current value before the reply,
+`status`, `groups`, `rules` and `subscriptions` are state streams. Subscribing to one pushes its current value before the reply,
 and later pushes reach every subscriber whoever caused the change, so a widget stays current when
 the CLI changes something. The periodic streams cost nothing while no client subscribes. A client
 that stops reading until 256 messages are queued for it is disconnected.
@@ -173,6 +180,8 @@ of that stream is stale until a later push carries data again:
 | `not_running` | the call needs the proxy running |
 | `conflict` | the call contradicts the current state, e.g. Tailscale without tailscaled |
 | `unsupported` | a known op this daemon does not implement yet |
+| `fetch_failed` | a download failed: no answer, not HTTPS, too large, or a status other than 200 |
+| `rejected` | a subscription's content is not usable |
 | `busy` | too many calls or clients |
 | `forbidden` | the peer is not the owner |
 | `core_failed` | the core refused or failed the change |
@@ -195,7 +204,7 @@ omihomo egress
 omihomo watch [stream...]
 omihomo version
 sudo /usr/bin/omihomo claim
-omihomo daemon [--core mihomo|fake] [--home DIR] [--socket PATH] [--owner-file PATH] [--profile FILE]
+omihomo daemon [--core mihomo|fake] [--home DIR] [--state DIR] [--socket PATH] [--owner-file PATH]
 ```
 
 Each command is one call. The result is one JSON line on stdout, indented with `--pretty`; a call
@@ -217,6 +226,8 @@ Errors are one line on stderr.
 | 13 | this account does not own omihomo |
 | 14 | the daemon speaks another protocol version |
 | 15 | not implemented yet |
+| 20 | the subscription's content is not usable |
+| 21 | a download failed |
 
 ## Running it
 
@@ -225,7 +236,9 @@ to stdout. Under a `Type=notify` unit it reports `READY=1` once it serves and `S
 shutdown; `SIGTERM` disconnects every client and stops the core. The daemon runs with umask
 `077`, so everything it writes, the core's selection cache included, is root's alone.
 
-Build it the way mihomo's releases are built, with gVisor, which TUN without redirect needs:
+The production package and release setup are described in [releasing.md](releasing.md).
+For development, build with gVisor, which TUN without redirect needs, and without EasyTier's
+JIT so the binary also runs under the packaged service's memory-execution restrictions:
 
 ```sh
 CGO_ENABLED=0 go build -tags with_gvisor,no_easytier -trimpath -o /tmp/omihomo ./cmd/omihomo
@@ -239,19 +252,84 @@ dir=$(mktemp -d) && id -u > "$dir/owner" && chmod 600 "$dir/owner"
 OMIHOMO_SOCKET="$dir/sock" /tmp/omihomo start
 ```
 
-Until the daemon downloads subscriptions itself, `--profile` runs the proxies, groups, rules and
-inline rule providers of a Clash YAML file, and logs what it leaves out: proxy providers and
-rule providers that are not inline, with the rules that use them. It allowlists nothing, so give
-it only a file you trust. TUN needs root:
+TUN needs root. A development daemon keeps its state apart from an installed one:
 
 ```sh
 sudo install -d -m 711 /run/omihomo-dev
 sudo sh -c "id -u $USER > /run/omihomo-dev/owner && chmod 600 /run/omihomo-dev/owner"
-sudo /tmp/omihomo daemon --home /run/omihomo-dev/core --socket /run/omihomo-dev/sock \
-  --owner-file /run/omihomo-dev/owner --profile ~/subscription.yaml &
+sudo /tmp/omihomo daemon --home /run/omihomo-dev/core --state /run/omihomo-dev/state \
+  --socket /run/omihomo-dev/sock --owner-file /run/omihomo-dev/owner &
 export OMIHOMO_SOCKET=/run/omihomo-dev/sock
-/tmp/omihomo start && /tmp/omihomo set tun on
+/tmp/omihomo sub add < ~/subscription-url && /tmp/omihomo start && /tmp/omihomo set tun on
 ```
+
+## State
+
+`--state` (default `/var/lib/omihomo`) is the daemon's own directory, `0700` and root's alone,
+since subscription URLs carry access tokens. Every file in it is replaced whole and atomically:
+
+```text
+owner                    the owner's uid, written by the install step
+settings.json            mode, TUN, redirect, Tailscale, tailnet proxy, primary group, the
+                         owner's rules, and whether the proxy was on
+subscriptions.json       each subscription's name, URL, quota and refresh times, and the active one
+subscriptions/<id>.json  what was last downloaded and accepted for a subscription, providers included
+core/                    the core's home: selection cache and geodata
+```
+
+Settings are typed and each is checked by the daemon; there is no raw YAML, so the owner account
+cannot make the root daemon run something the settings do not describe. The service starts at
+boot and turns the proxy back on if it was on, running what was last accepted, and retries every
+minute until it comes up or the owner starts or stops it.
+
+The owner's rules come before everything else. Their types are `DOMAIN`, `DOMAIN-SUFFIX`,
+`DOMAIN-KEYWORD`, `DOMAIN-WILDCARD`, `GEOSITE`, `IP-CIDR`, `IP-CIDR6`, `SRC-IP-CIDR`, `GEOIP`,
+`DST-PORT`, `SRC-PORT`, `PROCESS-NAME`, `PROCESS-PATH` and `NETWORK`; each value is checked for its
+type and none may hold a comma. A target must be `DIRECT`, `REJECT`, `REJECT-DROP` or a group or
+proxy of the active subscription. A rule whose target another subscription lacks is left out
+while that subscription runs.
+
+## Subscriptions
+
+The daemon downloads subscriptions, their providers and geodata itself, with one downloader:
+HTTPS only, redirects included; at most 64 MiB once decoded; 10 seconds to connect and 60 for the
+whole download, 5 minutes for geodata; `clash.meta` as the user agent; no proxy from the
+environment. Errors never repeat a URL, which may carry a token, and no list shows one.
+
+A subscription is remote content that configures a root process, so it is read into typed
+structs (`internal/profile`) and anything they do not model is dropped:
+
+- Proxies of the types ss, ssr, vmess, vless, trojan, hysteria, hysteria2, tuic, wireguard,
+  snell, socks5, http, ssh, anytls, mieru and direct, with their protocol, TLS and transport
+  fields. `dialer-proxy`, `interface-name` and `routing-mark` are dropped, and so is any key or
+  certificate field that is not inline PEM, since mihomo would read it as a file.
+- Groups of the types select, url-test, fallback and load-balance, with their test options.
+- Rules of the known types; `SUB-RULE` is dropped, and so is a rule whose target or rule set is.
+- Proxy and rule providers of type `http` with an HTTPS URL, which the daemon downloads, and
+  `inline` ones. Proxy providers are expanded into proxies, with their filters and name prefix
+  and suffix; rule providers become rule sets, `yaml` or `text` (`mrs` is dropped). `file`
+  providers are dropped.
+- Nothing else: ports, listeners, LAN access, DNS, TUN, hosts, sniffer, the controller, the
+  clock and geodata sources all belong to the daemon.
+
+A group left without members fails the subscription rather than reroute the rules that use it.
+Share links, plain or base64, and a YAML of bare proxies run in one `Proxy` select group that
+`MATCH` sends everything to. A subscription names itself from `profile-title` (base64 when it
+says so), else the `content-disposition` filename, else the URL's host, made safe and at most 64
+characters; a name already taken gets a numeric suffix. The first subscription added becomes
+active.
+
+The daemon refreshes each subscription after the `profile-update-interval` its server sent, in
+hours, 12 by default, checking once a minute. A failed refresh never replaces what works: content
+that does not read, or that the running core refuses, leaves the previous content running and
+stored. A refresh nothing answered is retried after a minute, doubling up to the interval; one the
+server refused or whose content was unusable waits a whole interval. A `Retry-After` holds every
+request, the owner's too, until it passes, and the owner's own refreshes are at least a minute
+apart. Subscription records show the last error and the next refresh.
+
+Geodata the rules need (`GEOIP`, `GEOSITE`, ASN rules, in rule sets too) is downloaded into the
+core's home before the core runs them, from MetaCubeX's releases, and again once it is a week
+old. Without it the proxy does not start.
 
 ## The mihomo core
 
@@ -272,8 +350,9 @@ inline rule sets; everything else is fixed by the core:
 - a `GLOBAL` group on the primary group: the one named in settings, else the first `select`
   group, else the first group. Global mode and Omihomo's own Tailscale rules go through it, and
   a profile's own `GLOBAL` is dropped;
-- no geodata source, so mihomo never fetches anything as root: GEOIP and GEOSITE rules need their
-  files in `--home` already, or the config fails to apply.
+- no geodata source, so mihomo never fetches anything itself: the core names the files a profile's
+  rules need (`Geodata`), and the daemon downloads them into `--home` before an apply. A file
+  still missing fails the apply.
 
 `apply` is all or nothing. A config that does not parse changes nothing: mihomo applies a
 config's general settings to the running engine while it parses, so the core parses in the

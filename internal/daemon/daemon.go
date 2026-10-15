@@ -7,14 +7,17 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/fetch"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/peercred"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/state"
 )
 
 // Daemon serves the protocol on its listeners until ctx is done, then
@@ -35,8 +38,11 @@ type config struct {
 	egressURL        string
 	tailscalePresent func() bool
 	maxClients       int
-	profile          core.Profile
 	groupsEvery      time.Duration
+	stateDir         string
+	transport        http.RoundTripper
+	refreshEvery     time.Duration
+	now              func() time.Time
 }
 
 // WithOwnerFile reads the owner from path instead of owner.DefaultPath. The
@@ -64,8 +70,26 @@ func WithTailscaleProbe(present func() bool) ConfigOpt {
 	return func(c *config) { set(&c.tailscalePresent, present, present != nil) }
 }
 
-// WithProfile is the subscription content the proxy runs.
-func WithProfile(p core.Profile) ConfigOpt { return func(c *config) { c.profile = p } }
+// WithStateDir keeps the daemon's state in dir instead of
+// state.DefaultDir.
+func WithStateDir(dir string) ConfigOpt { return func(c *config) { set(&c.stateDir, dir, dir != "") } }
+
+// WithTransport downloads subscriptions, providers and geodata through t
+// instead of the default HTTPS transport.
+func WithTransport(t http.RoundTripper) ConfigOpt {
+	return func(c *config) { set(&c.transport, t, t != nil) }
+}
+
+// WithRefreshCheck is how often the daemon looks for subscriptions due a
+// refresh and geodata due an update.
+func WithRefreshCheck(d time.Duration) ConfigOpt {
+	return func(c *config) { set(&c.refreshEvery, d, d > 0) }
+}
+
+// WithClock replaces time.Now for refresh deadlines.
+func WithClock(now func() time.Time) ConfigOpt {
+	return func(c *config) { set(&c.now, now, now != nil) }
+}
 
 // WithGroupsRefresh is how often the groups stream is checked for changes
 // the core made on its own, such as an automatic group picking another
@@ -102,12 +126,25 @@ type server struct {
 	// opMu serializes the calls that change what the core runs.
 	opMu sync.Mutex
 
+	// refreshMu serializes downloads, so one subscription is never fetched
+	// twice at once. It is taken before opMu.
+	refreshMu sync.Mutex
+
+	store   *state.Store
+	fetcher *fetch.Fetcher
+
 	mu        sync.Mutex
 	state     string
 	detail    string
 	startedAt int64
-	settings  settings
-	sessions  map[*session]struct{}
+	settings  state.Settings
+	subs      state.Subscriptions
+	// profile is the active subscription's, built from its snapshot.
+	profile  core.Profile
+	sessions map[*session]struct{}
+	// restorePending is set while the proxy should be on, as it was before
+	// the daemon restarted, but has not come up yet.
+	restorePending bool
 
 	// pubMu orders pushes, so a client never sees an older value of a state
 	// stream after a newer one.
@@ -117,8 +154,9 @@ type server struct {
 
 var _ Daemon = (*server)(nil)
 
-// New returns a daemon driving c, with the proxy stopped.
-func New(c core.Core, opts ...ConfigOpt) Daemon {
+// New returns a daemon driving c on the state it finds, with the proxy
+// stopped until Run restores it.
+func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	cfg := config{
 		ownerFile: owner.DefaultPath,
 		version:   "dev",
@@ -129,21 +167,45 @@ func New(c core.Core, opts ...ConfigOpt) Daemon {
 			_, err := exec.LookPath("tailscaled")
 			return err == nil
 		},
-		maxClients:  16,
-		groupsEvery: 5 * time.Second,
+		maxClients:   16,
+		groupsEvery:  5 * time.Second,
+		stateDir:     state.DefaultDir,
+		refreshEvery: time.Minute,
+		now:          time.Now,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return &server{
+	store, err := state.Open(cfg.stateDir)
+	if err != nil {
+		return nil, err
+	}
+	d := &server{
 		core:       c,
 		cfg:        cfg,
 		log:        cfg.log,
+		store:      store,
+		fetcher:    fetch.New(cfg.transport),
 		state:      protocol.StateStopped,
-		settings:   defaultSettings(),
 		sessions:   map[*session]struct{}{},
 		lastPushed: map[string][]byte{},
 	}
+	if d.settings, err = store.Settings(); err != nil {
+		return nil, err
+	}
+	if d.subs, err = store.Subscriptions(); err != nil {
+		return nil, err
+	}
+	d.restorePending = d.settings.Running
+	if active := d.activeSub(); active != nil {
+		p, err := d.loadProfile(*active)
+		if err != nil {
+			d.log.Error("read the active subscription", "subscription", active.Name, "err", err)
+			d.detail = "the active subscription could not be read: " + err.Error()
+		}
+		d.profile = p
+	}
+	return d, nil
 }
 
 func (d *server) Run(ctx context.Context, listeners ...net.Listener) error {
@@ -164,6 +226,7 @@ func (d *server) Run(ctx context.Context, listeners ...net.Listener) error {
 		})
 	}
 	wg.Go(func() { d.tick(ctx) })
+	wg.Go(func() { d.refreshLoop(ctx) })
 
 	<-ctx.Done()
 	for _, l := range listeners {
