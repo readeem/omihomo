@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/metacubex/mihomo/common/convert"
+	"github.com/metacubex/mihomo/component/geodata"
 	"github.com/metacubex/mihomo/component/geodata/router"
 	"github.com/metacubex/mihomo/component/mmdb"
 	"github.com/metacubex/mihomo/config"
@@ -98,7 +99,25 @@ func siteCategories(p core.Profile) []string {
 	return out
 }
 
-func (c *Core) CheckGeodata(f core.GeodataFile, path string, p core.Profile) error {
+func (c *Core) InstallGeodata(f core.GeodataFile, path string, p core.Profile) error {
+	if err := checkGeodata(f, path, p); err != nil {
+		return err
+	}
+	if err := os.Rename(path, f.Path); err != nil {
+		return err
+	}
+	switch filepath.Base(f.Path) {
+	case filepath.Base(C.Path.GeoSite()):
+		geodata.ClearGeoSiteCache()
+	case filepath.Base(C.Path.MMDB()):
+		mmdb.ReloadIP()
+	case filepath.Base(C.Path.ASN()):
+		mmdb.ReloadASN()
+	}
+	return nil
+}
+
+func checkGeodata(f core.GeodataFile, path string, p core.Profile) error {
 	switch filepath.Base(f.Path) {
 	case filepath.Base(C.Path.GeoSite()):
 		data, err := os.ReadFile(path)

@@ -26,7 +26,7 @@ const (
 	manualGap = time.Minute
 	// A refresh that gets no answer is retried after retryFirst, doubling
 	// up to the subscription's interval. One the server refuses, or whose
-	// content is unusable, waits a whole interval.
+	// content is unusable, waits a whole interval, asked for or not.
 	retryFirst = time.Minute
 	// geodataTimeout is the time a geodata file has to download; the files
 	// run to tens of megabytes.
@@ -189,6 +189,17 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	if taken {
 		return nil, fail(protocol.CodeConflict, "a subscription with this URL is already added")
 	}
+	now := d.cfg.now()
+	for u, at := range d.addAsked {
+		if now.Sub(at) >= manualGap {
+			delete(d.addAsked, u)
+		}
+	}
+	if at, ok := d.addAsked[url]; ok {
+		return nil, fail(protocol.CodeConflict, "this URL was asked %s ago; try again in %s",
+			now.Sub(at).Round(time.Second), at.Add(manualGap).Sub(now).Round(time.Second))
+	}
+	d.addAsked[url] = now
 	dl, derr := d.download(ctx, "(new)", url)
 	if derr != nil {
 		return nil, derr.err
@@ -196,7 +207,7 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
-	now := d.cfg.now()
+	now = d.cfg.now()
 	usage := profile.ReadUsage(dl.header)
 	sub := state.Subscription{ID: state.NewID(), URL: url, UpdatedAt: ms(now), LastAttempt: ms(now),
 		IntervalSeconds: int64(profile.Interval(dl.header) / time.Second),
@@ -283,7 +294,7 @@ func mayAsk(sub state.Subscription, now time.Time) *protocol.Error {
 			sub.Name, now.Sub(time.UnixMilli(sub.LastAttempt)).Round(time.Second), wait.Round(time.Second))
 	}
 	if sub.HeldUntil > ms(now) {
-		return fail(protocol.CodeConflict, "the server of %s asked to wait until %s",
+		return fail(protocol.CodeConflict, "%s cannot be asked again until %s",
 			sub.Name, time.UnixMilli(sub.HeldUntil).Format(time.DateTime))
 	}
 	return nil
@@ -330,7 +341,7 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 
 	d.mu.Lock()
 	active := d.subs.Active == id
-	settings := d.settings
+	settings, prev := d.settings, d.profile
 	exists := slices.ContainsFunc(d.subs.List, func(s state.Subscription) bool { return s.ID == id })
 	d.mu.Unlock()
 	if !exists {
@@ -344,7 +355,15 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		return nil, err
 	}
 	if err := d.store.SaveSnapshot(id, dl.snap); err != nil {
+		if active {
+			d.rollback(ctx, settings, prev)
+		}
 		return nil, fail(protocol.CodeInternal, "the subscription could not be saved: %v", err)
+	}
+	if active {
+		d.mu.Lock()
+		d.profile = dl.profile
+		d.mu.Unlock()
 	}
 	usage := profile.ReadUsage(dl.header)
 	if err := d.updateSub(id, func(s *state.Subscription) {
@@ -354,11 +373,6 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		sub = *s
 	}); err != nil {
 		return nil, err
-	}
-	if active {
-		d.mu.Lock()
-		d.profile = dl.profile
-		d.mu.Unlock()
 	}
 	d.log.Info("subscription refreshed", "subscription", sub.Name)
 	d.publish(ctx)
@@ -381,8 +395,8 @@ func (d *server) failRefresh(sub state.Subscription, now time.Time, interval tim
 	wait = max(wait, retryAfter)
 	if err := d.updateSub(sub.ID, func(s *state.Subscription) {
 		s.LastAttempt, s.RetryAt, s.LastError = ms(now), ms(now.Add(wait)), why
-		if retryAfter > 0 {
-			s.HeldUntil = ms(now.Add(retryAfter))
+		if answered {
+			s.HeldUntil = s.RetryAt
 		}
 	}); err != nil {
 		d.log.Error("record a failed refresh", "subscription", sub.Name, "err", err.Message)
@@ -520,11 +534,8 @@ func (d *server) downloadGeodata(ctx context.Context, f core.GeodataFile) (strin
 // holds opMu, so p is what runs and what is stored.
 func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) error {
 	name := filepath.Base(f.Path)
-	if err := d.core.CheckGeodata(f, tmp, p); err != nil {
+	if err := d.core.InstallGeodata(f, tmp, p); err != nil {
 		return fmt.Errorf("the geodata %s that downloaded is not usable: %w", name, err)
-	}
-	if err := os.Rename(tmp, f.Path); err != nil {
-		return fmt.Errorf("save geodata %s: %w", name, err)
 	}
 	return nil
 }

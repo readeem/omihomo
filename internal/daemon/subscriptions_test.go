@@ -287,6 +287,33 @@ rules:
 	}
 }
 
+func TestARefreshThatCannotBeSavedDoesNotRun(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a read-only directory")
+	}
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+
+	snapshots := filepath.Join(h.stateDir, "subscriptions")
+	if err := os.Chmod(snapshots, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(snapshots, 0o700) })
+	o.set("/work", page{body: strings.ReplaceAll(workYAML, "Berlin", "Paris")})
+	h.clock.advance(time.Minute)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: "127.0.0.1"}); err.Code != protocol.CodeInternal {
+		t.Fatalf("unsaved refresh = %v", err)
+	}
+	after, running := h.core.Config()
+	if p, _ := names(after.Profile); !running || !slices.Equal(p, []string{"Tokyo", "Berlin"}) {
+		t.Fatalf("the core runs %v after a refresh that was not saved", p)
+	}
+}
+
 func TestAFailedRefreshKeepsWhatWorks(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{body: workYAML})
@@ -308,7 +335,7 @@ func TestAFailedRefreshKeepsWhatWorks(t *testing.T) {
 		if tc.code == protocol.CodeCore {
 			h.core.FailApply(fmt.Errorf("the core refuses"))
 		}
-		h.clock.advance(time.Minute)
+		h.clock.advance(13 * time.Hour)
 		err := callErr(t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: "127.0.0.1"})
 		if err.Code != tc.code {
 			t.Fatalf("%d: update = %v, want %s", i, err, tc.code)
@@ -338,7 +365,7 @@ func TestAFailedRefreshKeepsWhatWorks(t *testing.T) {
 
 func TestManualRefreshesAreSpacedOut(t *testing.T) {
 	o := newOrigin(t)
-	o.set("/work", page{body: workYAML})
+	o.set("/work", page{body: workYAML, header: map[string]string{"Profile-Update-Interval": "1"}})
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
@@ -347,16 +374,59 @@ func TestManualRefreshesAreSpacedOut(t *testing.T) {
 		t.Fatalf("an update right after the add = %v", err)
 	}
 	h.clock.advance(time.Minute)
-	o.set("/work", page{status: http.StatusTooManyRequests, header: map[string]string{"Retry-After": "3600"}})
+	o.set("/work", page{status: http.StatusTooManyRequests, header: map[string]string{"Retry-After": "7200"}})
 	callErr(t, c, protocol.OpSubscriptionUpdate, name)
-	h.clock.advance(10 * time.Minute)
+	h.clock.advance(time.Hour)
 	o.set("/work", page{body: workYAML})
-	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeConflict || !strings.Contains(err.Message, "asked to wait") {
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeConflict || !strings.Contains(err.Message, "until") {
 		t.Fatalf("an update the server asked to wait for = %v", err)
 	}
 	h.clock.advance(time.Hour)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
 	if n := o.count("/work"); n != 3 {
+		t.Fatalf("the server was asked %d times", n)
+	}
+}
+
+func TestAManualRefreshWaitsOutARefusal(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML, header: map[string]string{"Profile-Update-Interval": "1"}})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	name := protocol.NameArgs{Name: "127.0.0.1"}
+	h.clock.advance(time.Minute)
+	o.set("/work", page{status: http.StatusForbidden})
+	callErr(t, c, protocol.OpSubscriptionUpdate, name)
+
+	o.set("/work", page{body: workYAML})
+	h.clock.advance(10 * time.Minute)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeConflict {
+		t.Fatalf("an update within the interval after a refusal = %v", err)
+	}
+	h.clock.advance(time.Hour)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
+	if n := o.count("/work"); n != 3 {
+		t.Fatalf("the server was asked %d times", n)
+	}
+}
+
+func TestAFailedAddIsNotRetriedAtOnce(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{status: http.StatusInternalServerError})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	add := protocol.SubscriptionURLArgs{URL: o.url("/work")}
+	if err := callErr(t, c, protocol.OpSubscriptionAdd, add); err.Code != protocol.CodeFetch {
+		t.Fatalf("add = %v", err)
+	}
+	o.set("/work", page{body: workYAML})
+	if err := callErr(t, c, protocol.OpSubscriptionAdd, add); err.Code != protocol.CodeConflict {
+		t.Fatalf("an add right after a failed one = %v", err)
+	}
+	h.clock.advance(time.Minute)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, add)
+	if n := o.count("/work"); n != 2 {
 		t.Fatalf("the server was asked %d times", n)
 	}
 }
@@ -499,6 +569,7 @@ func TestGeodataIsDownloadedBeforeTheCoreNeedsIt(t *testing.T) {
 		t.Fatalf("add without reachable geodata = %v", err)
 	}
 	o.set("/geoip.metadb", page{body: "mmdb"})
+	h.clock.advance(time.Minute)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	if b, err := os.ReadFile(geoip); err != nil || string(b) != "mmdb" {
@@ -555,7 +626,7 @@ func TestIncompleteOrUnrunnableRefreshesAreNotKept(t *testing.T) {
 	}
 	o.set("/ads", page{body: "payload: [+.ads.example]\n"})
 	h.core.FailCheck(fmt.Errorf("refused"))
-	h.clock.advance(time.Hour)
+	h.clock.advance(13 * time.Hour)
 	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeRejected {
 		t.Fatalf("an update the core would not run = %v", err)
 	}
@@ -599,6 +670,7 @@ func TestDownloadsShareOneLimit(t *testing.T) {
 		t.Fatalf("over the shared limit = %v", err)
 	}
 	o.set("/b", page{body: "payload: [+.b.example]\n"})
+	h.clock.advance(time.Minute)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 }
 

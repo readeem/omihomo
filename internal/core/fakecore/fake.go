@@ -298,11 +298,14 @@ func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
 	return need(p)
 }
 
-// CheckGeodata takes any file that is not empty.
-func (c *Core) CheckGeodata(f core.GeodataFile, path string, p core.Profile) error {
+// InstallGeodata takes any file that is not empty.
+func (c *Core) InstallGeodata(f core.GeodataFile, path string, p core.Profile) error {
 	info, err := os.Stat(path)
 	if err == nil && info.Size() == 0 {
 		err = errors.New("empty")
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return os.Rename(path, f.Path)
 }

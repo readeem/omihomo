@@ -301,6 +301,26 @@ func TestSettings(t *testing.T) {
 	}
 }
 
+func TestAChangeThatCannotBeSavedDoesNotRun(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a read-only directory")
+	}
+	h := serve(t, os.Getuid())
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+
+	if err := os.Chmod(h.stateDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(h.stateDir, 0o700) })
+	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: ptr(true)}); err.Code != protocol.CodeInternal {
+		t.Fatalf("unsaved change = %v", err)
+	}
+	if cfg, running := h.core.Config(); !running || cfg.TUN {
+		t.Fatalf("core runs %+v (running %v) after a change that was not saved", cfg, running)
+	}
+}
+
 func TestTailscaleNeedsTailscaled(t *testing.T) {
 	h := serve(t, os.Getuid(), daemon.WithTailscaleProbe(func() bool { return false }))
 	c := h.dial(t)

@@ -139,10 +139,11 @@ type Core interface {
 	// is downloaded from. The daemon fetches the ones missing before an
 	// Apply; the core never fetches them itself.
 	Geodata(p Profile) []GeodataFile
-	// CheckGeodata reports why the file at path is not usable as f for the
-	// rules of p, before the daemon puts it in place: a broken database can
-	// end the process, and one without what the rules match fails them.
-	CheckGeodata(f GeodataFile, path string, p Profile) error
+	// InstallGeodata moves the file at path into place as f once it is
+	// usable for the rules of p, and makes the core read it on its next
+	// Apply. A broken database can end the process, and one without what the
+	// rules match fails them, so either leaves what is in place.
+	InstallGeodata(f GeodataFile, path string, p Profile) error
 }
 
 // GeodataFile is one geodata file a profile needs: Path is absolute, URL is

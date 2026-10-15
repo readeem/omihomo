@@ -108,10 +108,7 @@ func (d *server) commitRules(ctx context.Context, next state.Settings) (any, *pr
 	d.mu.Lock()
 	p := d.profile
 	d.mu.Unlock()
-	if err := d.reapply(ctx, next, p); err != nil {
-		return nil, err
-	}
-	if err := d.saveSettings(next); err != nil {
+	if err := d.commitSettings(ctx, next, p); err != nil {
 		return nil, err
 	}
 	d.publish(ctx)

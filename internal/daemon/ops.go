@@ -398,6 +398,29 @@ func (d *server) saveSettings(next state.Settings) *protocol.Error {
 	return nil
 }
 
+func (d *server) commitSettings(ctx context.Context, next state.Settings, p core.Profile) *protocol.Error {
+	d.mu.Lock()
+	prev := d.settings
+	d.mu.Unlock()
+	if err := d.reapply(ctx, next, p); err != nil {
+		return err
+	}
+	if err := d.saveSettings(next); err != nil {
+		d.rollback(ctx, prev, p)
+		return err
+	}
+	return nil
+}
+
+func (d *server) rollback(ctx context.Context, s state.Settings, p core.Profile) {
+	if !d.running() {
+		return
+	}
+	if err := d.reapply(ctx, s, p); err != nil {
+		d.log.Error("run the stored config again", "err", err.Message)
+	}
+}
+
 // reapply runs next settings and profile on a running core, or checks them
 // while it is stopped. A core that cannot put the previous config
 // back is shown stopped. The caller holds opMu.
@@ -498,10 +521,7 @@ func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (a
 		next.PrimaryGroup = name
 	}
 
-	if err := d.reapply(ctx, next, p); err != nil {
-		return nil, err
-	}
-	if err := d.saveSettings(next); err != nil {
+	if err := d.commitSettings(ctx, next, p); err != nil {
 		return nil, err
 	}
 	d.publish(ctx)

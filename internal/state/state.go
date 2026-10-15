@@ -74,8 +74,8 @@ type Subscription struct {
 	// RetryAt, when set, is the earliest next automatic request after a
 	// failure.
 	RetryAt int64 `json:"retry_at"`
-	// HeldUntil is when the server's Retry-After runs out; no request,
-	// automatic or asked for, goes out before.
+	// HeldUntil is when a failure the server answered, or its Retry-After,
+	// runs out; no request, automatic or asked for, goes out before.
 	HeldUntil int64 `json:"held_until"`
 	// LastError says why the last refresh failed; empty after a success.
 	LastError string `json:"last_error"`

@@ -79,7 +79,7 @@ func TestBrokenGeodataIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "download")
 	os.WriteFile(path, []byte("<html>not a database</html>"), 0o600)
 	for _, f := range []core.GeodataFile{{Path: "/x/geoip.metadb"}, {Path: "/x/GeoLite2-ASN.mmdb"}, {Path: "/x/GeoSite.dat"}} {
-		if err := shared.CheckGeodata(f, path, core.Profile{}); err == nil {
+		if err := checkGeodata(f, path, core.Profile{}); err == nil {
 			t.Errorf("%s took garbage", filepath.Base(f.Path))
 		}
 	}
@@ -98,11 +98,11 @@ func TestASiteListNeedsTheCategoriesInUse(t *testing.T) {
 	f := core.GeodataFile{Path: "/x/GeoSite.dat"}
 	uses := func(rules ...core.Rule) core.Profile { return core.Profile{Rules: rules} }
 	os.WriteFile(path, data, 0o600)
-	if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "cn", Target: "DIRECT"},
+	if err := checkGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "cn", Target: "DIRECT"},
 		core.Rule{Type: "NOT", Value: "((GEOSITE,!CN@ads))", Target: "DIRECT"})); err != nil {
 		t.Fatalf("a list with the category = %v", err)
 	}
-	if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
+	if err := checkGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
 		t.Error("a list without the category was taken")
 	}
 	// mihomo loads CN whatever the rules use, and builds every category.
@@ -115,13 +115,13 @@ func TestASiteListNeedsTheCategoriesInUse(t *testing.T) {
 	} {
 		data, _ := proto.Marshal(bad)
 		os.WriteFile(path, data, 0o600)
-		if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
+		if err := checkGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
 			t.Errorf("%s: taken", name)
 		}
 	}
 	// One empty entry is a valid message but no list.
 	os.WriteFile(path, []byte{0x0a, 0x00}, 0o600)
-	if err := shared.CheckGeodata(f, path, core.Profile{}); err == nil {
+	if err := checkGeodata(f, path, core.Profile{}); err == nil {
 		t.Error("an empty site list was taken")
 	}
 }

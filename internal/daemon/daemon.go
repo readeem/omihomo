@@ -136,6 +136,7 @@ type server struct {
 	// refreshMu serializes downloads, so one subscription is never fetched
 	// twice at once. It is taken before opMu.
 	refreshMu sync.Mutex
+	addAsked  map[string]time.Time
 
 	store   *state.Store
 	fetcher *fetch.Fetcher
@@ -196,6 +197,7 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 		fetcher:    fetch.New(cfg.transport),
 		state:      protocol.StateStopped,
 		sessions:   map[*session]struct{}{},
+		addAsked:   map[string]time.Time{},
 		lastPushed: map[string][]byte{},
 	}
 	if d.settings, err = store.Settings(); err != nil {
