@@ -231,7 +231,7 @@ Item {
     if (version !== protocolVersion) {
       link = version < protocolVersion ? "outdated" : "newer"
       forgetAll()
-      socket.connected = false
+      hangUp()
       return
     }
     link = "ready"
@@ -243,7 +243,7 @@ Item {
     helloTimer.stop()
     link = "refused"
     forgetAll()
-    socket.connected = false
+    hangUp()
   }
 
   readonly property var panelStreams: ["groups", "rules", "subscriptions", "traffic", "connections"]
@@ -300,9 +300,14 @@ Item {
       link = "refused"
       forgetAll()
     }
-    socket.connected = false
+    hangUp()
     reconnectTimer.restart()
   }
+
+  // Quickshell's Socket crashes when it is closed from inside its own
+  // signals, so a close asked for there waits until they return.
+  function hangUp() { Qt.callLater(_hangUp) }
+  function _hangUp() { socket.connected = false }
 
   Socket {
     id: socket
