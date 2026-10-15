@@ -103,6 +103,8 @@ func (c *Core) InstallGeodata(f core.GeodataFile, path string, p core.Profile) e
 	if err := checkGeodata(f, path, p); err != nil {
 		return err
 	}
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	if err := os.Rename(path, f.Path); err != nil {
 		return err
 	}
@@ -110,11 +112,22 @@ func (c *Core) InstallGeodata(f core.GeodataFile, path string, p core.Profile) e
 	case filepath.Base(C.Path.GeoSite()):
 		geodata.ClearGeoSiteCache()
 	case filepath.Base(C.Path.MMDB()):
-		mmdb.ReloadIP()
+		c.reloadIP = true
 	case filepath.Base(C.Path.ASN()):
-		mmdb.ReloadASN()
+		c.reloadASN = true
 	}
 	return nil
+}
+
+func (c *Core) reloadDatabases() {
+	if c.reloadIP {
+		mmdb.ReloadIP()
+		c.reloadIP = false
+	}
+	if c.reloadASN {
+		mmdb.ReloadASN()
+		c.reloadASN = false
+	}
 }
 
 func checkGeodata(f core.GeodataFile, path string, p core.Profile) error {

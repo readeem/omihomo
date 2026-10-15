@@ -406,19 +406,25 @@ func (d *server) commitSettings(ctx context.Context, next state.Settings, p core
 		return err
 	}
 	if err := d.saveSettings(next); err != nil {
-		d.rollback(ctx, prev, p)
+		if !d.rollback(ctx, prev, p) {
+			d.mu.Lock()
+			d.settings = next
+			d.mu.Unlock()
+		}
 		return err
 	}
 	return nil
 }
 
-func (d *server) rollback(ctx context.Context, s state.Settings, p core.Profile) {
+func (d *server) rollback(ctx context.Context, s state.Settings, p core.Profile) bool {
 	if !d.running() {
-		return
+		return true
 	}
 	if err := d.reapply(ctx, s, p); err != nil {
 		d.log.Error("run the stored config again", "err", err.Message)
+		return false
 	}
+	return true
 }
 
 // reapply runs next settings and profile on a running core, or checks them

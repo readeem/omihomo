@@ -334,8 +334,9 @@ The daemon refreshes each subscription after the `profile-update-interval` its s
 hours, 12 by default, checking once a minute. A failed refresh never replaces what works: content
 is kept only once the core has run it, when it is active and the proxy is on, or else checked
 that it would; whatever fails leaves the previous content running and stored. A refresh nothing
-answered is retried after a minute, doubling up to the interval. One the server refused or whose
-content was unusable holds every request, the owner's too, for a whole interval, or until a longer
+answered is retried after a minute, doubling up to the interval, and so is one that fails on this
+machine, such as geodata that does not download. One the server refused or whose content the core
+refuses holds every request, the owner's too, for a whole interval, or until a longer
 `Retry-After` passes. The owner's own refreshes are at least a minute apart, and so are attempts
 to add the same URL. Subscription records show the last error and the next refresh.
 
@@ -343,9 +344,10 @@ Geodata the rules need (`GEOIP`, `GEOSITE`, ASN rules, in rule sets too) is down
 core's home before the core runs them, from MetaCubeX's releases, and again once it is a week
 old. A download replaces the file in place only once the core has opened it and built the site
 categories the rules use, and `CN`, which mihomo loads on every start, against the rules current
-at that moment: mihomo exits on a database it cannot read. The core then drops mihomo's cached
-copy, so the rules match against the new file from the next apply at the latest. Without the
-files the proxy does not start.
+at that moment: mihomo exits on a database it cannot read. Rules match against a new site list
+from the next apply. mihomo looks up the IP and ASN databases while it routes and cannot swap
+them safely meanwhile, so a new one is read when the proxy next starts. Without the files the
+proxy does not start.
 
 ## The mihomo core
 

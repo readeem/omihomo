@@ -411,6 +411,25 @@ func TestAManualRefreshWaitsOutARefusal(t *testing.T) {
 	}
 }
 
+func TestALocalFailureDoesNotHoldManualRefreshes(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	name := protocol.NameArgs{Name: "127.0.0.1"}
+
+	h.core.FailApply(fmt.Errorf("tun device busy"))
+	h.clock.advance(time.Minute)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeCore {
+		t.Fatalf("update = %v", err)
+	}
+	h.core.FailApply(nil)
+	h.clock.advance(time.Minute)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
+}
+
 func TestAFailedAddIsNotRetriedAtOnce(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{status: http.StatusInternalServerError})

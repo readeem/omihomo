@@ -348,15 +348,18 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
 	}
 	if err := d.acceptContent(ctx, settings, dl.profile, active); err != nil {
-		// Its interval still counts: the server answered.
+		// Its interval still counts: the server answered. Only content the
+		// core refuses is the server's fault; a local failure is retried soon.
 		interval = profile.Interval(dl.header)
-		d.failRefresh(sub, now, interval, true, 0, err.Message)
+		d.failRefresh(sub, now, interval, err.Code == protocol.CodeRejected, 0, err.Message)
 		d.publish(ctx)
 		return nil, err
 	}
 	if err := d.store.SaveSnapshot(id, dl.snap); err != nil {
-		if active {
-			d.rollback(ctx, settings, prev)
+		if active && !d.rollback(ctx, settings, prev) {
+			d.mu.Lock()
+			d.profile = dl.profile
+			d.mu.Unlock()
 		}
 		return nil, fail(protocol.CodeInternal, "the subscription could not be saved: %v", err)
 	}
@@ -541,7 +544,7 @@ func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) 
 }
 
 // refreshGeodata downloads again the geodata in use that is older than
-// geodataAge. The core reads the new files on its next apply. It checks a
+// geodataAge. It checks a
 // download against the rules current when it is put in place, not those
 // current when it began.
 func (d *server) refreshGeodata(ctx context.Context) {

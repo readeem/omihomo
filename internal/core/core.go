@@ -140,9 +140,10 @@ type Core interface {
 	// Apply; the core never fetches them itself.
 	Geodata(p Profile) []GeodataFile
 	// InstallGeodata moves the file at path into place as f once it is
-	// usable for the rules of p, and makes the core read it on its next
-	// Apply. A broken database can end the process, and one without what the
-	// rules match fails them, so either leaves what is in place.
+	// usable for the rules of p. The core reads a site list on its next
+	// Apply, and a database it looks up while routing on its next start. A
+	// broken database can end the process, and one without what the rules
+	// match fails them, so either leaves what is in place.
 	InstallGeodata(f GeodataFile, path string, p Profile) error
 }
 

@@ -55,7 +55,9 @@ type Core struct {
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
-	applyMu sync.Mutex
+	applyMu   sync.Mutex
+	reloadIP  bool
+	reloadASN bool
 
 	mu      sync.Mutex
 	running bool
@@ -117,6 +119,9 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 	c.mu.Lock()
 	wasRunning, previous := c.running, c.current.cfg
 	c.mu.Unlock()
+	if !wasRunning {
+		c.reloadDatabases()
+	}
 
 	if err := c.run(next); err != nil {
 		if !wasRunning {
