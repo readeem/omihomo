@@ -6,9 +6,11 @@
 package fetch
 
 import (
+	"compress/flate"
 	"compress/gzip"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -42,7 +44,10 @@ var (
 	// ErrInsecure means a request or redirect that is not https.
 	ErrInsecure = errors.New("only https URLs are allowed")
 
-	errWithheld = errors.New("the cause names a URL and is withheld")
+	errWithheld = errors.New("the cause is withheld, since it may name a URL")
+	// errResponse is wrapped by what this package finds wrong with a
+	// response, which never quotes a URL.
+	errResponse = errors.New("bad response")
 )
 
 // StatusError is a response other than 200. RetryAfter is the server's
@@ -99,7 +104,7 @@ func defaultTransport() *http.Transport {
 
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
-		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		return fmt.Errorf("%w: stopped after %d redirects", errResponse, maxRedirects)
 	}
 	if req.URL.Scheme != "https" || req.URL.Host == "" {
 		return fmt.Errorf("redirect refused: %w", ErrInsecure)
@@ -186,14 +191,14 @@ func readBody(resp *http.Response, limit int64) ([]byte, error) {
 			return []byte{}, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("decode gzip: %w", err)
+			return nil, fmt.Errorf("%w: gzip does not decode", errResponse)
 		}
 		defer zr.Close()
 		body = zr
 		resp.Header.Del("Content-Encoding")
 		resp.Header.Del("Content-Length")
 	default:
-		return nil, fmt.Errorf("unsupported content encoding %q", enc)
+		return nil, fmt.Errorf("%w: unsupported content encoding", errResponse)
 	}
 	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
@@ -214,8 +219,10 @@ func failure(ctx context.Context, err error, u *url.URL) error {
 	return scrub(err, u)
 }
 
-// scrub drops the URL that *url.Error adds to err, and withholds a cause
-// that still quotes one, such as a malformed Location header.
+// scrub drops the URL that *url.Error adds to err, and passes on only the
+// causes known never to quote a URL: network, TLS and decoding failures, and
+// this package's own. Anything else, such as a malformed Location header the
+// client quotes, is withheld.
 func scrub(err error, u *url.URL) error {
 	for {
 		ue, ok := err.(*url.Error)
@@ -223,6 +230,9 @@ func scrub(err error, u *url.URL) error {
 			break
 		}
 		err = ue.Err
+	}
+	if !knownCause(err) {
+		return errWithheld
 	}
 	msg := err.Error()
 	leaks := strings.Contains(msg, "://") ||
@@ -233,6 +243,25 @@ func scrub(err error, u *url.URL) error {
 		return errWithheld
 	}
 	return err
+}
+
+func knownCause(err error) bool {
+	var (
+		op        *net.OpError
+		dns       *net.DNSError
+		verify    *tls.CertificateVerificationError
+		record    tls.RecordHeaderError
+		alert     tls.AlertError
+		unknownCA x509.UnknownAuthorityError
+		host      x509.HostnameError
+		invalid   x509.CertificateInvalidError
+		corrupt   flate.CorruptInputError
+	)
+	return errors.Is(err, ErrTooLarge) || errors.Is(err, ErrInsecure) || errors.Is(err, errResponse) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) ||
+		errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &verify) || errors.As(err, &record) ||
+		errors.As(err, &alert) || errors.As(err, &unknownCA) || errors.As(err, &host) || errors.As(err, &invalid) ||
+		errors.As(err, &corrupt)
 }
 
 // CheckURL reports whether raw is a URL the daemon will download: https,

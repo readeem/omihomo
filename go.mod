@@ -11,6 +11,7 @@ require (
 	github.com/metacubex/mihomo v1.19.32
 	github.com/peterbourgon/ff/v3 v3.4.0
 	go.yaml.in/yaml/v3 v3.0.5
+	google.golang.org/protobuf v1.34.2
 )
 
 require (
@@ -145,7 +146,6 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
 )
 
 // Copied from mihomo's go.mod, since a replace only applies in the main

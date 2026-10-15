@@ -71,3 +71,13 @@ func TestParseLinksLogsNoCredentials(t *testing.T) {
 		t.Fatalf("logged %q", out)
 	}
 }
+
+func TestBrokenGeodataIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "download")
+	os.WriteFile(path, []byte("<html>not a database</html>"), 0o600)
+	for _, f := range []core.GeodataFile{{Path: "/x/geoip.metadb"}, {Path: "/x/GeoLite2-ASN.mmdb"}, {Path: "/x/GeoSite.dat"}} {
+		if err := shared.CheckGeodata(f, path); err == nil {
+			t.Errorf("%s took garbage", filepath.Base(f.Path))
+		}
+	}
+}

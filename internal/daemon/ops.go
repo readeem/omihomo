@@ -398,11 +398,22 @@ func (d *server) saveSettings(next state.Settings) *protocol.Error {
 	return nil
 }
 
-// reapply runs next settings and profile on a running core, or does
-// nothing while it is stopped. A core that cannot put the previous config
+// reapply runs next settings and profile on a running core, or checks them
+// while it is stopped. A core that cannot put the previous config
 // back is shown stopped. The caller holds opMu.
 func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profile) *protocol.Error {
 	if !d.running() {
+		// Nothing runs, but what is stored is what the next start runs, so
+		// the core checks it. Geodata that cannot download now only means
+		// the check waits for the start.
+		cfg := runConfig(next, p)
+		if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
+			d.log.Warn("a change is stored unchecked", "err", err)
+			return nil
+		}
+		if err := d.core.Check(ctx, cfg); err != nil {
+			return fail(protocol.CodeCore, "the core would not run it: %v", err)
+		}
 		return nil
 	}
 	cfg := runConfig(next, p)

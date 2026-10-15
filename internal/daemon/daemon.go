@@ -43,6 +43,7 @@ type config struct {
 	transport        http.RoundTripper
 	refreshEvery     time.Duration
 	now              func() time.Time
+	downloadLimit    int64
 }
 
 // WithOwnerFile reads the owner from path instead of owner.DefaultPath. The
@@ -84,6 +85,12 @@ func WithTransport(t http.RoundTripper) ConfigOpt {
 // refresh and geodata due an update.
 func WithRefreshCheck(d time.Duration) ConfigOpt {
 	return func(c *config) { set(&c.refreshEvery, d, d > 0) }
+}
+
+// WithDownloadLimit bounds the bytes one subscription downloads, its
+// providers included, instead of fetch.MaxBytes.
+func WithDownloadLimit(n int64) ConfigOpt {
+	return func(c *config) { set(&c.downloadLimit, n, n > 0) }
 }
 
 // WithClock replaces time.Now for refresh deadlines.
@@ -167,11 +174,12 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 			_, err := exec.LookPath("tailscaled")
 			return err == nil
 		},
-		maxClients:   16,
-		groupsEvery:  5 * time.Second,
-		stateDir:     state.DefaultDir,
-		refreshEvery: time.Minute,
-		now:          time.Now,
+		maxClients:    16,
+		groupsEvery:   5 * time.Second,
+		stateDir:      state.DefaultDir,
+		refreshEvery:  time.Minute,
+		downloadLimit: fetch.MaxBytes,
+		now:           time.Now,
 	}
 	for _, opt := range opts {
 		opt(&cfg)

@@ -120,7 +120,7 @@ type downloadError struct {
 }
 
 func (d *server) download(ctx context.Context, name, url string) (*download, *downloadError) {
-	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: url})
+	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: url, MaxBytes: d.cfg.downloadLimit})
 	if err != nil {
 		derr := &downloadError{err: fail(protocol.CodeFetch, "%v", err)}
 		var serr *fetch.StatusError
@@ -141,8 +141,14 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 	if len(providers) > maxProviders {
 		return nil, rejected(fmt.Errorf("%w: it names more than %d providers", profile.ErrInvalid, maxProviders))
 	}
+	// One limit covers a subscription and all its providers: everything
+	// downloaded is held, and stored, at once.
+	left := d.cfg.downloadLimit - int64(len(resp.Body))
 	for _, p := range providers {
-		r, err := d.fetcher.Get(ctx, fetch.Request{URL: p.URL})
+		if left <= 0 {
+			return nil, &downloadError{err: fail(protocol.CodeFetch, "provider %q: %v", p.Name, fetch.ErrTooLarge), answered: true}
+		}
+		r, err := d.fetcher.Get(ctx, fetch.Request{URL: p.URL, MaxBytes: left})
 		if err != nil {
 			// Without it the rules it feeds would be left out, and with them
 			// whatever they block: the content is incomplete, not new.
@@ -154,6 +160,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 			return nil, derr
 		}
 		dl.snap.Providers[p.Key()] = r.Body
+		left -= int64(len(r.Body))
 	}
 	p, dropped, err := doc.Build(dl.snap.Providers)
 	if err != nil {
@@ -488,10 +495,14 @@ func (d *server) fetchGeodata(ctx context.Context, f core.GeodataFile) error {
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil {
-		err = os.Rename(tmp.Name(), f.Path)
-	}
 	if err != nil {
+		return fmt.Errorf("save geodata %s: %w", name, err)
+	}
+	// What is in place keeps working until a download proves usable.
+	if err := d.core.CheckGeodata(f, tmp.Name()); err != nil {
+		return fmt.Errorf("the geodata %s that downloaded is not usable: %w", name, err)
+	}
+	if err := os.Rename(tmp.Name(), f.Path); err != nil {
 		return fmt.Errorf("save geodata %s: %w", name, err)
 	}
 	return nil

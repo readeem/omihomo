@@ -491,7 +491,7 @@ func TestGeodataIsDownloadedBeforeTheCoreNeedsIt(t *testing.T) {
 		}
 		return nil
 	})
-	h := serveCore(t, os.Getuid(), c0, o.opts()...)
+	h := serveCore(t, os.Getuid(), c0, append(o.opts(), daemon.WithRefreshCheck(10*time.Millisecond))...)
 	c := h.dial(t)
 	// Content is checked by the core before it is kept, and the core needs
 	// the geodata for that.
@@ -510,6 +510,17 @@ func TestGeodataIsDownloadedBeforeTheCoreNeedsIt(t *testing.T) {
 	if n := o.count("/geoip.metadb"); n != 2 {
 		t.Fatalf("geodata requested %d times", n)
 	}
+
+	// A week on it is downloaded again, and a broken download leaves the
+	// file that works in place.
+	o.set("/geoip.metadb", page{body: ""})
+	h.clock.advance(8 * 24 * time.Hour)
+	waitFor(t, func() bool { return o.count("/geoip.metadb") >= 3 })
+	if b, _ := os.ReadFile(geoip); string(b) != "mmdb" {
+		t.Fatalf("a broken download replaced geodata with %q", b)
+	}
+	o.set("/geoip.metadb", page{body: "mmdb 2"})
+	waitFor(t, func() bool { b, _ := os.ReadFile(geoip); return string(b) == "mmdb 2" })
 }
 
 func waitFor(t *testing.T, ok func() bool) {
@@ -571,5 +582,46 @@ func TestARefreshNothingAnsweredIsRetriedSoon(t *testing.T) {
 	list := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil)
 	if s := list.Subscriptions[0]; s.NextUpdate-h.clock.Now().UnixMilli() > time.Minute.Milliseconds() {
 		t.Fatalf("next try in %s", time.Duration(s.NextUpdate-h.clock.Now().UnixMilli())*time.Millisecond)
+	}
+}
+
+// One limit covers a subscription and all its providers together.
+func TestDownloadsShareOneLimit(t *testing.T) {
+	o := newOrigin(t)
+	body := strings.Replace(workYAML, "rules:\n", "rule-providers:\n  a: {type: http, behavior: domain, url: \""+o.URL+"/a\"}\n  b: {type: http, behavior: domain, url: \""+o.URL+"/b\"}\nrules:\n  - RULE-SET,a,REJECT\n  - RULE-SET,b,REJECT\n", 1)
+	o.set("/work", page{body: body})
+	padded := "payload: [+.ads.example]\n#" + strings.Repeat("x", 1500) + "\n"
+	o.set("/a", page{body: padded})
+	o.set("/b", page{body: padded})
+	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithDownloadLimit(int64(len(body)+2*len(padded)-1)))...)
+	c := h.dial(t)
+	if err := callErr(t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")}); err.Code != protocol.CodeFetch || !strings.Contains(err.Message, "larger") {
+		t.Fatalf("over the shared limit = %v", err)
+	}
+	o.set("/b", page{body: "payload: [+.b.example]\n"})
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+}
+
+// While the proxy is stopped, what the next start would run is still
+// checked before it is kept.
+func TestChangesWhileStoppedAreChecked(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	h.core.FailCheck(fmt.Errorf("refused"))
+	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "GEOSITE", Value: "nonexistent", Target: "DIRECT"}); err.Code != protocol.CodeCore {
+		t.Fatalf("a rule the core would refuse = %v", err)
+	}
+	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: ptr(true)}); err.Code != protocol.CodeCore {
+		t.Fatalf("a setting the core would refuse = %v", err)
+	}
+	h.core.FailCheck(nil)
+	if st := call[protocol.Status](t, c, protocol.OpStatus, nil); st.TUN {
+		t.Fatal("the refused setting was kept")
+	}
+	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Rules) != 0 {
+		t.Fatalf("the refused rule was kept: %+v", list)
 	}
 }

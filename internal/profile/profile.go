@@ -122,7 +122,7 @@ func (d *Document) Downloads() []Download {
 		for _, name := range slices.Sorted(maps.Keys(providers)) {
 			p := providers[name]
 			url, _ := p["url"].(string)
-			if p["type"] == "http" && fetch.CheckURL(url) == nil {
+			if p["type"] == "http" && fetch.CheckURL(url) == nil && (kind == ProxyProvider || modelledRuleSet(p)) {
 				out = append(out, Download{Kind: kind, Name: name, URL: url})
 			}
 		}
@@ -200,7 +200,9 @@ func (d *Document) Build(bodies map[string][]byte) (p core.Profile, dropped []st
 		return core.Profile{}, nil, err
 	}
 	p.Proxies, p.Groups = b.proxies, groups
-	p.RuleSets = b.ruleSets()
+	if p.RuleSets, err = b.ruleSets(); err != nil {
+		return core.Profile{}, nil, err
+	}
 	p.Rules = b.rules(p.RuleSets)
 	if len(p.Groups) == 0 && len(p.Proxies) == 0 {
 		return core.Profile{}, nil, fmt.Errorf("%w: it has no proxies", ErrInvalid)
@@ -268,15 +270,19 @@ func (b *builder) providers() error {
 				}
 			}
 		case "http":
+			// A provider that did not come, or came unreadable, makes the
+			// subscription incomplete rather than smaller.
+			if url, _ := def["url"].(string); fetch.CheckURL(url) != nil {
+				b.drop("proxy provider %q: its URL is not HTTPS", name)
+				continue
+			}
 			body, ok := b.bodies[Download{Kind: ProxyProvider, Name: name}.Key()]
 			if !ok {
-				b.drop("proxy provider %q: not downloaded", name)
-				continue
+				return fmt.Errorf("%w: proxy provider %q was not downloaded", ErrInvalid, name)
 			}
 			var err error
 			if raw, err = b.providerProxies(body); err != nil {
-				b.drop("proxy provider %q: %v", name, err)
-				continue
+				return fmt.Errorf("%w: proxy provider %q: %v", ErrInvalid, name, err)
 			}
 		default:
 			b.drop("proxy provider %q: only http and inline providers are read", name)
@@ -588,9 +594,18 @@ func wholeNumber(v any) (int, error) {
 
 var behaviors = []string{"domain", "ipcidr", "classical"}
 
-// ruleSets reads every rule provider it can. mrs is mihomo's binary format,
-// which it cannot check, and is dropped with the rules that use it.
-func (b *builder) ruleSets() []core.RuleSet {
+// modelledRuleSet reports whether a rule provider is one Build reads.
+func modelledRuleSet(def map[string]any) bool {
+	behavior, _ := def["behavior"].(string)
+	format, _ := def["format"].(string)
+	return slices.Contains(behaviors, behavior) && (format == "" || format == "yaml" || format == "text")
+}
+
+// ruleSets reads every rule provider it models. mrs is mihomo's binary
+// format, which it cannot check, and is dropped with the rules that use it.
+// A downloaded provider that does not read fails the subscription: the
+// rules it feeds, and whatever they block, would be gone.
+func (b *builder) ruleSets() ([]core.RuleSet, error) {
 	var out []core.RuleSet
 	for _, name := range slices.Sorted(maps.Keys(b.doc.ruleProviders)) {
 		def := b.doc.ruleProviders[name]
@@ -607,15 +622,23 @@ func (b *builder) ruleSets() []core.RuleSet {
 			payload, err = lines(def["payload"])
 		case "http":
 			body, ok := b.bodies[Download{Kind: RuleProvider, Name: name}.Key()]
+			url, _ := def["url"].(string)
 			switch {
+			case fetch.CheckURL(url) != nil:
+				err = errors.New("its URL is not HTTPS")
+			case format != "" && format != "yaml" && format != "text":
+				err = fmt.Errorf("format %q is not supported", format)
 			case !ok:
-				err = errors.New("not downloaded")
+				return nil, fmt.Errorf("%w: rule provider %q was not downloaded", ErrInvalid, name)
 			case format == "" || format == "yaml":
 				var doc struct {
 					Payload any `yaml:"payload"`
 				}
-				if err = yaml.Unmarshal(body, &doc); err == nil {
-					payload, err = lines(doc.Payload)
+				if err := yaml.Unmarshal(body, &doc); err != nil {
+					return nil, fmt.Errorf("%w: rule provider %q: %s", ErrInvalid, name, yamlError(err))
+				}
+				if payload, err = lines(doc.Payload); err != nil {
+					return nil, fmt.Errorf("%w: rule provider %q: %v", ErrInvalid, name, err)
 				}
 			case format == "text":
 				for line := range strings.Lines(string(body)) {
@@ -639,7 +662,7 @@ func (b *builder) ruleSets() []core.RuleSet {
 		}
 		out = append(out, core.RuleSet{Name: name, Behavior: behavior, Payload: payload})
 	}
-	return out
+	return out, nil
 }
 
 func lines(v any) ([]string, error) {

@@ -1,14 +1,39 @@
 package profile
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"maps"
+	"math/big"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
-const testPEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+// testPEM and testKey are a client certificate and its key, which keep each
+// other: mihomo reads a pair that does not load as file paths.
+var testPEM, testKey = func() (string, string) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		panic(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+}()
 
 // commonProxies are proxies of every modelled type, written with the fields
 // subscriptions commonly carry. Each keeps all of them.
@@ -53,7 +78,7 @@ var commonProxies = []map[string]any{
 	{"name": "snell", "type": "snell", "server": "a.example", "port": 443, "psk": "pw", "version": 3, "udp": true,
 		"obfs-opts": map[string]any{"mode": "http", "host": "b.example"}},
 	{"name": "socks5", "type": "socks5", "server": "a.example", "port": 1080, "username": "u", "password": "pw",
-		"tls": true, "udp": true, "skip-cert-verify": true, "certificate": testPEM, "private-key": testPEM},
+		"tls": true, "udp": true, "skip-cert-verify": true, "certificate": testPEM, "private-key": testKey},
 	{"name": "http", "type": "http", "server": "a.example", "port": 8080, "username": "u", "password": "pw",
 		"tls": true, "sni": "b.example", "headers": map[string]any{"X-Id": "1"}},
 	{"name": "ssh", "type": "ssh", "server": "a.example", "port": 22, "username": "u", "password": "pw",
@@ -103,7 +128,7 @@ func TestProxyDropsUnknownAndDangerousKeys(t *testing.T) {
 		},
 		{
 			in: map[string]any{"name": "a", "type": "trojan", "server": "a.example", "port": 443, "password": "pw",
-				"certificate": testPEM, "private-key": "  \n" + testPEM, "ca": testPEM, "ca-str": testPEM},
+				"certificate": testPEM, "private-key": "  \n" + testKey, "ca": testPEM, "ca-str": testPEM},
 			dropped: []string{"ca", "ca-str"},
 		},
 		{
@@ -156,12 +181,18 @@ func TestProxyDropsUnknownAndDangerousKeys(t *testing.T) {
 
 func TestProxyKeepsInlinePEM(t *testing.T) {
 	p, err := Proxy(map[string]any{"name": "a", "type": "http", "server": "a.example", "port": 443,
-		"tls": true, "certificate": testPEM, "private-key": testPEM})
+		"tls": true, "certificate": testPEM, "private-key": testKey})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Options["certificate"] != testPEM || p.Options["private-key"] != testPEM {
+	if p.Options["certificate"] != testPEM || p.Options["private-key"] != testKey {
 		t.Errorf("inline PEM was dropped: %v", p.Options)
+	}
+	// PEM that decodes but does not load as a pair is a path to mihomo.
+	p, _ = Proxy(map[string]any{"name": "a", "type": "http", "server": "a.example", "port": 443,
+		"tls": true, "certificate": testPEM, "private-key": testPEM})
+	if p.Options["certificate"] != nil || p.Options["private-key"] != nil {
+		t.Errorf("a pair that does not load was kept: %v", p.Options)
 	}
 }
 

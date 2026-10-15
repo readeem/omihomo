@@ -1,13 +1,20 @@
 package mihomo
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/metacubex/mihomo/common/convert"
+	"github.com/metacubex/mihomo/component/geodata/router"
+	"github.com/metacubex/mihomo/component/mmdb"
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	mlog "github.com/metacubex/mihomo/log"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/readeem/omihomo/internal/core"
 )
@@ -58,4 +65,26 @@ func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
 		out = append(out, core.GeodataFile{Path: C.Path.ASN(), URL: urls.ASN})
 	}
 	return out
+}
+
+func (c *Core) CheckGeodata(f core.GeodataFile, path string) error {
+	switch filepath.Base(f.Path) {
+	case filepath.Base(C.Path.GeoSite()):
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var list router.GeoSiteList
+		if err := proto.Unmarshal(data, &list); err != nil || len(list.Entry) == 0 {
+			return errors.New("not a site list")
+		}
+		return nil
+	default:
+		// The MMDB and the ASN database are both MaxMind databases, and
+		// mihomo exits on one that does not open.
+		if !mmdb.Verify(path) {
+			return errors.New("not a MaxMind database")
+		}
+		return nil
+	}
 }

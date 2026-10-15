@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -474,7 +475,30 @@ func Proxy(m map[string]any) (core.Proxy, error) {
 	}
 	opts := map[string]any{}
 	writeStruct(v.Elem(), opts)
+	keyPairs(opts, typ != "ssh" && typ != "wireguard")
 	return core.Proxy{Name: name, Type: typ, Options: opts}, nil
+}
+
+// keyPairs keeps a client certificate and its key only as a pair that
+// loads: mihomo reads both as file paths when they do not, whatever they
+// look like. top says whether m's own fields are TLS ones; an ssh or a
+// wireguard key is not.
+func keyPairs(m map[string]any, top bool) {
+	if top {
+		cert, hasCert := m["certificate"].(string)
+		key, hasKey := m["private-key"].(string)
+		if hasCert || hasKey {
+			if _, err := tls.X509KeyPair([]byte(cert), []byte(key)); err != nil {
+				delete(m, "certificate")
+				delete(m, "private-key")
+			}
+		}
+	}
+	for _, v := range m {
+		if sub, ok := v.(map[string]any); ok {
+			keyPairs(sub, true)
+		}
+	}
 }
 
 func (s *serverOpts) check() error {

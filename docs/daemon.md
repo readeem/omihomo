@@ -278,7 +278,8 @@ core/                    the core's home: selection cache and geodata
 ```
 
 Settings are typed and each is checked by the daemon; there is no raw YAML, so the owner account
-cannot make the root daemon run something the settings do not describe. The service starts at
+cannot make the root daemon run something the settings do not describe. A change the core would
+not run is refused, whether or not the proxy runs. The service starts at
 boot and turns the proxy back on if it was on, running what was last accepted, and retries every
 minute until it comes up or the owner starts or stops it.
 
@@ -292,7 +293,8 @@ while that subscription runs.
 ## Subscriptions
 
 The daemon downloads subscriptions, their providers and geodata itself, with one downloader:
-HTTPS only, redirects included; at most 64 MiB once decoded; 10 seconds to connect and 60 for the
+HTTPS only, redirects included; at most 64 MiB once decoded, for a subscription and all its
+providers together; 10 seconds to connect and 60 for the
 whole download, 5 minutes for geodata; `clash.meta` as the user agent; no proxy from the
 environment. Errors never repeat a URL, which may carry a token, and no list shows one.
 
@@ -318,8 +320,9 @@ structs (`internal/profile`) and anything they do not model is dropped:
 Numbers a proxy carries are between 0 and 2³¹−1, and port hop intervals at most a day, since
 mihomo turns them into timers without checking. Group and provider filters are regexes too; all
 of one subscription's filtering gets two seconds, and running out fails it. A group left without
-members fails the subscription rather than reroute the rules that use it, and so does a provider
-that does not download: without it the rules it feeds, and whatever they block, would be gone.
+members fails the subscription rather than reroute the rules that use it, and so does an HTTPS
+provider that does not download or does not read: without it the rules it feeds, and whatever
+they block, would be gone. A client certificate and its key are kept only as a pair that loads.
 Share links, plain or base64, and a YAML of bare proxies run in one `Proxy` select group that
 `MATCH` sends everything to. A subscription names itself from `profile-title` (base64 when it
 says so), else the `content-disposition` filename, else the URL's host, made safe and at most 64
@@ -336,7 +339,8 @@ apart. Subscription records show the last error and the next refresh.
 
 Geodata the rules need (`GEOIP`, `GEOSITE`, ASN rules, in rule sets too) is downloaded into the
 core's home before the core runs them, from MetaCubeX's releases, and again once it is a week
-old. Without it the proxy does not start.
+old. A download replaces the file in place only once the core has opened it: mihomo exits on a
+database it cannot read. Without the files the proxy does not start.
 
 ## The mihomo core
 

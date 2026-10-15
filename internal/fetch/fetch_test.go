@@ -297,6 +297,10 @@ func TestErrorsHideURL(t *testing.T) {
 		case "/bad-location":
 			w.Header().Set("Location", "https://[bad/x?token="+token)
 			w.WriteHeader(http.StatusFound)
+		case "/relative-bad-location":
+			// Neither the request's path nor its query appears in it.
+			w.Header().Set("Location", "/redirect/%zz?secret="+token)
+			w.WriteHeader(http.StatusFound)
 		case "/bad-gzip":
 			w.Header().Set("Content-Encoding", "gzip")
 			w.Write([]byte("not gzip " + token))
@@ -318,6 +322,7 @@ func TestErrorsHideURL(t *testing.T) {
 	}{
 		{"status", f, srv.URL + "/missing/" + token + "?token=" + token},
 		{"too large", f, srv.URL + "/large?token=" + token},
+		{"relative bad location", f, srv.URL + "/relative-bad-location?other=1"},
 		{"redirect to http", f, srv.URL + "/to-http?token=" + token},
 		{"bad location", f, srv.URL + "/bad-location?token=" + token},
 		{"bad gzip", f, srv.URL + "/bad-gzip?token=" + token},

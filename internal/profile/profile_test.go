@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -229,15 +230,15 @@ rules:
 	for _, d := range doc.Downloads() {
 		keys = append(keys, d.Key()+"="+d.URL)
 	}
+	// mrs is not read, so it is not downloaded either.
 	if !slices.Equal(keys, []string{"proxy:remote=https://p.example/list", "rule:ads=https://r.example/ads",
-		"rule:binary=https://r.example/b", "rule:text=https://r.example/ip"}) {
+		"rule:text=https://r.example/ip"}) {
 		t.Fatalf("downloads %v", keys)
 	}
 	p, dropped, err := doc.Build(map[string][]byte{
 		"proxy:remote": []byte("trojan://pw@h.example:443#HK 1\ntrojan://pw@u.example:443#US 1\ntrojan://pw@j.example:443#JP 1\n"),
 		"rule:ads":     []byte("payload:\n  - +.ads.example\n"),
 		"rule:text":    []byte("# comment\n10.0.0.0/8\n\n192.168.0.0/16\n"),
-		"rule:binary":  []byte("\x00mrs"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -395,5 +396,41 @@ func TestCatastrophicFiltersAreBounded(t *testing.T) {
 	}
 	if d := time.Since(began); d > 2*filterBudget {
 		t.Fatalf("filters ran %s", d)
+	}
+}
+
+// A provider that is missing or unreadable fails the subscription instead
+// of quietly dropping the rules it feeds.
+func TestAnUnreadableProviderFailsTheSubscription(t *testing.T) {
+	doc, err := Read([]byte(`
+proxies:
+  - {name: Tokyo, type: trojan, server: a.example, port: 443, password: pw}
+proxy-providers:
+  remote: {type: http, url: https://p.example/list}
+proxy-groups:
+  - {name: Proxy, type: select, proxies: [Tokyo], use: [remote]}
+rule-providers:
+  ads: {type: http, behavior: domain, url: https://r.example/ads}
+rules:
+  - RULE-SET,ads,REJECT
+  - MATCH,Proxy
+`), links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := map[string][]byte{"proxy:remote": []byte("trojan://pw@h.example:443#HK\n"), "rule:ads": []byte("payload: [+.ads.example]\n")}
+	if _, _, err := doc.Build(good); err != nil {
+		t.Fatalf("complete = %v", err)
+	}
+	for key, body := range map[string][]byte{"proxy:remote": []byte("<html>busy</html>"), "rule:ads": []byte("<html>busy</html>")} {
+		bodies := maps.Clone(good)
+		bodies[key] = body
+		if _, _, err := doc.Build(bodies); !errors.Is(err, ErrInvalid) {
+			t.Errorf("unreadable %s = %v", key, err)
+		}
+		delete(bodies, key)
+		if _, _, err := doc.Build(bodies); !errors.Is(err, ErrInvalid) {
+			t.Errorf("missing %s = %v", key, err)
+		}
 	}
 }
