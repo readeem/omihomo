@@ -20,7 +20,7 @@ ColumnLayout {
     Layout.fillWidth: true
     text: !view.panel.liveReady
       ? (view.service.activeSubscription === "" ? "Add and activate a subscription in Subs to browse its configs."
-        : (view.service.coreRunning ? "mihomo controller is unreachable." : "Start mihomo to browse configs."))
+        : (view.service.coreRunning ? "Reconnecting to the core…" : "Start the proxy to browse configs."))
       : "This subscription declares no groups."
     color: view.theme.dim
     font.pixelSize: Style.font.body

@@ -12,8 +12,8 @@ Flickable {
   readonly property var service: panel.service
   readonly property Theme theme: panel.theme
   readonly property var rows: ({
-    mode: modeRow, tun: tunRow, tunRedirect: tunRedirectRow, autostart: autostartRow,
-    tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, repair: maintenanceRow, uninstall: maintenanceRow
+    mode: modeRow, tun: tunRow, tunRedirect: tunRedirectRow,
+    tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceRow
   })
 
   function reveal(section) {
@@ -110,12 +110,14 @@ Flickable {
 
     SectionLine {
       theme: view.theme
+      visible: view.service.tailscalePresent
       Layout.fillWidth: true
       Layout.topMargin: Style.space(8)
-      title: "SYSTEM"
+      title: "TAILSCALE"
     }
 
     Rectangle {
+      visible: view.service.tailscalePresent
       Layout.fillWidth: true
       implicitHeight: systemColumn.implicitHeight + Style.space(6)
       radius: view.theme.cardRadius
@@ -129,18 +131,6 @@ Flickable {
         anchors.verticalCenter: parent.verticalCenter
         anchors.margins: Style.space(3)
         spacing: 0
-        SettingRow {
-          id: autostartRow
-          panel: view.panel
-          Layout.fillWidth: true
-          section: "autostart"
-          title: "Start at login"
-          keyHint: "b"
-          subtitle: "start mihomo when the session starts"
-          checked: view.service.autostartActive
-          onActivated: view.service.toggleAutostart()
-        }
-
         SettingRow {
           id: tailscaleRow
           panel: view.panel
@@ -195,8 +185,10 @@ Flickable {
           theme: view.theme
           Layout.fillWidth: true
           Layout.leftMargin: Style.space(8)
-          text: "core " + Model.stateLabel(view.service.coreState).toLowerCase() + " · " + (!view.service.permissionsOk ? "missing root permissions, or open to other accounts" : (view.service.hardeningPending ? "running core predates the current security rules" : "root grant owner-only"))
-          color: view.panel.needsRepair ? view.theme.urgent : view.theme.dim
+          text: "core " + Model.stateLabel(view.service.coreState).toLowerCase()
+            + (view.service.daemonVersion !== "" ? " · " + view.service.daemonVersion : "")
+            + " · starts at boot"
+          color: view.theme.dim
           wrapMode: Text.WordWrap
         }
 
@@ -205,18 +197,6 @@ Flickable {
           Layout.fillWidth: true
           Layout.leftMargin: Style.space(8)
           spacing: Style.space(6)
-
-          SmallButton {
-            theme: view.theme
-            text: view.panel.needsRepair ? view.panel.repairLabel : "✓ permissions ok"
-            iconText: view.panel.needsRepair ? "󰑐" : ""
-            enabled: view.panel.needsRepair
-            tooltipText: "Repair · R"
-            foreground: view.panel.needsRepair ? view.theme.urgent : view.theme.foreground
-            hasCursor: view.panel.at("repair")
-            onHovered: function(on) { if (on) view.panel.focusRow("repair") }
-            onClicked: view.service.repairCore()
-          }
 
           SmallButton {
             theme: view.theme
@@ -240,7 +220,7 @@ Flickable {
           visible: view.panel.uninstallArmed
           Layout.fillWidth: true
           Layout.leftMargin: Style.space(8)
-          text: "Removes the core, its permissions, the unit, and saved subscriptions."
+          text: "Removes the omihomo-bin package and stops the service. Subscriptions and settings stay in /var/lib/omihomo."
           color: view.theme.dim
           wrapMode: Text.WordWrap
         }

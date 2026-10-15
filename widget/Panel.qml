@@ -40,11 +40,26 @@ Panel {
 
   readonly property Theme theme: Theme { bar: root.bar }
   readonly property Service service: omihomo
-  readonly property bool needsRepair: omihomo.installed && (!omihomo.permissionsOk || omihomo.hardeningPending)
-  readonly property string repairLabel: omihomo.permissionsOk ? "apply security update" : "repair permissions"
   readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)
 
-  readonly property string cliPath: decodeURIComponent(String(Qt.resolvedUrl("../bin/omihomo")).replace(/^file:\/\//, ""))
+  readonly property string installerPath: decodeURIComponent(String(Qt.resolvedUrl("../bin/omihomo-install")).replace(/^file:\/\//, ""))
+  // Without a daemon to talk to, the panel is one card saying why, and the
+  // command that fixes it, run in a terminal since it asks for a password.
+  readonly property var setup: {
+    switch (omihomo.link) {
+    case "absent": return { text: "The Omihomo core is not installed. Installing it from the AUR and claiming it for this account runs in a terminal.",
+      button: "Install core", command: installerPath }
+    case "outdated": return { text: "The Omihomo core is older than this widget. Updating it runs in a terminal.",
+      button: "Update core", command: "yay -S omihomo-bin" }
+    case "newer": return { text: "The Omihomo core is newer than this widget. Update the Omihomo plugin.",
+      button: "", command: "" }
+    case "refused": return { text: "Another account owns the Omihomo core. Claiming it for this account runs in a terminal.",
+      button: "Claim core", command: "sudo /usr/bin/omihomo claim" }
+    }
+    return { text: "Connecting to the Omihomo core…", button: "", command: "" }
+  }
+  readonly property bool coreAlert: omihomo.link === "outdated" || omihomo.link === "newer"
+    || omihomo.link === "refused"
 
   readonly property bool liveReady: omihomo.apiReady
   readonly property bool tunRedirectBlocked: omihomo.coreState === "degraded"
@@ -132,9 +147,8 @@ Panel {
   readonly property bool errorInView: omihomo.lastError !== "" && (view === "subs"
     ? omihomo.errorScope.indexOf("sub:") === 0 : omihomo.errorScope === view)
   readonly property bool headerError: omihomo.lastError !== "" && !errorInView
-  readonly property bool repairNotice: needsRepair && view !== "settings" && !headerError && omihomo.actionStatus === ""
   readonly property string headerMessage: headerError ? omihomo.lastError
-    : (repairNotice ? (omihomo.permissionsOk ? "mihomo needs a security update · R" : "mihomo's root permissions need repair · R") : omihomo.actionStatus)
+    : omihomo.actionStatus
   readonly property bool subscriptionFailed: omihomo.lastError !== "" && omihomo.errorScope.indexOf("sub:") === 0
 
   function errorAt(scope) {
@@ -154,7 +168,7 @@ Panel {
     var rows = []
     var i
     if (!omihomo.installed) {
-      rows.push({ s: "install" })
+      if (setup.command !== "") rows.push({ s: "install" })
       return rows
     }
     switch (view) {
@@ -183,9 +197,8 @@ Panel {
       for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
       break
     case "settings":
-      rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" }, { s: "autostart" })
+      rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
-      if (root.needsRepair) rows.push({ s: "repair" })
       rows.push({ s: "uninstall" })
       break
     }
@@ -245,7 +258,6 @@ Panel {
     case "mode": cycleMode(delta); break
     case "tun": omihomo.toggleTun(); break
     case "tunRedirect": omihomo.toggleTunRedirect(); break
-    case "autostart": omihomo.toggleAutostart(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
     case "ruleType": cycleRuleType(delta); break
@@ -272,10 +284,8 @@ Panel {
     case "mode": cycleMode(1); break
     case "tun": omihomo.toggleTun(); break
     case "tunRedirect": omihomo.toggleTunRedirect(); break
-    case "autostart": omihomo.toggleAutostart(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
-    case "repair": omihomo.repairCore(); break
     case "uninstall": uninstallCore(); break
     }
   }
@@ -310,8 +320,7 @@ Panel {
     case "m": cycleMode(1); return
     case "c": openView("conns"); return
     case "n": openRuleForm(); return
-    case "R": omihomo.repairCore(); return
-    case "r": omihomo.refresh(); omihomo.refreshLive(); omihomo.refreshTrace(); return
+    case "r": omihomo.refresh(); omihomo.refreshTrace(); return
     }
     if (view === "configs") {
       if (key === "d") testSelectedConfig()
@@ -330,7 +339,6 @@ Panel {
       else if (key === "L") omihomo.clearConnectionLog()
     } else if (view === "settings") {
       if (key === "A") omihomo.toggleTunRedirect()
-      else if (key === "b") omihomo.toggleAutostart()
       else if (key === "T") omihomo.toggleTailscale()
       else if (key === "P") omihomo.toggleTailnetProxy()
     }
@@ -376,7 +384,7 @@ Panel {
       { keys: "L", label: "clear log", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
     case "settings": return [
       { keys: "↵", label: "toggle", key: "enter" }, { keys: "m", label: "mode", key: "m" },
-      { keys: "t", label: "TUN", key: "t" }, { keys: "b", label: "login", key: "b" },
+      { keys: "t", label: "TUN", key: "t" }, { keys: "A", label: "accel", key: "A" },
       { keys: "M", label: "back", key: "M" }]
     }
     return []
@@ -394,7 +402,6 @@ Panel {
     uninstallArmed = false
     if (filterOpen) closeFilter()
     if (targetPicking) closeTargetPicker()
-    if (name === "conns") omihomo.refreshConnections()
     if (name === "configs" && browsedGroupEntry) {
       var at = visibleConfigs.indexOf(browsedGroupEntry.now)
       if (at >= 0) {
@@ -500,8 +507,8 @@ Panel {
   }
 
   function installCore() {
-    if (!bar) return
-    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(cliPath + " core install"))
+    if (!bar || setup.command === "") return
+    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(setup.command))
     close()
   }
 
@@ -512,7 +519,7 @@ Panel {
       uninstallArmed = true
       return
     }
-    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(cliPath + " core uninstall"))
+    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote("sudo pacman -R omihomo-bin"))
     close()
   }
 
@@ -621,10 +628,7 @@ Panel {
 
   Service {
     id: omihomo
-    settings: root.settings
-    cliPath: root.cliPath
     panelOpen: root.opened
-    connectionsOpen: root.opened && root.view === "conns"
     onConfigChanged: omihomo.refreshTrace()
     onRuleAdded: {
       rulesView.valueField.text = ""
@@ -648,8 +652,8 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): string { omihomo.refresh(); return "ok" }
-    function start(): string { omihomo.runCore(["core", "start"], ""); return "ok" }
-    function stop(): string { omihomo.runCore(["core", "stop"], ""); return "ok" }
+    function start(): string { if (!omihomo.coreActive) omihomo.toggleCore(); return "ok" }
+    function stop(): string { if (omihomo.coreActive) omihomo.toggleCore(); return "ok" }
     function status(): string { return omihomo.coreState }
   }
 
@@ -664,7 +668,7 @@ Panel {
           iconSize: Style.space(11)
           color: root.barIconColor
           crossed: omihomo.installed && !omihomo.coreActive
-          alertColor: root.needsRepair ? root.theme.urgent : "transparent"
+          alertColor: root.coreAlert ? root.theme.urgent : "transparent"
         }
       }
     }
@@ -885,19 +889,9 @@ Panel {
           Layout.leftMargin: Style.space(14)
           Layout.rightMargin: Style.space(14)
           Layout.bottomMargin: Style.space(10)
-          text: (root.headerError || root.repairNotice ? "▲ " : "") + root.headerMessage
-          color: root.headerError || root.repairNotice ? root.theme.urgent : root.theme.dim
-          font.underline: root.repairNotice && repairMouse.containsMouse
+          text: (root.headerError ? "▲ " : "") + root.headerMessage
+          color: root.headerError ? root.theme.urgent : root.theme.dim
           wrapMode: Text.WordWrap
-
-          MouseArea {
-            id: repairMouse
-            anchors.fill: parent
-            enabled: root.repairNotice
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.openView("settings")
-          }
         }
 
         ColumnLayout {
@@ -910,7 +904,7 @@ Panel {
           PanelText {
             theme: root.theme
             Layout.fillWidth: true
-            text: "The mihomo core is not installed. Installing builds it from the AUR, so it runs in a terminal."
+            text: root.setup.text
             color: root.theme.dim
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
@@ -918,7 +912,8 @@ Panel {
 
           SmallButton {
             theme: root.theme
-            text: "Install mihomo · i"
+            visible: root.setup.button !== ""
+            text: root.setup.button + " · i"
             hasCursor: root.at("install")
             onHovered: function(on) { if (on) root.focusRow("install") }
             onClicked: root.installCore()

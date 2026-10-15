@@ -166,10 +166,9 @@ Omihomo never writes to your Hyprland, shell, or terminal config.
 
 ## Settings
 
-Omarchy's plugin settings expose one option, `refreshIntervalSec`: how often the bar polls core
-status. The default is 10 seconds, and the range is 2 to 3600. That poll runs whether the panel is
-open or not. The mihomo API reads behind live traffic, latency, and connections run only while the
-panel is open, and the connections view polls every 2 seconds while it is on screen.
+The widget has no settings of its own: it keeps one socket open to the daemon, which pushes every
+change, so there is nothing to poll. Live traffic, latency, and connections are pushed only while
+the panel is open.
 
 The CLI reads a few environment variables for unusual setups, such as `OMIHOMO_USER_AGENT` for
 subscription servers that respond differently by user agent, and `OMIHOMO_TAILSCALE_PORT`. They

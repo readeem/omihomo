@@ -1,57 +1,82 @@
 #!/usr/bin/env node
-// Model.js is the widget's parsing and formatting seam: every CLI payload,
-// mihomo API response, and rendered string passes through it, and none of it
+// Model.js is the widget's parsing and formatting seam: every message from the
+// daemon's socket and every rendered string passes through it, and none of it
 // needs QML to run. These tests exercise the shapes the panel actually sees.
 
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const Model = require("../widget/Model.js")
 
-test("status parses the CLI's stable object", () => {
-  const status = Model.parseStatus(JSON.stringify({
-    state: "degraded", status: "degraded", detail: "tun device is missing",
-    ip: null, latency: null, download: null, upload: null, config: null,
-    uptime: "Tue 2026-08-18 13:06:48 MSK", active_subscription: "home",
-    primary_group: "Proxy", tun_enabled: true, autostart_enabled: true,
-    permissions_ok: true, tailscale_enabled: true, tailscale_present: true,
-    tailnet_proxy: true
-  }))
+test("status reads the daemon's Status", () => {
+  const status = Model.readStatus({
+    state: "degraded", detail: "tun device is missing", active_subscription: "home",
+    primary_group: "Proxy", mode: "global", tun: true, tun_redirect: true, tailscale: true,
+    tailscale_present: true, tailnet_proxy: true, started_at: 1791741355865,
+    tun_bypass: ["10.0.0.0/8", 7]
+  })
   assert.equal(status.state, "degraded")
   assert.equal(status.detail, "tun device is missing")
   assert.equal(status.activeSubscription, "home")
   assert.equal(status.primaryGroup, "Proxy")
+  assert.equal(status.mode, "global")
   assert.equal(status.tunEnabled, true)
-  assert.equal(status.autostartEnabled, true)
-  assert.equal(status.permissionsOk, true)
+  assert.equal(status.tunRedirect, true)
   assert.equal(status.tailscaleEnabled, true)
   assert.equal(status.tailscalePresent, true)
   assert.equal(status.tailnetProxy, true)
-  assert.ok(status.startedMs > 0)
+  assert.equal(status.startedMs, 1791741355865)
+  assert.deepEqual(status.tunBypass, ["10.0.0.0/8"])
 })
 
-test("status nulls read as empty, and garbage falls back to unknown", () => {
-  const status = Model.parseStatus(JSON.stringify({
-    state: "stopped", detail: null, active_subscription: null, primary_group: null,
-    tun_enabled: false, uptime: null
-  }))
+test("missing status fields read as empty, and garbage as unknown", () => {
+  const status = Model.readStatus({ state: "stopped", detail: null, started_at: 0 })
   assert.equal(status.detail, "")
   assert.equal(status.activeSubscription, "")
   assert.equal(status.startedMs, 0)
-  assert.equal(status.autostartEnabled, false)
-  assert.equal(status.permissionsOk, false)
-  assert.equal(Model.parseStatus("not json").state, "unknown")
+  assert.equal(status.tunEnabled, false)
+  assert.deepEqual(status.tunBypass, [])
+  assert.equal(Model.readStatus(null).state, "unknown")
+  assert.equal(Model.readStatus("on").state, "unknown")
 })
 
-test("CLI errors carry the exit-code class", () => {
-  const structured = Model.cliError('{"error":"no active subscription","code":13}', 13)
-  assert.equal(structured.message, "no active subscription")
-  assert.equal(structured.code, 13)
+test("the rule tester sees TUN's bypass only while TUN routes", () => {
+  const on = Model.readStatus({ state: "on", tun: true, tun_bypass: ["192.168.0.0/16"] })
+  assert.equal(Model.testRules([{ type: "MATCH", target: "Proxy" }], "192.168.1.1",
+    Model.statusRouting(on)).bypassed, true)
+  const stopped = Model.readStatus({ state: "stopped", tun: true, tun_bypass: ["192.168.0.0/16"] })
+  assert.equal(Model.statusRouting(stopped).tunEnabled, false)
+  assert.equal(Model.statusRouting(Model.readStatus({ state: "on", tun: false })).tunEnabled, false)
+})
 
-  const raw = Model.cliError("bash: line 3: boom\n", 1)
-  assert.equal(raw.message, "bash: line 3: boom")
+test("a daemon error shows its message, else its code's", () => {
+  assert.equal(Model.daemonError({ code: "conflict", message: "tailscaled\n is  missing" }),
+    "tailscaled is missing")
+  assert.equal(Model.daemonError({ code: "fetch_failed", message: "" }), "Subscription fetch failed")
+  assert.equal(Model.daemonError({ code: "something_new" }), "The core refused the change")
+  assert.equal(Model.daemonError(null), "The core did not answer")
+})
 
-  const silent = Model.cliError("", 21)
-  assert.equal(silent.message, "Subscription fetch failed")
+test("subscriptions read with their quota, times and last error", () => {
+  const subs = Model.readSubscriptions({ subscriptions: [
+    { name: "home", updated_at: 1791741355865, upload: 1, download: 2, total: null, expire: 1800000000,
+      active: true, interval: 43200, next_update: 1791784555865, error: "fetch failed" },
+    { name: "" },
+    null
+  ] })
+  assert.equal(subs.length, 1)
+  assert.equal(subs[0].name, "home")
+  assert.equal(subs[0].updatedAt, 1791741355865)
+  assert.equal(subs[0].total, null)
+  assert.equal(subs[0].expire, 1800000000)
+  assert.equal(subs[0].active, true)
+  assert.equal(subs[0].nextUpdate, 1791784555865)
+  assert.equal(subs[0].error, "fetch failed")
+  assert.deepEqual(Model.readSubscriptions({}), [])
+})
+
+test("a never-updated subscription has no relative time", () => {
+  assert.equal(Model.relativeTime(0, 1000), "")
+  assert.equal(Model.relativeTime(1000, 1000 + 3 * 60000), "3m ago")
 })
 
 test("subscription usage shows quota and expiry", () => {
@@ -75,7 +100,7 @@ test("a subscription with no userinfo has no quota bar", () => {
   assert.equal(usage.text, "no quota reported")
 })
 
-test("rule validation mirrors the CLI's per-type rules", () => {
+test("rule validation mirrors the daemon's checks for the form's types", () => {
   assert.equal(Model.validateRule("IP-CIDR", "10.0.0.0/8", "DIRECT"), "")
   assert.equal(Model.validateRule("IP-CIDR", "fd00::/64", "DIRECT"), "")
   assert.notEqual(Model.validateRule("IP-CIDR", "example.com", "DIRECT"), "")
@@ -90,23 +115,35 @@ test("rule validation mirrors the CLI's per-type rules", () => {
   assert.notEqual(Model.validateRule("DOMAIN-SUFFIX", "", "Proxy"), "")
 })
 
-test("proxies split into groups and configs", () => {
-  const parsed = Model.parseProxies(JSON.stringify({
-    proxies: {
-      "GLOBAL": { name: "GLOBAL", type: "Selector", now: "DIRECT", all: ["DIRECT", "Proxy"] },
-      "Proxy": { name: "Proxy", type: "Selector", now: "Tokyo 01", all: ["Tokyo 01", "DIRECT"] },
-      "Auto": { name: "Auto", type: "URLTest", now: "Tokyo 01", all: ["Tokyo 01"] },
-      "Tokyo 01": { name: "Tokyo 01", type: "Vmess", udp: true, history: [{ delay: 182 }] },
-      "DIRECT": { name: "DIRECT", type: "Direct", history: [] }
-    }
-  }))
-  assert.deepEqual(parsed.groups.map(g => g.name), ["Auto", "GLOBAL", "Proxy"])
-  assert.equal(parsed.groups.find(g => g.name === "GLOBAL").system, true)
-  assert.equal(parsed.groups.find(g => g.name === "Proxy").selectable, true)
-  assert.equal(parsed.groups.find(g => g.name === "Proxy").system, false)
-  assert.equal(parsed.groups.find(g => g.name === "Auto").selectable, false)
+test("groups read in the config's order, with their members as configs", () => {
+  const parsed = Model.readGroups({ groups: [
+    { name: "Proxy", type: "select", now: "Tokyo 01", selectable: true, members: [
+      { name: "Tokyo 01", type: "vmess", alive: true, delay: 182 },
+      { name: "DIRECT", type: "direct", alive: true, delay: 0 }] },
+    { name: "Auto", type: "url-test", now: "Tokyo 01", selectable: false, members: [
+      { name: "Tokyo 01", type: "vmess", alive: true, delay: 182 }] },
+    { name: "GLOBAL", type: "select", now: "Proxy", selectable: true, members: "garbage" },
+    { name: "" }
+  ] })
+  assert.deepEqual(parsed.groups.map(g => g.name), ["Proxy", "Auto", "GLOBAL"])
+  assert.deepEqual(parsed.groups[0].all, ["Tokyo 01", "DIRECT"])
+  assert.equal(parsed.groups[0].selectable, true)
+  assert.equal(parsed.groups[1].selectable, false)
+  assert.equal(parsed.groups[2].system, true)
+  assert.deepEqual(parsed.groups[2].all, [])
   assert.equal(Model.historyDelay(parsed.configs["Tokyo 01"]), 182)
-  assert.equal(parsed.configs["Proxy"], undefined)
+  assert.equal(Model.historyDelay(parsed.configs.DIRECT), 0)
+  assert.equal(parsed.configs.Proxy, undefined)
+})
+
+test("a selection's reply replaces only its own group", () => {
+  const groups = Model.readGroups({ groups: [
+    { name: "Proxy", now: "A", members: [{ name: "A" }, { name: "B" }] },
+    { name: "Auto", now: "A", members: [{ name: "A" }] }] }).groups
+  const replaced = Model.replaceGroup(groups, Model.readGroup({ name: "Proxy", now: "B", members: [] }))
+  assert.equal(replaced[0].now, "B")
+  assert.equal(replaced[1], groups[1])
+  assert.equal(Model.replaceGroup(groups, null), groups)
 })
 
 test("provider configs resolve through their owning group", () => {
@@ -137,47 +174,19 @@ test("system groups are removed from user-facing group lists", () => {
   assert.deepEqual(Model.userGroups(groups).map(group => group.name), ["Proxy"])
 })
 
-test("our own rules are peeled off the head of the merged list", () => {
-  const merged = Model.parseApiRules(JSON.stringify({
-    rules: [
-      { type: "DomainSuffix", payload: "internal.example", proxy: "DIRECT" },
-      { type: "ProcessName", payload: "syncthing", proxy: "DIRECT" },
-      { type: "DomainSuffix", payload: "tailscale.com", proxy: "GLOBAL" },
-      { type: "DomainKeyword", payload: "google", proxy: "Proxy" },
-      { type: "Match", payload: "", proxy: "Proxy" }
-    ]
-  }))
-  const own = Model.parseRules(JSON.stringify([
-    { index: 1, kind: "prepend", rule: "DOMAIN-SUFFIX,internal.example,DIRECT" },
-    { index: 2, kind: "prepend", rule: "PROCESS-NAME,syncthing,DIRECT" }
-  ]))
-  const split = Model.splitApiRules(merged, own, ["DOMAIN-SUFFIX,tailscale.com,GLOBAL"])
-  assert.deepEqual(split.injected.map(r => r.value), ["tailscale.com"])
-  assert.deepEqual(split.subscription.map(r => r.value), ["google", ""])
-  assert.equal(merged[0].type, "DOMAIN-SUFFIX")
-  assert.equal(merged[4].type, "MATCH")
-})
-
-test("injected rules the runtime does not carry yet are not peeled", () => {
-  const merged = Model.parseApiRules(JSON.stringify({
-    rules: [
-      { type: "DomainKeyword", payload: "tailscale.com", proxy: "GLOBAL" },
-      { type: "Match", payload: "", proxy: "Proxy" }
-    ]
-  }))
-  const split = Model.splitApiRules(merged, [], ["DOMAIN-SUFFIX,tailscale.com,GLOBAL"])
-  assert.equal(split.injected.length, 0)
-  assert.equal(split.subscription.length, 2)
-})
-
-test("append and filter rules never strip a subscription rule", () => {
-  const merged = Model.parseApiRules(JSON.stringify({
-    rules: [{ type: "DomainKeyword", payload: "google", proxy: "Proxy" }]
-  }))
-  const own = Model.parseRules(JSON.stringify([
-    { index: 1, kind: "append", rule: "DOMAIN-KEYWORD,google,Proxy" }
-  ]))
-  assert.equal(Model.splitApiRules(merged, own, []).subscription.length, 1)
+test("rules split by source, and the owner's carry their index", () => {
+  const rules = Model.readRules({ rules: [
+    { type: "DOMAIN-SUFFIX", value: "internal.example", target: "DIRECT", source: "user" },
+    { type: "PROCESS-NAME", value: "syncthing", target: "DIRECT", source: "user" },
+    { type: "DOMAIN-SUFFIX", value: "ts.net", target: "DIRECT", source: "omihomo" },
+    { type: "DOMAIN-KEYWORD", value: "google", target: "Proxy", source: "subscription" },
+    { type: "MATCH", value: "", target: "Proxy", source: "subscription" }
+  ] })
+  assert.deepEqual(rules.own.map(r => [r.index, r.rule]),
+    [[1, "DOMAIN-SUFFIX,internal.example,DIRECT"], [2, "PROCESS-NAME,syncthing,DIRECT"]])
+  assert.deepEqual(rules.injected.map(r => r.value), ["ts.net"])
+  assert.deepEqual(rules.subscription.map(r => r.type), ["DOMAIN-KEYWORD", "MATCH"])
+  assert.deepEqual(Model.readRules(null), { own: [], injected: [], subscription: [] })
 })
 
 test("rule targets list the built-ins, then groups, then every config once", () => {
@@ -190,81 +199,54 @@ test("rule targets list the built-ins, then groups, then every config once", () 
       "constructor:config"])
 })
 
-test("mihomo rule types render as config syntax", () => {
-  assert.equal(Model.apiRuleType("DomainSuffix"), "DOMAIN-SUFFIX")
-  assert.equal(Model.apiRuleType("IPCIDR"), "IP-CIDR")
-  assert.equal(Model.apiRuleType("GeoIP"), "GEOIP")
-  assert.equal(Model.apiRuleType("Match"), "MATCH")
+test("delays, traffic and egress read from their replies", () => {
+  const delays = Model.readDelays({ delays: { "Tokyo 01": 91, Dead: 0 } })
+  assert.equal(delays["Tokyo 01"], 91)
+  assert.equal(delays.Dead, 0)
+  assert.deepEqual(Object.keys(Model.readDelays(null)), [])
+  assert.deepEqual(Model.readTraffic({ up: 120, down: 4096 }), { up: 120, down: 4096 })
+  assert.equal(Model.readTraffic({}), null)
+  assert.deepEqual(Model.readEgress({ ip: "203.0.113.9", latency: 183 }), { ip: "203.0.113.9", latency: 183 })
+  assert.deepEqual(Model.readEgress(null), { ip: "", latency: 0 })
 })
 
-test("one trace call yields both the egress IP and the round trip", () => {
-  const trace = Model.parseTrace("fl=123\nip=203.0.113.9\nts=1\n\n0.183\n")
-  assert.equal(trace.ip, "203.0.113.9")
-  assert.equal(trace.latency, 183)
-})
-
-test("a partial traffic line is dropped rather than read as zero", () => {
-  assert.deepEqual(Model.parseTraffic('{"up":120,"down":4096}'), { up: 120, down: 4096 })
-  assert.equal(Model.parseTraffic('{"up":12'), null)
-  assert.equal(Model.parseTraffic(""), null)
-})
-
-const snapshot = (connections, extra) => JSON.stringify(Object.assign({
-  downloadTotal: 4096, uploadTotal: 512, connections
-}, extra || {}))
+const snapshot = (connections, extra) => Object.assign({
+  download_total: 4096, upload_total: 512, open: connections.length, connections
+}, extra || {})
 
 const conn = (id, host, process, over) => Object.assign({
-  id, upload: 1, download: 2, start: "2026-08-18T11:00:00Z",
-  chains: ["Tokyo 01", "Proxy"], rule: "DomainSuffix", rulePayload: "example.org",
-  metadata: { network: "tcp", host, destinationPort: "443", processPath: process }
+  id, upload: 1, download: 2, started_at: Date.parse("2026-08-18T11:00:00Z"), network: "tcp",
+  inbound: "tun", host, destination_port: 443, process, chain: "Tokyo 01",
+  rule: "DomainSuffix(example.org)"
 }, over || {})
 
-test("connection labels use the API name and identify internal traffic", () => {
-  const items = Model.parseConnections(snapshot([
-    { id: "named", metadata: { process: "firefox", type: "Tun" } },
-    { id: "internal", metadata: { type: "Inner" } }
+test("connection labels use the process name and identify internal traffic", () => {
+  const items = Model.readConnections(snapshot([
+    { id: "named", process: "firefox", inbound: "tun" },
+    { id: "path", process: "curl", inbound: "tun" },
+    { id: "internal", inbound: "inner" },
+    { id: "unknown", inbound: "tun" }
   ])).items
-  assert.equal(items[0].process, "firefox")
-  assert.equal(items[1].process, "mihomo")
+  assert.deepEqual(items.map(c => c.process), ["firefox", "curl", "mihomo", ""])
 })
 
-test("socket lookup identifies only unambiguous local connections", () => {
-  const item = Model.parseConnections(snapshot([{
-    id: "udp", metadata: { type: "Tun", network: "udp", sourceIP: "192.168.42.10",
-      sourcePort: "53000", destinationIP: "203.0.113.5", destinationPort: "443" }
-  }])).items[0]
-  const socket = { network: "udp", localIP: "0.0.0.0", localPort: 53000,
-    peerIP: "0.0.0.0", peerPort: 0, process: "firefox" }
-  const table = { addresses: ["192.168.42.10"], sockets: [socket] }
-  assert.equal(Model.enrichConnections([item], table)[0].process, "firefox")
-  assert.equal(Model.enrichConnections([item], { addresses: [], sockets: [socket] })[0].process, "")
-  assert.equal(Model.enrichConnections([item], { addresses: table.addresses,
-    sockets: [socket, {...socket, process: "another-app"}] })[0].process, "")
-  assert.equal(Model.enrichConnections([item], { addresses: table.addresses,
-    sockets: [{...socket, network: "tcp"}] })[0].process, "")
-  assert.equal(Model.enrichConnections([item], { addresses: table.addresses,
-    sockets: [{...socket, peerPort: 443, peerIP: "203.0.113.6"}] })[0].process, "")
-  assert.equal(Model.enrichConnections([{...item, process: "known"}], table)[0].process, "known")
-})
-
-test("a connection keeps its resolved owner when the socket disappears", () => {
-  const raw = snapshot([{id: "udp", metadata: {type: "Tun", network: "udp",
-    sourceIP: "192.168.42.10", sourcePort: "53000", destinationIP: "203.0.113.5", destinationPort: "443"}}])
-  const first = Model.parseConnections(raw).items
+test("a connection keeps its resolved owner while its endpoints stay the same", () => {
+  const raw = snapshot([{ id: "udp", network: "udp", inbound: "tun", source_ip: "192.168.42.10",
+    source_port: 53000, destination_ip: "203.0.113.5", destination_port: 443 }])
+  const first = Model.readConnections(raw).items
   first[0].process = "firefox"
-  assert.equal(Model.mergeConnectionLog(first, Model.parseConnections(raw).items)[0].process, "firefox")
-  const changed = Model.parseConnections(raw).items
+  assert.equal(Model.mergeConnectionLog(first, Model.readConnections(raw).items)[0].process, "firefox")
+  const changed = Model.readConnections(raw).items
   changed[0].sourcePort = 53001
   assert.equal(Model.mergeConnectionLog(first, changed)[0].process, "")
 })
 
 test("a connection snapshot carries a host, a start, and its totals", () => {
   const now = Date.parse("2026-08-18T12:00:00Z")
-  const parsed = Model.parseConnections(snapshot([
-    conn("a", "github.com", "/usr/bin/firefox"),
-    { id: "b", upload: 0, download: 0, start: "2026-08-18T11:59:00Z", chains: [],
-      rule: "Match", metadata: { network: "udp", host: "", destinationIP: "1.1.1.1",
-                                 destinationPort: "53" } }
+  const parsed = Model.readConnections(snapshot([
+    conn("a", "github.com", "firefox"),
+    { id: "b", upload: 0, download: 0, started_at: Date.parse("2026-08-18T11:59:00Z"),
+      rule: "Match", network: "udp", host: "", destination_ip: "1.1.1.1", destination_port: 53 }
   ]), now)
   assert.equal(parsed.downloadTotal, 4096)
   assert.deepEqual(parsed.items.map(c => c.id), ["a", "b"])
@@ -278,17 +260,17 @@ test("a connection snapshot carries a host, a start, and its totals", () => {
 })
 
 test("a connection missing from the next snapshot is closed, not dropped", () => {
-  const first = Model.parseConnections(snapshot([
-    conn("a", "github.com", "/usr/bin/firefox"),
-    conn("b", "cdn.jsdelivr.net", "/usr/bin/firefox")
+  const first = Model.readConnections(snapshot([
+    conn("a", "github.com", "firefox"),
+    conn("b", "cdn.jsdelivr.net", "firefox")
   ]), 1000)
   let log = Model.mergeConnectionLog([], first.items, 1000, 200)
   assert.equal(Model.openConnectionCount(log), 2)
 
   // "b" is gone from the second snapshot, and "c" is new.
-  const second = Model.parseConnections(snapshot([
-    conn("a", "github.com", "/usr/bin/firefox", { download: 900 }),
-    conn("c", "github.com", "/usr/bin/firefox")
+  const second = Model.readConnections(snapshot([
+    conn("a", "github.com", "firefox", { download: 900 }),
+    conn("c", "github.com", "firefox")
   ]), 5000)
   log = Model.mergeConnectionLog(log, second.items, 5000, 200)
 
@@ -304,12 +286,12 @@ test("a connection missing from the next snapshot is closed, not dropped", () =>
 })
 
 test("the log keeps every open connection and caps the closed ones", () => {
-  const open = Model.parseConnections(snapshot([conn("keep", "github.com", "/usr/bin/firefox")]), 1000)
+  const open = Model.readConnections(snapshot([conn("keep", "github.com", "firefox")]), 1000)
   let log = Model.mergeConnectionLog([], open.items, 1000, 2)
   for (let i = 0; i < 4; i++) {
-    const round = Model.parseConnections(snapshot([
-      conn("keep", "github.com", "/usr/bin/firefox"),
-      conn("gone" + i, "cdn.jsdelivr.net", "/usr/bin/firefox")
+    const round = Model.readConnections(snapshot([
+      conn("keep", "github.com", "firefox"),
+      conn("gone" + i, "cdn.jsdelivr.net", "firefox")
     ]), 2000 + i * 1000)
     log = Model.mergeConnectionLog(log, round.items, 2000 + i * 1000, 2)
   }
@@ -321,17 +303,17 @@ test("the log keeps every open connection and caps the closed ones", () => {
 })
 
 test("stacks group by process, destination, and state", () => {
-  const first = Model.parseConnections(snapshot([
-    conn("a", "github.com", "/usr/bin/firefox", { start: "2026-08-18T11:00:00Z", download: 10 }),
-    conn("b", "github.com", "/usr/bin/firefox", { start: "2026-08-18T11:30:00Z", download: 20 }),
-    conn("c", "github.com", "/usr/bin/curl", { start: "2026-08-18T11:45:00Z", download: 30 })
+  const first = Model.readConnections(snapshot([
+    conn("a", "github.com", "firefox", { started_at: Date.parse("2026-08-18T11:00:00Z"), download: 10 }),
+    conn("b", "github.com", "firefox", { started_at: Date.parse("2026-08-18T11:30:00Z"), download: 20 }),
+    conn("c", "github.com", "curl", { started_at: Date.parse("2026-08-18T11:45:00Z"), download: 30 })
   ]), 1000)
   let log = Model.mergeConnectionLog([], first.items, 1000, 200)
 
   // Firefox keeps one socket to github and loses the other.
-  const second = Model.parseConnections(snapshot([
-    conn("a", "github.com", "/usr/bin/firefox", { start: "2026-08-18T11:00:00Z", download: 10 }),
-    conn("c", "github.com", "/usr/bin/curl", { start: "2026-08-18T11:45:00Z", download: 30 })
+  const second = Model.readConnections(snapshot([
+    conn("a", "github.com", "firefox", { started_at: Date.parse("2026-08-18T11:00:00Z"), download: 10 }),
+    conn("c", "github.com", "curl", { started_at: Date.parse("2026-08-18T11:45:00Z"), download: 30 })
   ]), 5000)
   log = Model.mergeConnectionLog(log, second.items, 5000, 200)
 
@@ -350,17 +332,6 @@ test("stacks group by process, destination, and state", () => {
   assert.equal(firefox.count, 2)
   assert.equal(firefox.download, 30)
   assert.equal(firefox.startMs, Date.parse("2026-08-18T11:00:00Z"))
-})
-
-test("systemd's ActiveEnterTimestamp parses as local time", () => {
-  const ms = Model.parseUnitTimestamp("Tue 2026-08-18 13:06:48 MSK")
-  const date = new Date(ms)
-  assert.equal(date.getFullYear(), 2026)
-  assert.equal(date.getMonth(), 7)
-  assert.equal(date.getDate(), 18)
-  assert.equal(date.getHours(), 13)
-  assert.equal(Model.parseUnitTimestamp(""), 0)
-  assert.equal(Model.parseUnitTimestamp("n/a"), 0)
 })
 
 test("the rule tester stops at the first hit, mihomo's order", () => {
@@ -402,9 +373,8 @@ test("rule testing accounts for the active TUN route exclusions", () => {
   assert.equal(Model.testRules(rules, "192.168.42.1", {...routing, tunEnabled: false}).hit, 0)
   assert.equal(Model.testRules(rules, "192.168.42.1", {...routing, tunAutoRoute: false}).hit, 0)
   assert.equal(Model.testRules(rules, "192.168.42.1", {...routing, routeExcludeAddresses: []}).hit, 0)
-  const parsed = Model.parseConfigs(JSON.stringify({tun: {enable: true, "auto-route": true,
-    "route-exclude-address": ["192.168.0.0/16"]}}))
-  assert.deepEqual(parsed.routing, routing)
+  assert.deepEqual(Model.statusRouting(Model.readStatus({ state: "on", tun: true,
+    tun_bypass: ["192.168.0.0/16"] })), routing)
 })
 
 test("a later rule hit is tentative when an earlier rule is unresolved", () => {
@@ -421,8 +391,9 @@ test("targets tally largest first", () => {
 })
 
 test("remote names that shadow object prototypes stay plain data", () => {
-  const parsed = Model.parseProxies('{"proxies":{"__proto__":{"type":"Vless"}}}')
+  const parsed = Model.readGroups(JSON.parse('{"groups":[{"name":"P","members":[{"name":"__proto__","type":"vless"}]}]}'))
   assert.deepEqual(Object.keys(parsed.configs), ["__proto__"])
+  assert.deepEqual(Object.keys(Model.readDelays(JSON.parse('{"delays":{"__proto__":5}}'))), ["__proto__"])
   assert.deepEqual(Model.ruleTargetTally([{ target: "constructor" }]), [{ target: "constructor", count: 1 }])
   const flows = Model.connectionFlows([{ process: "constructor", chain: "DIRECT", download: 5, upload: 0, open: true }], 4, 4)
   assert.deepEqual(flows.sources, [{ name: "constructor", bytes: 5 }])

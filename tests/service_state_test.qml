@@ -1,302 +1,141 @@
 import QtQuick
 import Quickshell
 import "." as Omihomo
-import "Model.js" as Model
 
-// Quickshell links its QML modules into the `qs` executable, so this focused
-// service test runs as a tiny shell config rather than through qmltestrunner.
+// The connection, optimistic writes, and failures, against fake daemons.
+// Quickshell links its QML modules into the `qs` executable, so each suite runs
+// as a tiny shell config rather than through qmltestrunner.
 ShellRoot {
   id: testRoot
 
-  property bool passed: true
-  property int savedRuleNotifications: 0
-  property int failedRuleNotifications: 0
+  property int savedRules: 0
+  property int failedRules: 0
 
+  Omihomo.StateTest { id: t; name: "SERVICE" }
+
+  Omihomo.Service { id: absent; socketPath: t.socket("none") }
+  Omihomo.Service { id: refused; socketPath: t.socket("refuse") }
+  Omihomo.Service { id: outdated; socketPath: t.socket("old") }
+  Omihomo.Service { id: newer; socketPath: t.socket("new") }
   Omihomo.Service {
-    id: coreService
-    // `true` preserves the asynchronous Process boundary without touching the
-    // real Omihomo CLI, systemd unit, override file, or mihomo controller.
-    cliPath: "/usr/bin/true"
-  }
-
-  Omihomo.Service { id: tunService; cliPath: "/usr/bin/true" }
-  Omihomo.Service { id: autostartService; cliPath: "/usr/bin/true" }
-  Omihomo.Service { id: modeService; cliPath: "/usr/bin/true" }
-  // Opening the panel has to read the subscriptions itself. The panel's
-  // `panelOpen` binding updates after its own onOpenedChanged handler, so a
-  // read driven from there would miss the first open entirely.
-  Omihomo.Service { id: openService; cliPath: "omihomo-fake-cli" }
-
-  Omihomo.Service { id: failingCoreService; cliPath: "/usr/bin/false" }
-  Omihomo.Service { id: failingTunService; cliPath: "/usr/bin/false" }
-  Omihomo.Service {
-    id: savedRuleService
-    cliPath: "/usr/bin/true"
-    onRuleAdded: testRoot.savedRuleNotifications++
+    id: svc
+    socketPath: t.socket("ok")
+    onRuleAdded: testRoot.savedRules++
   }
   Omihomo.Service {
-    id: failedRuleService
-    cliPath: "/usr/bin/false"
-    onRuleAdded: testRoot.failedRuleNotifications++
-  }
-  Omihomo.Service { id: staleApiService; cliPath: "/usr/bin/true" }
-  Omihomo.Service { id: redirectService; cliPath: "/usr/bin/true" }
-  Omihomo.Service { id: snapshotService; cliPath: "/usr/bin/true" }
-  Omihomo.Service { id: connectionService }
-  Omihomo.Service { id: slowConnectionService; cliPath: "omihomo-fake-cli" }
-  // Status from `true` is empty, so a started core never confirms.
-  Omihomo.Service { id: settleService; cliPath: "/usr/bin/true"; settleTimeoutMs: 100 }
-
-  Timer {
-    id: openCheck
-    interval: 10
-    repeat: true
-    property int ticks: 0
-    onTriggered: {
-      ticks += 1
-      if (openService.subscriptions.length === 0 && ticks < 100) return
-      stop()
-      check(openService.subscriptions.length, 1, "opening the panel loads subscriptions")
-      failureCheck.start()
-    }
+    id: failing
+    socketPath: t.socket("fail")
+    onRuleAdded: testRoot.failedRules++
   }
 
-  Timer {
-    id: failureCheck
-    interval: 10
-    repeat: true
-    onTriggered: {
-      if (failingCoreService.busy || failingTunService.busy
-          || savedRuleService.busy || failedRuleService.busy) return
-      stop()
-      check(failingCoreService.coreActive, false, "failed core command rolls back")
-      check(failingCoreService._desiredCoreRunning, -1, "failed core command clears desired state")
-      check(failingTunService.tunActive, false, "failed TUN command rolls back")
-      check(failingTunService._desiredTunEnabled, -1, "failed TUN command clears desired state")
-      check(savedRuleNotifications, 1, "successful rule write confirms the add form")
-      check(failedRuleNotifications, 0, "failed rule write does not confirm the add form")
-      check(failedRuleService.lastError !== "", true, "failed rule write exposes an error")
-      settleCheck.start()
-    }
-  }
+  property double reconnectedAt: 0
 
-  Timer {
-    id: settleCheck
-    interval: 10
-    repeat: true
-    property int ticks: 0
-    onTriggered: {
-      ticks += 1
-      if (settleService.coreActive && ticks < 200) return
-      stop()
-      check(settleService.coreActive, false, "an unconfirmed start gives up after its deadline")
-      check(settleService.lastError, "mihomo did not reach the requested state", "an unconfirmed start is reported")
-      slowConnectionCheck.start()
-    }
-  }
+  Component.onCompleted: t.steps = [
+    { name: "every daemon answers or not", until: function() {
+        return absent.link === "absent" && refused.link === "refused" && outdated.link === "outdated"
+          && newer.link === "newer" && svc.ready && failing.ready && svc.coreState === "stopped"
+      }, then: function() {
+        t.check(absent.coreState, "not-installed", "no daemon reads as not installed")
+        t.check(absent.installed, false, "no daemon is not installed")
+        t.check(refused.installed, false, "a refusal leaves nothing to show")
+        t.check(outdated.installed, false, "an older protocol is never spoken")
+        t.check(newer.installed, false, "a newer protocol is never spoken")
+        t.check(outdated.call("status"), 0, "no request goes to a daemon of another protocol")
+        t.check(svc.installed, true, "a greeted daemon is installed")
+        t.check(svc.daemonVersion, "v0.0.0-fake", "the greeting carries the daemon's version")
+        t.check(svc.subscriptions.length, 0, "a closed panel does not subscribe to subscriptions")
 
-  Timer {
-    id: slowConnectionCheck
-    interval: 20
-    repeat: true
-    property int ticks: 0
-    property bool enriched: false
-    onTriggered: {
-      ticks += 1
-      slowConnectionService.applyConnections(JSON.stringify({downloadTotal: ticks, connections: [{
-        id: "slow", download: ticks, metadata: {
-          type: "Tun", network: "udp", sourceIP: "192.168.42.10", sourcePort: 53000
-        }
-      }]}))
-      check(slowConnectionService.connectionsDownload, ticks, "slow lookup cannot delay byte totals")
-      check(slowConnectionService.connectionLog.length, 1, "slow lookup cannot delay connection snapshots")
-      if (slowConnectionService.connectionLog.length > 0)
-        enriched = enriched || slowConnectionService.connectionLog[0].process === "browser"
-      if (ticks < 20) return
-      stop()
-      check(enriched, true, "lookup completes while faster snapshots keep arriving")
-      slowConnectionService.cliPath = ""
-      slowConnectionFinish.start()
-    }
-  }
+        svc.toggleCore()
+        t.check(svc.coreActive, true, "the switch moves on the click")
+        t.check(svc.coreRunning, false, "the proxy is not on until the daemon says so")
+        // A push that left the daemon before the start cannot move it back.
+        svc.applyStatus({ state: "stopped", active_subscription: "work", mode: "rule" })
+        t.check(svc.coreActive, true, "a stale status cannot undo a pending start")
+        svc.toggleCore()
+        t.check(svc._desiredCoreRunning, 1, "a second click waits for the first")
+      } },
+    { name: "start lands", until: function() { return !svc.busy }, then: function() {
+        t.check(svc.coreRunning, true, "the start's reply confirms it")
+        t.check(svc._desiredCoreRunning, -1, "the reply clears the desired state")
+        t.check(svc.startedMs > 0, true, "a running proxy has a start time")
 
-  Timer {
-    id: slowConnectionFinish
-    interval: 200
-    onTriggered: testRoot.finish()
-  }
-
-  function status(state, tun, autostart, redirect, uptime) {
-    return JSON.stringify({
-      state: state,
-      detail: "",
-      active_subscription: "",
-      primary_group: "",
-      tun_enabled: tun === true,
-      tun_redirect: redirect === true,
-      autostart_enabled: autostart === true,
-      uptime: uptime || null
-    })
-  }
-
-  function check(actual, expected, message) {
-    if (actual === expected) return
-    passed = false
-    console.error("SERVICE_STATE_FAIL " + message + ": got " + actual + ", expected " + expected)
-  }
-
-  function finish() {
-    console.log(passed ? "SERVICE_STATE_PASS" : "SERVICE_STATE_FAILED")
-    Qt.quit()
-  }
-
-  function run() {
-    coreService.applyStatus(status("stopped", false, false))
-    check(coreService.coreRunning, false, "confirmed core starts off")
-
-    coreService.toggleCore()
-    check(coreService.coreActive, true, "core changes immediately after click")
-
-    // A status command launched before the click may finish after it. The
-    // confirmed value is still off, but the rendered value must stay on.
-    coreService.applyStatus(status("stopped", false, false))
-    check(coreService.coreActive, true, "stale status cannot undo pending toggle")
-
-    coreService.applyStatus(status("on", false, false))
-    check(coreService.coreActive, true, "confirmed core stays on")
-    check(coreService._desiredCoreRunning, -1, "core confirmation clears desired state")
-
-    tunService.applyStatus(status("on", false, false))
-    tunService.toggleTun()
-    check(tunService.tunActive, true, "TUN changes immediately after click")
-    tunService.applyStatus(status("on", false, false))
-    check(tunService.tunActive, true, "stale status cannot undo pending TUN")
-    tunService.applyStatus(status("on", true, false))
-    check(tunService._desiredTunEnabled, -1, "TUN confirmation clears desired state")
-
-    autostartService.applyStatus(status("stopped", false, false))
-    autostartService.toggleAutostart()
-    check(autostartService.autostartActive, true, "autostart changes immediately after click")
-    autostartService.applyStatus(status("stopped", false, false))
-    check(autostartService.autostartActive, true, "stale status cannot undo pending autostart")
-    autostartService.applyStatus(status("stopped", false, true))
-    check(autostartService._desiredAutostartEnabled, -1, "autostart confirmation clears desired state")
-
-    modeService.applyStatus(status("on", false, false))
-    modeService.applyConfigs('{"mode":"rule","mixed-port":7890}')
-    modeService.setMode("global")
-    check(modeService.effectiveMode, "global", "mode changes immediately after click")
-    modeService.applyConfigs('{"mode":"rule","mixed-port":7890}')
-    check(modeService.effectiveMode, "global", "stale configs cannot undo pending mode")
-    modeService.applyConfigs('{"mode":"global","mixed-port":7890}')
-    check(modeService._desiredMode, "", "mode confirmation clears desired state")
-
-    failingCoreService.applyStatus(status("stopped", false, false))
-    failingCoreService.toggleCore()
-    check(failingCoreService.coreActive, true, "failed core command starts optimistically")
-
-    failingTunService.applyStatus(status("on", false, false))
-    failingTunService.toggleTun()
-    check(failingTunService.tunActive, true, "failed TUN command starts optimistically")
-
-    check(savedRuleService.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), true,
-      "rule write starts")
-    check(savedRuleNotifications, 0, "rule form waits for the write result")
-    check(savedRuleService.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), false,
-      "a second rule write is rejected while the first is running")
-    check(failedRuleService.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), true,
-      "failed rule write still starts")
-
-    // A rotated controller secret leaves the panel authenticated with the old
-    // one, and every read comes back 401 while `omihomo status` — which reads
-    // the secret off disk — still says the core is healthy. Curl calls that
-    // exit 22, and only that: a timeout or a refused connection must not throw
-    // away credentials that are still good.
-    staleApiService.applyStatus(status("on", false, false))
-    staleApiService.apiAddress = "127.0.0.1:9090"
-    staleApiService.apiSecret = "stale"
-    staleApiService.proxiesLoaded = true
-    check(staleApiService.apiReady, true, "a running core with an address is ready")
-
-    staleApiService.noteApiFailure(7)
-    check(staleApiService.apiReady, true, "a refused connection keeps the credentials")
-
-    staleApiService.noteApiFailure(22)
-    check(staleApiService.apiReady, false, "a rejected read drops the stale credentials")
-    check(staleApiService.apiSecret, "", "a rejected read drops the stale secret")
-    check(staleApiService.proxiesLoaded, false, "dropped credentials un-load the proxies")
-
-    // Turning the redirect off is the repair for a TUN that will not start, so
-    // it settles the same way every other optimistic toggle does.
-    redirectService.applyStatus(status("degraded", true, false, true))
-    check(redirectService.tunRedirectActive, true, "status reports the fast pairing")
-    redirectService.toggleTunRedirect()
-    check(redirectService.tunRedirectActive, false, "redirect changes immediately after click")
-    redirectService.applyStatus(status("degraded", true, false, true))
-    check(redirectService.tunRedirectActive, false, "stale status cannot undo pending redirect")
-    redirectService.applyStatus(status("on", true, false, false))
-    check(redirectService._desiredTunRedirect, -1, "redirect confirmation clears desired state")
-
-    // A controller that stops answering is the same runtime; a restart is not.
-    snapshotService.applyStatus(status("on", false, false, true, "2026-09-24 10:00:00"))
-    snapshotService.groups = [{ name: "Proxy", type: "Selector", now: "A", all: ["A"], selectable: true, system: false }]
-    snapshotService.configTestResults = ({ A: { state: "success", delay: 40 } })
-    snapshotService.applyStatus(status("starting", false, false, true, "2026-09-24 10:00:00"))
-    check(snapshotService.groups.length, 1, "a controller outage keeps the groups")
-    check(snapshotService.configTestState("A"), "success", "a controller outage keeps latency results")
-    snapshotService.applyStatus(status("on", false, false, true, "2026-09-24 10:05:00"))
-    check(snapshotService.groups.length, 0, "a restarted core drops the old groups")
-    check(snapshotService.configTestState("A"), "", "a restarted core drops old latency results")
-
-    connectionService.applyStatus(status("on", true, false, false, "2026-09-24 10:00:00"))
-    connectionService.applyConfigs(JSON.stringify({mode: "rule", tun: {
-      enable: true, "auto-route": true, "route-exclude-address": ["192.168.0.0/16"]
-    }}))
-    check(Model.testRules([{type: "MATCH", target: "Proxy"}], "192.168.42.1",
-      connectionService.routing).bypassed, true, "live configs carry TUN exclusions into the tester")
-    var pending = Model.parseConnections(JSON.stringify({connections: [{id: "example", metadata: {
-      type: "Tun", network: "udp", sourceIP: "192.168.42.10", sourcePort: "53000"
-    }}]}))
-    connectionService.connectionLog = pending.items
-    connectionService._pendingConnections = pending
-    connectionService._connectionLookupRuntime = connectionService.runtimeKey
-    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
-      network: "udp", localIP: "0.0.0.0", localPort: 53000, peerPort: 0, process: "browser"
-    }]})
-    check(connectionService.connectionLog[0].process, "browser", "socket lookup enriches the recorded snapshot")
-    connectionService._pendingConnections = pending
-    connectionService.applyConnections('{"downloadTotal":49,"connections":[]}')
-    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
-      network: "udp", localIP: "0.0.0.0", localPort: 53000, peerPort: 0, process: "other"
-    }]})
-    check(connectionService.connectionLog[0].open, false, "late lookup cannot reopen a closed connection")
-    check(connectionService.connectionsDownload, 49, "late lookup cannot restore old byte totals")
-    connectionService._pendingConnections = pending
-    connectionService.applyConnections(JSON.stringify({connections: [{id: "example", metadata: {
-      type: "Tun", network: "udp", sourceIP: "192.168.42.10", sourcePort: 53001
-    }}]}))
-    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
-      network: "udp", localIP: "0.0.0.0", localPort: 53001, peerPort: 0, process: "other"
-    }]})
-    check(connectionService.connectionLog[0].process, "", "late lookup cannot label a changed endpoint")
-    connectionService._pendingConnections = pending
-    connectionService.startedMs += 1
-    connectionService.connectionLog = pending.items
-    connectionService.finishConnections({addresses: ["192.168.42.10"], sockets: [{
-      network: "udp", localIP: "0.0.0.0", localPort: 53000, peerPort: 0, process: "browser"
-    }]})
-    check(connectionService.connectionLog[0].process, "", "old socket results cannot label another core run")
-    connectionService.forgetRuntime()
-    check(connectionService._pendingConnections, null, "runtime reset drops pending connection enrichment")
-    check(connectionService.routing.tunEnabled === true, false, "runtime reset drops old TUN routing")
-
-    settleService.applyStatus(status("stopped", false, false))
-    settleService.toggleCore()
-
-    check(openService.subscriptions.length, 0, "subscriptions start empty")
-    openService.panelOpen = true
-    openCheck.start()
-  }
-
-  Component.onCompleted: Qt.callLater(run)
+        svc.toggleTun()
+        t.check(svc.tunActive, true, "TUN moves on the click")
+        svc.applyStatus({ state: "on", active_subscription: "work", mode: "rule", tun: false,
+          started_at: svc.startedMs })
+        t.check(svc.tunActive, true, "a stale status cannot undo pending TUN")
+      } },
+    { name: "TUN lands", until: function() { return !svc.busy }, then: function() {
+        t.check(svc.tunEnabled, true, "TUN's reply confirms it")
+        t.check(svc._desiredTunEnabled, -1, "TUN's reply clears the desired state")
+        t.check(svc.routing.tunEnabled, true, "the rule tester sees TUN routing")
+        svc.setMode("global")
+        t.check(svc.effectiveMode, "global", "the mode moves on the click")
+      } },
+    { name: "mode lands", until: function() { return !svc.busy }, then: function() {
+        t.check(svc.mode, "global", "the mode's reply confirms it")
+        t.check(svc._desiredMode, "", "the mode's reply clears the desired state")
+        t.check(svc.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), true, "a rule write starts")
+        t.check(svc.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), false,
+          "a second rule write waits for the first")
+        t.check(testRoot.savedRules, 0, "the form waits for the write's reply")
+      } },
+    { name: "rule lands", until: function() { return testRoot.savedRules === 1 }, then: function() {
+        t.check(svc.rules.length, 1, "the reply carries the new rule")
+        t.check(svc.rules[0].index, 1, "the owner's rule carries its index")
+        t.check(svc.injectedRules.length, 1, "Omihomo's rules are read-only")
+        svc.panelOpen = true
+      } },
+    { name: "opening the panel subscribes", until: function() {
+        return svc.subscriptions.length === 1 && svc.proxiesLoaded && svc.trafficHistory.length > 0
+      }, then: function() {
+        t.check(svc.currentConfig, "Pass", "groups arrive with the panel")
+        t.check(svc.subscriptions[0].active, true, "subscriptions arrive with the panel")
+        // A daemon restarting under socket activation drops the connection.
+        svc.call("test.drop", {})
+      } },
+    { name: "the connection drops", until: function() { return svc.link === "connecting" }, then: function() {
+        t.check(svc.installed, true, "a dropped connection keeps the panel")
+        t.check(svc.coreState, "on", "a dropped connection keeps the last status")
+        t.check(svc.groups.length, 1, "a dropped connection keeps the groups")
+        t.check(svc.busy, false, "a dropped connection fails what was in flight")
+        t.check(svc.call("status"), 0, "nothing is sent without a connection")
+      } },
+    { name: "it comes back", until: function() { return svc.ready && svc.trafficHistory.length > 0 }, then: function() {
+        t.check(svc.coreState, "on", "the status is pushed again")
+        t.check(svc.groups.length, 1, "the groups are pushed again")
+        svc.configTestResults = ({ Pass: { state: "success", delay: 40 } })
+        // Another run of the core makes everything read from the last one stale.
+        svc.call("test.status", { started_at: svc.startedMs + 1 })
+      } },
+    { name: "a new runtime", until: function() { return svc.configTestState("Pass") === "" }, then: function() {
+        t.check(svc.configTestState("Pass"), "", "a restarted core drops old latency results")
+        failing.toggleCore()
+        t.check(failing.coreActive, true, "a failing start still moves on the click")
+      } },
+    { name: "a failed start", until: function() { return !failing.busy }, then: function() {
+        t.check(failing.coreActive, false, "a failed start rolls the switch back")
+        t.check(failing._desiredCoreRunning, -1, "a failed start clears the desired state")
+        t.check(failing.lastError, "start failed", "a failed start says why")
+        t.check(failing.errorScope, "core", "a failed start's error sits with the switch")
+        failing.toggleTun()
+        t.check(failing.tunActive, true, "a failing TUN change still moves on the click")
+      } },
+    { name: "a failed setting", until: function() { return !failing.busy }, then: function() {
+        t.check(failing.tunActive, false, "a failed TUN change rolls back")
+        t.check(failing.errorScope, "settings", "a failed setting's error sits in settings")
+        t.check(failing.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), true,
+          "a failing rule write still starts")
+      } },
+    { name: "a failed rule", until: function() { return !failing.busy }, then: function() {
+        t.check(testRoot.failedRules, 0, "a failed rule write does not clear the form")
+        t.check(failing.errorScope, "rules", "a failed rule's error sits under the form")
+        failing.addSubscription("https://example.test/sub")
+        t.check(failing.actionStatus, "Fetching subscription…", "an add says it is fetching")
+      } },
+    { name: "a failed add", until: function() { return !failing.busy }, then: function() {
+        t.check(failing.errorScope, "sub:", "a failed add's error sits under the add field")
+        t.check(failing.pendingSubscription, "", "a failed add is no longer pending")
+      } }
+  ]
 }

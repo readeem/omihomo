@@ -1,13 +1,9 @@
-// Pure data helpers for the Omihomo panel. Everything here either parses a
-// CLI or mihomo API payload, or formats a value for display; nothing touches
-// QML types, so tests/model_test.mjs runs the same functions under node.
+// Pure data helpers for the Omihomo panel. Everything here either reads a
+// message from the daemon's socket, or formats a value for display; nothing
+// touches QML types, so tests/model_test.js runs the same functions under node.
 
 var RULE_TYPES = ["DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "PROCESS-NAME"]
 var MODES = ["rule", "global", "direct"]
-
-// Group types mihomo reports. Only Selector lets the user choose a config;
-// the rest pick for themselves and are shown read-only.
-var GROUP_TYPES = ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"]
 
 function isSystemGroup(group) {
   return !!group && (group.system === true || text(group.name) === "GLOBAL")
@@ -37,7 +33,11 @@ function parseJson(raw, fallback) {
   }
 }
 
-// ---------------------------------------------------------------- CLI
+// ---------------------------------------------------------------- daemon
+//
+// Everything below reads one decoded message from the daemon's socket (see
+// docs/daemon.md) into the shapes the panel renders. A field the daemon left
+// out or sent with the wrong type reads as empty rather than throwing.
 
 function defaultStatus() {
   return {
@@ -45,37 +45,44 @@ function defaultStatus() {
     detail: "",
     activeSubscription: "",
     primaryGroup: "",
+    mode: "",
     tunEnabled: false,
     tunRedirect: false,
-    autostartEnabled: false,
-    permissionsOk: false,
-    hardeningPending: false,
     tailscaleEnabled: false,
     tailscalePresent: false,
     tailnetProxy: false,
-    startedMs: 0
+    startedMs: 0,
+    tunBypass: []
   }
 }
 
-// `omihomo status` is the one verb that always exits 0 and always returns the
-// same object, so an unparseable payload means the CLI itself is broken.
-function parseStatus(raw) {
-  var data = parseJson(raw, null)
+function readStatus(data) {
   if (!data || typeof data !== "object") return defaultStatus()
   return {
     state: text(data.state) || "unknown",
     detail: text(data.detail),
     activeSubscription: text(data.active_subscription),
     primaryGroup: text(data.primary_group),
-    tunEnabled: data.tun_enabled === true,
+    mode: text(data.mode).toLowerCase(),
+    tunEnabled: data.tun === true,
     tunRedirect: data.tun_redirect === true,
-    autostartEnabled: data.autostart_enabled === true,
-    permissionsOk: data.permissions_ok === true,
-    hardeningPending: data.hardening_pending === true,
-    tailscaleEnabled: data.tailscale_enabled === true,
+    tailscaleEnabled: data.tailscale === true,
     tailscalePresent: data.tailscale_present === true,
     tailnetProxy: data.tailnet_proxy === true,
-    startedMs: parseUnitTimestamp(data.uptime)
+    startedMs: number(data.started_at, 0),
+    tunBypass: Array.isArray(data.tun_bypass)
+      ? data.tun_bypass.filter(function(cidr) { return typeof cidr === "string" }) : []
+  }
+}
+
+// What the rule tester needs to know about TUN: whether it routes this
+// machine's traffic at all, and the address space it routes around.
+function statusRouting(status) {
+  var running = !!status && (status.state === "on" || status.state === "degraded")
+  return {
+    tunEnabled: running && status.tunEnabled === true,
+    tunAutoRoute: true,
+    routeExcludeAddresses: status && status.tunBypass ? status.tunBypass.slice() : []
   }
 }
 
@@ -88,51 +95,51 @@ function stateLabel(state) {
   return "Unknown"
 }
 
-// Errors arrive on stderr as {"error":"...","code":N}; anything else is a
-// crash or a usage message, and shows verbatim.
-function cliError(stderr, exitCode) {
-  var code = number(exitCode, 1)
-  var data = parseJson(stderr, null)
-  if (data && typeof data === "object" && data.error !== undefined) {
-    return { message: text(data.error), code: number(data.code, code) }
-  }
-  var raw = text(stderr).replace(/\s+/g, " ").trim()
-  return { message: raw !== "" ? raw : errorHint(code), code: code }
-}
-
-// The fixed exit-code table from docs/cli.md, as panel-facing copy.
-function errorHint(code) {
-  switch (number(code, 1)) {
-  case 10: return "mihomo is not installed"
-  case 11: return "mihomo is not running"
-  case 12: return "mihomo controller is unreachable"
-  case 13: return "No active subscription"
-  case 20: return "mihomo rejected the YAML"
-  case 21: return "Subscription fetch failed"
-  case 0: return ""
-  default: return "Command failed"
+// A failed call's error, as panel copy. The daemon's messages are written for
+// people; the code is the fallback when one arrives without a message.
+function daemonError(error) {
+  if (!error || typeof error !== "object") return "The core did not answer"
+  var message = text(error.message).replace(/\s+/g, " ").trim()
+  if (message !== "") return message
+  switch (text(error.code)) {
+  case "not_running": return "The proxy is not running"
+  case "not_found": return "Not found"
+  case "fetch_failed": return "Subscription fetch failed"
+  case "rejected": return "The subscription is not usable"
+  case "busy": return "The core is busy"
+  case "forbidden": return "This account does not own Omihomo"
+  default: return "The core refused the change"
   }
 }
 
-function parseSubscriptions(raw) {
-  var data = parseJson(raw, [])
-  if (!data || typeof data.length !== "number") return []
+function readSubscriptions(data) {
+  var list = data && typeof data === "object" ? data.subscriptions : null
+  if (!Array.isArray(list)) return []
   var out = []
-  for (var i = 0; i < data.length; i++) {
-    var entry = data[i]
-    if (!entry || text(entry.name) === "") continue
-    out.push({
-      name: text(entry.name),
-      url: text(entry.url),
-      updatedAt: text(entry.updated_at),
-      upload: entry.upload === null ? null : number(entry.upload, null),
-      download: entry.download === null ? null : number(entry.download, null),
-      total: entry.total === null ? null : number(entry.total, null),
-      expire: entry.expire === null ? null : number(entry.expire, null),
-      active: entry.active === true
-    })
+  for (var i = 0; i < list.length; i++) {
+    var entry = readSubscription(list[i])
+    if (entry) out.push(entry)
   }
   return out
+}
+
+function readSubscription(entry) {
+  if (!entry || text(entry.name) === "") return null
+  return {
+    name: text(entry.name),
+    updatedAt: number(entry.updated_at, 0),
+    upload: optionalNumber(entry.upload),
+    download: optionalNumber(entry.download),
+    total: optionalNumber(entry.total),
+    expire: optionalNumber(entry.expire),
+    active: entry.active === true,
+    nextUpdate: number(entry.next_update, 0),
+    error: text(entry.error)
+  }
+}
+
+function optionalNumber(value) {
+  return value === null || value === undefined ? null : number(value, null)
 }
 
 // What a subscription has spent of its quota and when it expires, for the
@@ -156,37 +163,33 @@ function subscriptionUsage(sub) {
   return out
 }
 
-function parseRules(raw) {
-  var data = parseJson(raw, [])
-  if (!data || typeof data.length !== "number") return []
-  var out = []
-  for (var i = 0; i < data.length; i++) {
-    var entry = data[i]
-    if (!entry) continue
-    var parts = ruleParts(entry.rule)
-    out.push({
-      index: number(entry.index, i + 1),
-      kind: text(entry.kind) || "prepend",
-      rule: text(entry.rule),
-      type: parts.type,
-      value: parts.value,
-      target: parts.target
-    })
+// `rules.list` is the runtime's rules in match order, each tagged with where
+// it came from. The owner's rules carry their 1-based index, which is what
+// `rules.remove` takes.
+function readRules(data) {
+  var list = data && typeof data === "object" ? data.rules : null
+  var out = { own: [], injected: [], subscription: [] }
+  if (!Array.isArray(list)) return out
+  for (var i = 0; i < list.length; i++) {
+    var entry = list[i]
+    if (!entry || typeof entry !== "object") continue
+    var rule = { type: text(entry.type), value: text(entry.value), target: text(entry.target) }
+    var source = text(entry.source)
+    if (source === "user") {
+      rule.index = out.own.length + 1
+      rule.rule = rule.type + "," + rule.value + "," + rule.target
+      out.own.push(rule)
+    } else if (source === "omihomo") {
+      out.injected.push(rule)
+    } else {
+      out.subscription.push(rule)
+    }
   }
   return out
 }
 
-function ruleParts(rule) {
-  var parts = text(rule).split(",")
-  return {
-    type: text(parts[0]).trim(),
-    value: parts.length > 1 ? text(parts[1]).trim() : "",
-    target: parts.length > 2 ? text(parts[2]).trim() : ""
-  }
-}
-
-// Mirrors the CLI's per-type validation so the form can refuse a rule before
-// spending a subprocess on it. `mihomo -t` at activation is still the real gate.
+// Mirrors the daemon's per-type validation for the form's four types so it
+// can refuse a rule before the call. The daemon is still the real gate.
 function validateRule(type, value, target) {
   if (text(target) === "") return "Pick a target"
   var v = text(value).trim()
@@ -214,58 +217,59 @@ function isCidr(value) {
   return v6[1].indexOf(":") !== -1 && number(v6[2], 129) <= 128
 }
 
-// ---------------------------------------------------------------- mihomo API
-
-function parseApiInfo(raw) {
-  var data = parseJson(raw, null)
-  if (!data || typeof data !== "object") return { address: "", secret: "" }
-  return { address: text(data.address), secret: text(data.secret) }
-}
-
-function parseConfigs(raw) {
-  var data = parseJson(raw, null)
-  if (!data || typeof data !== "object") data = {}
-  var tun = data.tun || {}
-  return {
-    mode: text(data.mode).toLowerCase(),
-    mixedPort: number(data["mixed-port"], 0),
-    port: number(data.port, 0),
-    routing: {
-      tunEnabled: tun.enable === true,
-      tunAutoRoute: tun["auto-route"] === true,
-      routeExcludeAddresses: Array.isArray(tun["route-exclude-address"])
-        ? tun["route-exclude-address"].filter(function(cidr) { return typeof cidr === "string" }) : []
-    }
-  }
-}
-
-// `GET /proxies` exposes groups and direct proxy entries. Provider-backed
-// configs may only appear in a group's `all` list, so callers must not assume
-// every visible config also has a top-level API entry.
-function parseProxies(raw) {
-  var data = parseJson(raw, null)
-  var proxies = data && typeof data === "object" ? data.proxies : null
+// `groups.list` and the `groups` stream: the running config's groups in its
+// own order, each with its members. Members become the group's `all` list,
+// and each member's last delay its config entry, the shape the configs view
+// draws from.
+function readGroups(data) {
+  var list = data && typeof data === "object" ? data.groups : null
   var groups = []
   var configs = dict()
-  if (!proxies || typeof proxies !== "object") return { groups: groups, configs: configs }
-  for (var name in proxies) {
-    var entry = proxies[name]
-    if (!entry || typeof entry !== "object") continue
-    if (entry.all && typeof entry.all.length === "number") {
-      groups.push({
-        name: text(entry.name) || text(name),
-        type: text(entry.type),
-        now: text(entry.now),
-        all: entry.all.slice(),
-        selectable: text(entry.type) === "Selector",
-        system: (text(entry.name) || text(name)) === "GLOBAL"
-      })
-    } else {
-      configs[text(name)] = entry
+  if (!Array.isArray(list)) return { groups: groups, configs: configs }
+  for (var i = 0; i < list.length; i++) {
+    var group = readGroup(list[i])
+    if (!group) continue
+    groups.push(group)
+    var members = Array.isArray(list[i].members) ? list[i].members : []
+    for (var j = 0; j < members.length; j++) {
+      var member = members[j]
+      if (!member || text(member.name) === "") continue
+      var delay = number(member.delay, 0)
+      configs[text(member.name)] = {
+        name: text(member.name),
+        type: text(member.type),
+        alive: member.alive === true,
+        history: delay > 0 ? [{ delay: delay }] : []
+      }
     }
   }
-  groups.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0) })
   return { groups: groups, configs: configs }
+}
+
+function readGroup(entry) {
+  if (!entry || typeof entry !== "object" || text(entry.name) === "") return null
+  var members = Array.isArray(entry.members) ? entry.members : []
+  var all = []
+  for (var i = 0; i < members.length; i++) {
+    if (members[i] && text(members[i].name) !== "") all.push(text(members[i].name))
+  }
+  return {
+    name: text(entry.name),
+    type: text(entry.type),
+    now: text(entry.now),
+    all: all,
+    selectable: entry.selectable === true,
+    system: text(entry.name) === "GLOBAL"
+  }
+}
+
+// A group in a list replaced by a fresher copy of itself, as `groups.select`
+// returns it.
+function replaceGroup(groups, group) {
+  if (!group) return groups
+  var out = []
+  for (var i = 0; i < groups.length; i++) out.push(groups[i].name === group.name ? group : groups[i])
+  return out
 }
 
 // Everything a rule can send traffic to, as dropdown options: the built-ins,
@@ -338,121 +342,67 @@ function historyDelay(entry) {
   return last ? number(last.delay, 0) : 0
 }
 
-function parseDelay(raw) {
-  var data = parseJson(raw, null)
-  if (!data || typeof data !== "object") return null
-  if (data.delay === undefined) return null
-  return number(data.delay, 0)
-}
-
-function parseGroupDelay(raw) {
-  var data = parseJson(raw, null)
+// `delay.test` maps each tested config to its delay; 0 is a failed test.
+function readDelays(data) {
+  var delays = data && typeof data === "object" ? data.delays : null
   var out = dict()
-  if (!data || typeof data !== "object") return out
-  for (var name in data) out[name] = number(data[name], 0)
+  if (!delays || typeof delays !== "object") return out
+  for (var name in delays) out[name] = number(delays[name], 0)
   return out
 }
 
-// `/traffic` streams one JSON object per line; a partial line parses to null
-// and is dropped rather than resetting the readout to zero.
-function parseTraffic(line) {
-  var data = parseJson(line, null)
+function readTraffic(data) {
   if (!data || typeof data !== "object") return null
   if (data.up === undefined && data.down === undefined) return null
   return { up: number(data.up, 0), down: number(data.down, 0) }
 }
 
-// One `curl -w '\n%{time_total}'` against cdn-cgi/trace serves both the egress
-// IP and the round trip through the selected config.
-function parseTrace(raw) {
-  var body = text(raw)
-  var ip = ""
-  var match = body.match(/^ip=(.+)$/m)
-  if (match) ip = text(match[1]).trim()
-  var latency = 0
-  var lines = body.split("\n")
-  for (var i = lines.length - 1; i >= 0; i--) {
-    var line = text(lines[i]).trim()
-    if (line === "") continue
-    if (/^\d+([.,]\d+)?$/.test(line)) latency = Math.round(parseFloat(line.replace(",", ".")) * 1000)
-    break
-  }
-  return { ip: ip, latency: latency }
+// `egress.check` measures the route through the proxy: where traffic leaves
+// it, and the round trip.
+function readEgress(data) {
+  if (!data || typeof data !== "object") return { ip: "", latency: 0 }
+  return { ip: text(data.ip), latency: Math.round(number(data.latency, 0)) }
 }
 
-// `GET /connections` only ever states what is open right now, so a panel that
-// renders it directly loses every connection the moment it finishes and
-// repaints its whole list on each poll. The three functions below turn that
-// snapshot into a log instead: `parseConnections` reads one snapshot,
+// The `connections` stream only ever states what is open right now, so a
+// panel that renders it directly loses every connection the moment it
+// finishes and repaints its whole list on each push. The functions below turn
+// that snapshot into a log instead: `readConnections` reads one snapshot,
 // `mergeConnectionLog` folds it into what came before, and `stackConnections`
 // collapses the result into the rows the view draws.
-function parseConnections(raw, nowMs) {
-  var data = parseJson(raw, null)
+function readConnections(data, nowMs) {
   var now = number(nowMs, Date.now())
   var out = { downloadTotal: 0, uploadTotal: 0, items: [] }
   if (!data || typeof data !== "object") return out
-  out.downloadTotal = number(data.downloadTotal, 0)
-  out.uploadTotal = number(data.uploadTotal, 0)
+  out.downloadTotal = number(data.download_total, 0)
+  out.uploadTotal = number(data.upload_total, 0)
   var list = data.connections
-  if (!list || typeof list.length !== "number") return out
+  if (!Array.isArray(list)) return out
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
-    if (!entry) continue
-    var metadata = entry.metadata || {}
-    var chains = entry.chains && typeof entry.chains.length === "number" ? entry.chains : []
-    var started = Date.parse(text(entry.start))
+    if (!entry || typeof entry !== "object") continue
+    var started = number(entry.started_at, 0)
     out.items.push({
       id: text(entry.id),
-      host: connectionHost(metadata),
-      network: text(metadata.network).toUpperCase(),
-      process: baseName(metadata.processPath) || text(metadata.process)
-        || (metadata.type === "Inner" ? "mihomo" : ""),
-      inboundType: text(metadata.type),
-      sourceIP: text(metadata.sourceIP),
-      sourcePort: number(metadata.sourcePort, 0),
-      destinationIP: text(metadata.destinationIP),
-      destinationPort: number(metadata.destinationPort, 0),
-      chain: chains.length > 0 ? text(chains[0]) : "",
-      rule: text(entry.rule) + (text(entry.rulePayload) !== "" ? "(" + text(entry.rulePayload) + ")" : ""),
+      host: connectionHost(entry),
+      network: text(entry.network).toUpperCase(),
+      process: baseName(entry.process) || (text(entry.inbound) === "inner" ? "mihomo" : ""),
+      inboundType: text(entry.inbound),
+      sourceIP: text(entry.source_ip),
+      sourcePort: number(entry.source_port, 0),
+      destinationIP: text(entry.destination_ip),
+      destinationPort: number(entry.destination_port, 0),
+      chain: text(entry.chain),
+      rule: text(entry.rule),
       upload: number(entry.upload, 0),
       download: number(entry.download, 0),
-      startMs: isFinite(started) ? started : now,
+      startMs: started > 0 ? started : now,
       open: true,
       lastSeenMs: now,
       closedAtMs: 0
     })
   }
   return out
-}
-
-/** Fills missing TUN process names from unique sockets on a local address. */
-function enrichConnections(items, table) {
-  var addresses = table && Array.isArray(table.addresses) ? table.addresses : []
-  var sockets = table && Array.isArray(table.sockets) ? table.sockets : []
-  return items.map(function(entry) {
-    if (entry.process !== "" || entry.inboundType !== "Tun" || entry.sourcePort <= 0) return entry
-    var source = socketAddress(entry.sourceIP)
-    if (addresses.map(socketAddress).indexOf(source) < 0) return entry
-    var matches = sockets.filter(function(socket) {
-      if (text(socket.network).toUpperCase() !== entry.network || socket.localPort !== entry.sourcePort) return false
-      var local = socketAddress(socket.localIP)
-      var wildcard = local === "*" || (local === "0.0.0.0" && ipv4Number(source) !== null)
-        || (local === "::" && source.indexOf(":") >= 0)
-      if (local !== source && !wildcard) return false
-      if (entry.network === "TCP" && socket.peerPort === 0) return false
-      return socket.peerPort === 0 || (socket.peerPort === entry.destinationPort
-        && socketAddress(socket.peerIP) === socketAddress(entry.destinationIP))
-    })
-    if (matches.length !== 1 || text(matches[0].process) === "") return entry
-    var enriched = {}
-    for (var key in entry) enriched[key] = entry[key]
-    enriched.process = text(matches[0].process)
-    return enriched
-  })
-}
-
-function socketAddress(value) {
-  return text(value).replace(/^\[|\]$/g, "").replace(/^::ffff:/i, "").toLowerCase()
 }
 
 // Fold one snapshot into the log. An id that is still there keeps its original
@@ -578,10 +528,10 @@ function openConnectionCount(log) {
   return open
 }
 
-function connectionHost(metadata) {
-  var host = text(metadata.host)
-  if (host === "") host = text(metadata.destinationIP)
-  var port = text(metadata.destinationPort)
+function connectionHost(entry) {
+  var host = text(entry.host)
+  if (host === "") host = text(entry.destination_ip)
+  var port = number(entry.destination_port, 0) > 0 ? text(entry.destination_port) : ""
   if (host === "") return port === "" ? "unknown" : ":" + port
   return port === "" ? host : host + ":" + port
 }
@@ -589,54 +539,6 @@ function connectionHost(metadata) {
 function baseName(path) {
   var parts = text(path).split("/")
   return text(parts[parts.length - 1])
-}
-
-// `GET /rules` returns the merged list with no marker for ours: the user's
-// prepended rules, then the ones Omihomo injects, then the subscription's.
-function parseApiRules(raw) {
-  var data = parseJson(raw, null)
-  var list = data && typeof data === "object" ? data.rules : null
-  var out = []
-  if (!list || typeof list.length !== "number") return out
-  for (var i = 0; i < list.length; i++) {
-    var entry = list[i]
-    if (!entry) continue
-    out.push({
-      type: apiRuleType(entry.type),
-      value: text(entry.payload),
-      target: text(entry.proxy)
-    })
-  }
-  return out
-}
-
-// Peels our prepended rules and then Omihomo's injected ones off the head of
-// the merged list. A rule the runtime does not carry yet is skipped rather
-// than swallowing a subscription rule.
-function splitApiRules(apiRules, ownRules, injected) {
-  var head = 0
-  var i
-  function peel(rule, typed) {
-    var theirs = apiRules[head]
-    if (!theirs || text(theirs.value) !== text(rule.value) || text(theirs.target) !== text(rule.target)) return
-    if (!typed || text(theirs.type).replace("IP-CIDR6", "IP-CIDR") === text(rule.type)) head++
-  }
-  for (i = 0; i < ownRules.length; i++) {
-    if (text(ownRules[i].kind) === "prepend") peel(ownRules[i], false)
-  }
-  var own = head
-  for (i = 0; i < injected.length; i++) peel(ruleParts(injected[i]), true)
-  return { injected: apiRules.slice(own, head), subscription: apiRules.slice(head) }
-}
-
-// mihomo reports rule types as CamelCase ("DomainSuffix"); the config syntax
-// the user writes is upper-kebab ("DOMAIN-SUFFIX").
-function apiRuleType(value) {
-  var raw = text(value)
-  if (raw === "") return ""
-  if (/^IPCIDR6?$/i.test(raw)) return raw.toUpperCase().replace("IPCIDR", "IP-CIDR")
-  if (/^GeoIP$/i.test(raw)) return "GEOIP"
-  return raw.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toUpperCase()
 }
 
 // ---------------------------------------------------------------- rule tester
@@ -876,9 +778,11 @@ function formatDate(ms) {
   return date.getDate() + " " + MONTHS[date.getMonth()]
 }
 
-function relativeTime(iso, nowMs) {
-  var then = Date.parse(text(iso))
-  if (!isFinite(then)) return ""
+// How long ago a unix-milliseconds time was; empty for 0, which the daemon
+// sends for "never".
+function relativeTime(ms, nowMs) {
+  var then = number(ms, 0)
+  if (then <= 0) return ""
   return relativeSince(then, nowMs)
 }
 
@@ -891,17 +795,6 @@ function relativeSince(thenMs, nowMs) {
   var hours = Math.floor(minutes / 60)
   if (hours < 24) return hours + "h ago"
   return Math.floor(hours / 24) + "d ago"
-}
-
-// systemd prints ActiveEnterTimestamp in local time with a weekday and a zone
-// abbreviation JS cannot parse, so read the calendar fields out of it.
-function parseUnitTimestamp(value) {
-  var match = text(value).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/)
-  if (!match) return 0
-  var date = new Date(number(match[1], 0), number(match[2], 1) - 1, number(match[3], 1),
-    number(match[4], 0), number(match[5], 0), number(match[6], 0))
-  var ms = date.getTime()
-  return isFinite(ms) ? ms : 0
 }
 
 function nextMode(mode) {
@@ -934,43 +827,43 @@ if (typeof module !== "undefined") {
   module.exports = {
     RULE_TYPES: RULE_TYPES,
     MODES: MODES,
-    GROUP_TYPES: GROUP_TYPES,
+    isSystemGroup: isSystemGroup,
+    text: text,
+    number: number,
+    dict: dict,
     parseJson: parseJson,
     defaultStatus: defaultStatus,
-    parseStatus: parseStatus,
+    readStatus: readStatus,
+    statusRouting: statusRouting,
     stateLabel: stateLabel,
-    cliError: cliError,
-    errorHint: errorHint,
-    parseSubscriptions: parseSubscriptions,
+    daemonError: daemonError,
+    readSubscriptions: readSubscriptions,
+    readSubscription: readSubscription,
     subscriptionUsage: subscriptionUsage,
-    parseRules: parseRules,
-    ruleParts: ruleParts,
+    readRules: readRules,
     validateRule: validateRule,
     isCidr: isCidr,
-    parseApiInfo: parseApiInfo,
-    parseConfigs: parseConfigs,
-    parseProxies: parseProxies,
-    isSystemGroup: isSystemGroup,
-    userGroups: userGroups,
+    readGroups: readGroups,
+    readGroup: readGroup,
+    replaceGroup: replaceGroup,
     ruleTargets: ruleTargets,
+    userGroups: userGroups,
     primaryGroupName: primaryGroupName,
     groupByName: groupByName,
     groupForConfig: groupForConfig,
     historyDelay: historyDelay,
-    parseDelay: parseDelay,
-    parseGroupDelay: parseGroupDelay,
-    parseTraffic: parseTraffic,
-    parseTrace: parseTrace,
-    parseConnections: parseConnections,
-    enrichConnections: enrichConnections,
+    readDelays: readDelays,
+    readTraffic: readTraffic,
+    readEgress: readEgress,
+    readConnections: readConnections,
     mergeConnectionLog: mergeConnectionLog,
     stackConnections: stackConnections,
     openConnectionCount: openConnectionCount,
     connectionHost: connectionHost,
-    parseApiRules: parseApiRules,
-    splitApiRules: splitApiRules,
-    apiRuleType: apiRuleType,
+    baseName: baseName,
     ruleQueryHost: ruleQueryHost,
+    ipv4Number: ipv4Number,
+    inIpv4Cidr: inIpv4Cidr,
     ruleVerdict: ruleVerdict,
     testRules: testRules,
     ruleTargetTally: ruleTargetTally,
@@ -984,7 +877,6 @@ if (typeof module !== "undefined") {
     formatDate: formatDate,
     relativeTime: relativeTime,
     relativeSince: relativeSince,
-    parseUnitTimestamp: parseUnitTimestamp,
     nextMode: nextMode,
     filterNames: filterNames,
     leadingEmoji: leadingEmoji

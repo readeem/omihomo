@@ -1,21 +1,17 @@
 # Tests
 
-Six suites, one runner:
+Four suites, one runner:
 
 - `model_test.js` exercises `widget/Model.js`, the widget's parsing and formatting seam, under
-  `node --test`. Everything the panel renders passes through it, and none of it needs QML.
-- `socket_processes_test.sh` checks the local socket lookup through the real CLI and model with
-  fake interface and socket data, including wildcard bindings, IPv6, absent owners, ambiguous
-  matches, and unavailable tools. It never opens a network connection or changes system state.
-- `service_state_test.sh` runs `widget/Service.qml` in an isolated Quickshell config and verifies that
-  a stale status response cannot repaint over a pending toggle, that an unconfirmed toggle gives
-  up after its deadline, that a controller outage keeps the last snapshot, and that slow socket
-  lookups cannot delay connections or overwrite newer state. Its fake CLI is
-  `/usr/bin/true`, so it cannot touch the real core, systemd unit, files, or controller.
-- `fake_controller_test.sh` runs `ping_state_test.qml` and `live_state_test.qml` against a fake
-  controller. The first holds requests open to verify the in-progress, success, and persistent
-  failure states for single, bulk, and egress latency checks. The second verifies that a read
-  already in flight cannot undo a selection and that a traffic stream which ends reconnects.
+  `node --test`. Every daemon message the panel renders passes through it, and none of it needs QML.
+- `daemon_state_test.sh` runs `widget/Service.qml` in isolated Quickshell configs against fake
+  daemons, `fixtures/fake-daemon.js`, each on a private socket: one that answers, one whose writes
+  fail, an older and a newer protocol, one that refuses the account, and a socket nobody listens
+  on. `service_state_test.qml` covers the connection, optimistic writes that a stale push cannot
+  undo and a failed reply rolls back, a dropped connection that keeps the last state, and a new
+  runtime. `live_state_test.qml` covers an open panel: latency tests in progress, success, and
+  failure, a selection that holds the egress check until its reply, traffic, connections, and a
+  subscription switch. The fake daemons hold no real state and never touch the network.
 - `cli_test.sh` runs the public `bin/omihomo` interface with isolated XDG directories and
   command stubs for mihomo, curl, and systemd.
 - `auto_update_test.sh` uses the same isolated CLI boundary with a fixed clock. It checks
@@ -50,6 +46,5 @@ the fake core in `internal/core/fakecore`. They connect as the owner and verify 
 a missing owner, or an untrusted owner file is refused before a request is read. CI runs them with
 `go vet`, `govulncheck` and `tests/run` on every pull request.
 
-CI runs `tests/run` in an Arch Linux container with Quickshell and the `shell/Commons` imports of
-the Omarchy release the widget targets, and sets `OMIHOMO_REQUIRE_QML=1`, which turns the skipped
-QML service suites into a failure.
+CI runs `tests/run` in an Arch Linux container with Quickshell, and sets `OMIHOMO_REQUIRE_QML=1`,
+which turns the skipped QML service suites into a failure.

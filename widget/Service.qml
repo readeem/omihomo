@@ -1,112 +1,107 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import qs.Commons
 import "Model.js" as Model
 
-// State for the Omihomo panel, split exactly the way ADR-0001 splits the
-// plugin: the CLI at `cliPath` owns disk and systemd, and everything live —
-// proxies, selection, latency, traffic, connections — is a direct call to
-// mihomo's external controller.
+// State for the Omihomo panel. Everything goes through one connection to the
+// daemon's socket (docs/daemon.md): requests carry an id and get one reply
+// each, and the daemon pushes every change on the streams this panel
+// subscribed to, whoever made it. Nothing here polls.
 //
-// Polling is scoped to what the user can actually see. `panelOpen` gates the
-// proxy/rule/subscription reads, the traffic stream, and the connections poll;
-// `connectionsOpen` only decides how fast that last one runs. The bar icon
-// needs `omihomo status` alone, which runs on the shared refresh timer whether
-// the panel is open or not.
+// The `status` stream is always on, since the bar icon needs it. The panel's
+// streams — groups, rules, subscriptions, traffic, and connections — run only
+// while the panel is open, and cost the daemon nothing otherwise.
 Item {
   id: root
 
-  property var settings: ({})
-  property string cliPath: ""
+  // `OMIHOMO_SOCKET` points the panel at another daemon, as it does the CLI.
+  property string socketPath: Quickshell.env("OMIHOMO_SOCKET") || "/run/omihomo/omihomo.sock"
   property bool panelOpen: false
-  property bool connectionsOpen: false
 
-  // ---- core status, from `omihomo status` (always exits 0) ----------------
+  // The protocol this widget speaks. A daemon that greets with another one is
+  // never sent a request.
+  readonly property int protocolVersion: 1
+
+  // ---- the connection -----------------------------------------------------
+  // "connecting" until the daemon greets this panel, then "ready". The rest
+  // are why there is nothing to talk to:
+  //   "absent"    no daemon answers on the socket: the core is not installed
+  //   "refused"   the daemon serves another account
+  //   "outdated"  the daemon speaks an older protocol than this widget
+  //   "newer"     the daemon speaks a newer protocol than this widget
+  property string link: "connecting"
+  property string daemonVersion: ""
+  readonly property bool ready: link === "ready"
+
+  // ---- status, from the `status` stream -----------------------------------
   property string coreState: "unknown"
   property string coreDetail: ""
   property string activeSubscription: ""
   property string configuredPrimaryGroup: ""
+  property string mode: ""
   property bool tunEnabled: false
   // Whether TUN uses the nftables-backed fast pairing. Off is the fallback that
   // needs no firewall rules, which is the repair when sing-tun cannot install
   // its nftables rules.
   property bool tunRedirect: false
-  property bool autostartEnabled: false
-  property bool permissionsOk: false
-  property bool hardeningPending: false
-  property int _syncAttempts: 0
   property bool tailscaleEnabled: false
   // Whether tailscaled is on this machine at all. The panel hides the row
   // rather than offering a toggle that can only fail.
   property bool tailscalePresent: false
   property bool tailnetProxy: false
   property double startedMs: 0
+  // What the rule tester needs to know about TUN routing.
+  property var routing: ({})
 
-  // Confirmed state keeps following status reads. While an action is settling,
-  // these desired values override it for rendering so an older read cannot
-  // repaint over the user's click. -1 means there is no pending boolean.
+  // Confirmed state follows the status stream. While a change is in flight,
+  // these desired values override it for rendering, so a push that left the
+  // daemon before the change landed cannot repaint over the user's click. -1
+  // means there is no pending boolean. The change's own reply clears them.
   property int _desiredCoreRunning: -1
   property int _desiredTunEnabled: -1
   property int _desiredTunRedirect: -1
-  property int _desiredAutostartEnabled: -1
   property int _desiredTailscaleEnabled: -1
   property int _desiredTailnetProxy: -1
-  // How long a command that succeeded may wait for status to agree with it.
-  // After that the observed state wins and the panel says the change did not
-  // take.
-  property int settleTimeoutMs: 15000
+  property string _desiredMode: ""
 
-  readonly property bool installed: coreState !== "not-installed" && coreState !== "unknown"
+  // The panel is usable once the daemon is greeted and has said what it is
+  // doing. A connection that drops keeps the last status, so a daemon
+  // restarting under socket activation does not flash the install card.
+  readonly property bool installed: coreState !== "unknown" && coreState !== "not-installed"
+    && link !== "absent" && link !== "refused" && link !== "outdated" && link !== "newer"
   readonly property bool coreRunning: coreState === "on" || coreState === "degraded"
   readonly property bool coreActive: _desiredCoreRunning === -1 ? coreRunning : _desiredCoreRunning === 1
   readonly property bool tunActive: _desiredTunEnabled === -1 ? tunEnabled : _desiredTunEnabled === 1
   readonly property bool tunRedirectActive: _desiredTunRedirect === -1
     ? tunRedirect : _desiredTunRedirect === 1
-  readonly property bool autostartActive: _desiredAutostartEnabled === -1
-    ? autostartEnabled : _desiredAutostartEnabled === 1
   readonly property bool tailscaleActive: _desiredTailscaleEnabled === -1
     ? tailscaleEnabled : _desiredTailscaleEnabled === 1
   readonly property bool tailnetProxyActive: _desiredTailnetProxy === -1
     ? tailnetProxy : _desiredTailnetProxy === 1
-  readonly property bool apiReady: coreRunning && apiAddress !== ""
-  // One run of one subscription. Anything read from the controller belongs to
-  // the runtime it was read from, and is dropped when this changes.
+  readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
+  // Whether live state — groups, traffic, connections — can be read now.
+  readonly property bool apiReady: ready && coreRunning
+  // One run of one subscription. Anything read from the core belongs to the
+  // runtime it was read from, and is dropped when this changes.
   readonly property string runtimeKey: activeSubscription + "|" + startedMs
 
-  // ---- controller ---------------------------------------------------------
-  property string apiAddress: ""
-  property string apiSecret: ""
-  readonly property string apiHeader: "Authorization: Bearer " + apiSecret + "\n"
-  property int mixedPort: 0
-  property string mode: ""
-  property var routing: ({})
-  property string _desiredMode: ""
-  readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
-
-  // ---- data ---------------------------------------------------------------
+  // ---- data, from the panel's streams -------------------------------------
   property var subscriptions: []
-  property var rules: []               // ours, from `omihomo rule list`
-  property var injectedRuleSpecs: []   // Omihomo's, from `omihomo rule injected`
-  property var apiRules: []            // the runtime's merged list, from `GET /rules`
-  readonly property var ruleLayers: Model.splitApiRules(apiRules, rules, injectedRuleSpecs)
-  readonly property var injectedRules: ruleLayers.injected            // Omihomo's, read-only
-  readonly property var subscriptionRules: ruleLayers.subscription   // the subscription's, read-only
+  property var rules: []               // the owner's, editable
+  property var injectedRules: []       // Omihomo's, read-only
+  property var subscriptionRules: []   // the subscription's, read-only
   signal ruleAdded()
   property var groups: []
-  property var configEntries: ({})     // config name -> `GET /proxies` entry
-  // Whether `/proxies` has answered for this run of the core. An empty `groups`
-  // means "not read yet" until it has, and "this subscription declares none"
-  // after — two states the panel has to word differently.
+  property var configEntries: ({})     // config name -> { name, type, alive, history }
+  // Whether the groups stream has answered for this run of the core. An empty
+  // `groups` means "not read yet" until it has, and "this subscription
+  // declares none" after — two states the panel has to word differently.
   property bool proxiesLoaded: false
-  // `/connections` is a snapshot of what is open right now, so the panel keeps
-  // its own log of it: `connectionLog` holds every connection seen since the
-  // core started, open or closed, and `connectionStacks` is what the view
-  // draws — one row per process, destination, and state.
+  // The `connections` stream is a snapshot of what is open right now, so the
+  // panel keeps its own log of it: `connectionLog` holds every connection seen
+  // since the core started, open or closed, and `connectionStacks` is what the
+  // view draws — one row per process, destination, and state.
   property var connectionLog: []
-  property var _pendingConnections: null
-  property string _connectionLookupRuntime: ""
-  property string _connectionReadRuntime: ""
   readonly property var connectionStacks: Model.stackConnections(connectionLog)
   readonly property int openConnectionCount: Model.openConnectionCount(connectionLog)
   readonly property int connectionLogCap: 200
@@ -115,7 +110,7 @@ Item {
 
   property double downloadRate: 0
   property double uploadRate: 0
-  // The last minute of `/traffic`, oldest first, one { down, up } per second.
+  // The last minute of traffic, oldest first, one { down, up } per push.
   property var trafficHistory: []
   readonly property int trafficHistoryCap: 60
   property string egressIp: ""
@@ -124,85 +119,48 @@ Item {
   property bool traceFailed: false
   property bool _traceQueued: false
 
-  // Manual results sit above `/proxies` snapshots. A slow snapshot may have
-  // started before the click, so it must not repaint an old latency over the
+  // Manual results sit above the groups stream. A push may have left the
+  // daemon before the click, so it must not repaint an old latency over the
   // test that the user is watching.
   property var configTestResults: ({}) // config name -> { state, delay }
-  property string _singleTestName: ""
-  property var _groupTestNames: []
-  property string _groupTestName: ""
   property var groupTestedAt: ({})     // group name -> ms of its last whole-group test
   property string pendingConfig: ""
   property string pendingSubscription: ""
 
   property string actionStatus: ""
   property string lastError: ""
-  property int lastErrorCode: 0
+  property string lastErrorCode: ""
   // Where the failed action lives, so the panel can show the error next to it:
   // "core", "configs", "rules", "conns", "settings", or "sub:<name>" ("sub:"
   // for an add).
   property string errorScope: ""
-  property string _subTarget: ""
-  property string _coreAction: ""
-  property string _overrideAction: ""
+
+  // The call in flight on each lane, 0 for none. A lane runs one call at a
+  // time, the way a button cannot be pressed twice.
+  property int _coreCall: 0
+  property int _settingsCall: 0
+  property int _subCall: 0
+  property int _ruleCall: 0
+  property int _selectCall: 0
+  property int _delayCall: 0
+  property int _egressCall: 0
+  property int _closeCall: 0
 
   readonly property string primaryGroup: Model.primaryGroupName(groups, configuredPrimaryGroup)
   readonly property var primaryGroupEntry: Model.groupByName(groups, primaryGroup)
   readonly property string currentConfig: primaryGroupEntry ? primaryGroupEntry.now : ""
-  readonly property bool busy: coreCmd.running || subActionCmd.running || overrideCmd.running || apiActionCmd.running
-  readonly property bool ruleSaving: overrideCmd.running && _overrideAction === "ruleAdd"
-  readonly property bool pingTestsRunning: delayCmd.running || groupDelayCmd.running
-
-  readonly property int refreshIntervalSec: {
-    var n = parseInt(String(setting("refreshIntervalSec", 10)), 10)
-    if (!isFinite(n)) n = 10
-    return Math.max(2, Math.min(3600, n))
-  }
+  readonly property bool busy: _coreCall !== 0 || _settingsCall !== 0 || _subCall !== 0
+    || _ruleCall !== 0 || _selectCall !== 0 || _closeCall !== 0
+  readonly property bool ruleSaving: _ruleCall !== 0
+  readonly property bool pingTestsRunning: _delayCall !== 0
 
   signal configChanged()
 
-  function setting(name, fallback) {
-    var value = settings ? settings[name] : undefined
-    return value === undefined || value === null ? fallback : value
-  }
+  // ---- messages -----------------------------------------------------------
 
-  // ---- plumbing -----------------------------------------------------------
-
-  function cli(args) {
-    return [cliPath].concat(args)
-  }
-
-  function apiArgs(method, path, body) {
-    var args = ["curl", "-fsS", "--max-time", "6", "--max-filesize", "16M", "-H", "@-"]
-    if (method !== "GET") args.push("-X", method)
-    if (body !== undefined && body !== "") args.push("-H", "Content-Type: application/json", "--data", body)
-    args.push("http://" + apiAddress + path)
-    return args
-  }
-
-  // The controller's address and secret are read once and then cached for the
-  // life of the panel, so anything that rotates them — reinstalling, or any
-  // fresh data directory, which writes a new random secret — leaves the panel
-  // holding credentials the core rejects. Every API read is a 401 after that,
-  // and since `omihomo status` authenticates with the secret on disk the core
-  // still reports itself healthy: groups, configs, and traffic just stay empty.
-  //
-  // curl reports an HTTP error as exit 22, which no transient hiccup produces —
-  // the core answered and turned us away. Dropping the cached address is enough
-  // to recover: the next status read fetches `api-info` again, and until it
-  // lands the panel says the controller is unreachable instead of showing
-  // nothing.
-  function noteApiFailure(code) {
-    if (code !== 22 || apiAddress === "") return
-    apiAddress = ""
-    apiSecret = ""
-    proxiesLoaded = false
-  }
-
-  function reportError(code, stderr, scope) {
-    var error = Model.cliError(stderr, code)
-    lastError = error.message
-    lastErrorCode = error.code
+  function reportError(error, scope) {
+    lastError = Model.daemonError(error)
+    lastErrorCode = error && error.code ? String(error.code) : ""
     errorScope = scope || "core"
     actionStatus = ""
     statusClearTimer.restart()
@@ -210,7 +168,7 @@ Item {
 
   function reportDone(message) {
     lastError = ""
-    lastErrorCode = 0
+    lastErrorCode = ""
     errorScope = ""
     actionStatus = message || ""
     if (actionStatus !== "") statusClearTimer.restart()
@@ -219,113 +177,263 @@ Item {
   function clearMessages() {
     actionStatus = ""
     lastError = ""
-    lastErrorCode = 0
+    lastErrorCode = ""
     errorScope = ""
+  }
+
+  // ---- calls --------------------------------------------------------------
+
+  property int _nextId: 1
+  // id -> function(result, error), for every call awaiting its reply.
+  property var _pending: ({})
+
+  // Sends one request. `done` gets the result, or null and the error; it is
+  // always called exactly once, with a "disconnected" error if the connection
+  // drops first. Returns the call's id, or 0 when there is no daemon to ask.
+  function call(op, args, done) {
+    if (!ready) return 0
+    var id = _nextId++
+    _pending[id] = done || null
+    var request = { id: id, op: op }
+    if (args !== undefined && args !== null) request.args = args
+    socket.write(JSON.stringify(request) + "\n")
+    socket.flush()
+    return id
+  }
+
+  function failPending() {
+    var pending = _pending
+    _pending = ({})
+    var error = { code: "disconnected", message: "The connection to the core dropped" }
+    for (var id in pending) if (pending[id]) pending[id](null, error)
+  }
+
+  function receive(line) {
+    var message = Model.parseJson(line, null)
+    if (!message || typeof message !== "object") return
+    if (message.type === "hello") return greet(message)
+    if (message.type === "refused") return refuse()
+    if (!ready) return
+    if (message.type === "reply") {
+      var done = _pending[message.id]
+      if (done === undefined) return
+      delete _pending[message.id]
+      if (done) done(message.error ? null : message.result, message.error || null)
+    } else if (message.type === "event" && !message.error) {
+      applyEvent(String(message.stream), message.data)
+    }
+  }
+
+  function greet(hello) {
+    helloTimer.stop()
+    var version = Number(hello.protocol)
+    daemonVersion = String(hello.version || "")
+    if (version !== protocolVersion) {
+      link = version < protocolVersion ? "outdated" : "newer"
+      forgetAll()
+      socket.connected = false
+      return
+    }
+    link = "ready"
+    reconnectTimer.attempt = 0
+    call("subscribe", { streams: wantedStreams() })
+  }
+
+  function refuse() {
+    helloTimer.stop()
+    link = "refused"
+    forgetAll()
+    socket.connected = false
+  }
+
+  readonly property var panelStreams: ["groups", "rules", "subscriptions", "traffic", "connections"]
+
+  function wantedStreams() {
+    return panelOpen ? ["status"].concat(panelStreams) : ["status"]
+  }
+
+  function applyEvent(stream, data) {
+    switch (stream) {
+    case "status": applyStatus(data); break
+    case "groups": applyGroups(data); break
+    case "rules": applyRules(data); break
+    case "subscriptions": subscriptions = Model.readSubscriptions(data); break
+    case "traffic": applyTraffic(data); break
+    case "connections": applyConnections(data); break
+    }
+  }
+
+  // ---- the socket ---------------------------------------------------------
+
+  // Bindings land in no fixed order while the panel is created, so nothing
+  // connects before it is complete and `socketPath` is final.
+  property bool _completed: false
+
+  function connect() {
+    if (!_completed || socket.connected || socketPath === "") return
+    reconnectTimer.stop()
+    socket.path = socketPath
+    socket.connected = true
+    helloTimer.restart()
+  }
+
+  // A connection that ends fails what it was waiting for and comes back with
+  // a backoff. A daemon that turned this panel away is asked again too, but
+  // more slowly: the owner may claim the install, or update it, meanwhile.
+  function disconnected() {
+    helloTimer.stop()
+    failPending()
+    if (link === "ready" || link === "connecting") link = "connecting"
+    downloadRate = 0
+    uploadRate = 0
+    reconnectTimer.restart()
+  }
+
+  // QLocalSocket::LocalSocketError: 0 refused, 2 not found, 3 access denied.
+  // A socket nobody listens on, or none at all, is a core that is not
+  // installed. One this account may not open belongs to another owner.
+  function connectFailed(error) {
+    if (error === 0 || error === 2) {
+      link = "absent"
+      forgetAll()
+    } else if (error === 3) {
+      link = "refused"
+      forgetAll()
+    }
+    socket.connected = false
+    reconnectTimer.restart()
+  }
+
+  Socket {
+    id: socket
+    parser: SplitParser {
+      onRead: function(line) { root.receive(line) }
+    }
+    onConnectedChanged: if (!connected) root.disconnected()
+    onError: function(error) { root.connectFailed(error) }
+  }
+
+  Timer {
+    id: reconnectTimer
+    property int attempt: 0
+    interval: root.link === "absent" ? 5000 : Math.min(30000, 1000 * Math.pow(2, attempt))
+    onTriggered: {
+      attempt += 1
+      root.connect()
+    }
+  }
+
+  // A daemon that accepts the connection but never greets is as good as none.
+  Timer {
+    id: helloTimer
+    interval: 5000
+    onTriggered: socket.connected = false
+  }
+
+  Component.onCompleted: {
+    _completed = true
+    connect()
+  }
+
+  onSocketPathChanged: {
+    if (!_completed) return
+    socket.connected = false
+    link = "connecting"
+    forgetAll()
+    Qt.callLater(connect)
+  }
+
+  // Opening the panel subscribes to what it shows; the daemon pushes each
+  // stream's current value at once, so the first open renders without
+  // waiting. Closing it drops them again.
+  onPanelOpenChanged: {
+    if (!ready) {
+      if (panelOpen) connect()
+      return
+    }
+    call(panelOpen ? "subscribe" : "unsubscribe", { streams: panelStreams })
+    if (panelOpen) {
+      refreshTrace()
+    } else {
+      downloadRate = 0
+      uploadRate = 0
+    }
   }
 
   // ---- reads --------------------------------------------------------------
 
-  // A poll leaves a read already in flight alone. `afterWrite` is for the read
-  // that confirms a write: an in-flight read began before the write landed, so
-  // its answer is dropped and the read runs again.
-  function refresh(afterWrite) {
-    if (cliPath === "") return
-    var read = afterWrite === true ? "relaunch" : "launch"
-    statusCmd[read](cli(["status"]))
-    if (!panelOpen) return
-    subsCmd[read](cli(["sub", "list"]))
-    rulesCmd[read](cli(["rule", "list"]))
-    injectedRulesCmd[read](cli(["rule", "injected"]))
-  }
-
-  function refreshLive(afterWrite) {
-    if (!apiReady) return
-    var read = afterWrite === true ? "relaunch" : "launch"
-    proxiesCmd[read](apiArgs("GET", "/proxies"))
-    configsCmd[read](apiArgs("GET", "/configs"))
-    apiRulesCmd[read](apiArgs("GET", "/rules"))
-  }
-
-  // The log only fills while the panel is on screen: every 2s in the
-  // connections view, and on the shared refresh interval everywhere else in
-  // the panel, which is enough to notice a connection has gone. A connection
-  // that opens and closes with the panel shut is never logged at all — the
-  // deliberate trade for a bar widget that costs nothing when nobody is
-  // looking at it.
-  function refreshConnections() {
-    if (!apiReady || !panelOpen) return
-    if (connectionsCmd.launch(apiArgs("GET", "/connections"))) _connectionReadRuntime = runtimeKey
+  // Streams keep everything current, so a manual refresh only re-subscribes:
+  // the daemon pushes every state stream's value again. Without a daemon, it
+  // tries to reach one now rather than at the next backoff.
+  function refresh() {
+    if (!ready) return connect()
+    call("subscribe", { streams: wantedStreams() })
   }
 
   // IP and latency are the only fields that cost a network round trip, so they
   // are event-driven: panel open, config or group change, or a click. A check
-  // only measures the route once it is known: it waits for the proxy port and
-  // for a pending selection to be confirmed, and a newer check replaces one
-  // already running.
+  // only measures the route once it is known: it waits for a pending
+  // selection to be confirmed, and a newer check replaces one already running.
   function refreshTrace() {
-    if (!coreRunning) return
+    if (!apiReady) return
     traceTesting = true
-    if (mixedPort <= 0 || pendingConfig !== "") {
+    if (pendingConfig !== "" || _egressCall !== 0) {
       _traceQueued = true
       return
     }
     _traceQueued = false
-    if (!traceCmd.relaunch(["curl", "-fsS", "--max-time", "8", "--max-filesize", "64K", "-w", "\n%{time_total}",
-      "-x", "http://127.0.0.1:" + mixedPort, "https://cloudflare.com/cdn-cgi/trace"]))
-      traceTesting = false
+    _egressCall = call("egress.check", null, function(result, error) {
+      root._egressCall = 0
+      if (root._traceQueued) return root.runQueuedTrace()
+      root.traceTesting = false
+      var egress = Model.readEgress(result)
+      // Keep the last known values. The row says "failed" until the next
+      // check, then a successful result replaces them.
+      if (error || egress.ip === "" || egress.latency <= 0) {
+        root.traceFailed = true
+        return
+      }
+      root.traceFailed = false
+      root.egressIp = egress.ip
+      root.egressLatency = egress.latency
+    })
+    if (_egressCall === 0) traceTesting = false
   }
 
   function runQueuedTrace() {
-    if (_traceQueued) refreshTrace()
+    if (_traceQueued && pendingConfig === "") refreshTrace()
   }
 
-  Component.onCompleted: if (cliPath !== "") syncCmd.launch(cli(["core", "sync"]))
-
-  // The panel's `panelOpen` binding lands after the panel's own
-  // `onOpenedChanged` handler has run, so an open-time `refresh()` called from
-  // there would still see a closed panel and skip the subscription and rule
-  // reads. Opening is therefore observed here, where `panelOpen` is already
-  // true, and the first open renders without waiting for a timer tick.
-  onPanelOpenChanged: {
-    if (!panelOpen) return
-    refresh()
-    refreshLive()
-    refreshTrace()
-  }
-
-  function applyStatus(raw) {
-    var status = Model.parseStatus(raw)
-    var wasReady = apiReady
+  function applyStatus(data) {
+    var status = Model.readStatus(data)
     var previousRuntime = runtimeKey
-    var confirmedCoreRunning = status.state === "on" || status.state === "degraded"
+    var wasRunning = coreRunning
     coreState = status.state
     coreDetail = status.detail
     activeSubscription = status.activeSubscription
     configuredPrimaryGroup = status.primaryGroup
+    mode = status.mode
     tunEnabled = status.tunEnabled
     tunRedirect = status.tunRedirect
-    autostartEnabled = status.autostartEnabled
-    permissionsOk = status.permissionsOk
-    hardeningPending = status.hardeningPending
     tailscaleEnabled = status.tailscaleEnabled
     tailscalePresent = status.tailscalePresent
     tailnetProxy = status.tailnetProxy
     startedMs = status.startedMs
-    if (_desiredCoreRunning !== -1 && confirmedCoreRunning === (_desiredCoreRunning === 1))
+    routing = Model.statusRouting(status)
+    if (_desiredCoreRunning !== -1 && coreRunning === (_desiredCoreRunning === 1))
       _desiredCoreRunning = -1
     if (_desiredTunEnabled !== -1 && tunEnabled === (_desiredTunEnabled === 1))
       _desiredTunEnabled = -1
     if (_desiredTunRedirect !== -1 && tunRedirect === (_desiredTunRedirect === 1))
       _desiredTunRedirect = -1
-    if (_desiredAutostartEnabled !== -1 && autostartEnabled === (_desiredAutostartEnabled === 1))
-      _desiredAutostartEnabled = -1
     if (_desiredTailscaleEnabled !== -1 && tailscaleEnabled === (_desiredTailscaleEnabled === 1))
       _desiredTailscaleEnabled = -1
     if (_desiredTailnetProxy !== -1 && tailnetProxy === (_desiredTailnetProxy === 1))
       _desiredTailnetProxy = -1
-    // A controller that stops answering keeps the unit's start time, so a
-    // transient outage keeps the last snapshot on screen. A stop, restart, or
-    // another subscription is a different runtime and starts from nothing.
+    if (_desiredMode !== "" && mode === _desiredMode) _desiredMode = ""
+    // A proxy that is starting keeps its last start time, so a hiccup keeps the
+    // last snapshot on screen. A stop, restart, or another subscription is a
+    // different runtime and starts from nothing.
     var runtimeChanged = runtimeKey !== previousRuntime
     if (runtimeChanged) forgetRuntime()
     if (!coreRunning) {
@@ -335,227 +443,250 @@ Item {
       traceTesting = false
       _traceQueued = false
     }
-    if (installed && apiAddress === "" && !apiInfoCmd.running) apiInfoCmd.launch(cli(["api-info"]))
-    // Another runtime means another egress path, and reads already in flight
-    // describe the old one.
-    if (panelOpen && apiReady) {
-      refreshLive(runtimeChanged)
-      if (!wasReady || runtimeChanged) refreshTrace()
-    }
+    // Another runtime means another egress path.
+    if (panelOpen && apiReady && (!wasRunning || runtimeChanged)) refreshTrace()
   }
 
   function forgetRuntime() {
     groups = []
     configEntries = ({})
     connectionLog = []
-    _pendingConnections = null
-    routing = ({})
     proxiesLoaded = false
-    mixedPort = 0
     configTestResults = ({})
-    _singleTestName = ""
-    _groupTestNames = []
     groupTestedAt = ({})
     trafficHistory = []
   }
 
-  function applyConfigs(raw) {
-    var parsed = Model.parseConfigs(raw)
-    mode = parsed.mode
-    mixedPort = parsed.mixedPort > 0 ? parsed.mixedPort : parsed.port
-    routing = parsed.routing
-    if (_desiredMode !== "" && mode === _desiredMode) _desiredMode = ""
-    runQueuedTrace()
+  // Everything the daemon said, for when there is no daemon to talk to.
+  function forgetAll() {
+    coreState = link === "absent" ? "not-installed" : "unknown"
+    coreDetail = ""
+    activeSubscription = ""
+    configuredPrimaryGroup = ""
+    mode = ""
+    tunEnabled = false
+    tunRedirect = false
+    tailscaleEnabled = false
+    tailscalePresent = false
+    tailnetProxy = false
+    startedMs = 0
+    routing = ({})
+    subscriptions = []
+    applyRules(null)
+    forgetRuntime()
+    downloadRate = 0
+    uploadRate = 0
+    traceTesting = false
+    _traceQueued = false
+    clearDesired()
   }
 
-  function pendingDesired() {
-    return _desiredCoreRunning !== -1 || _desiredTunEnabled !== -1 || _desiredTunRedirect !== -1
-      || _desiredAutostartEnabled !== -1 || _desiredTailscaleEnabled !== -1
-      || _desiredTailnetProxy !== -1 || _desiredMode !== ""
-  }
-
-  // Called when the settle deadline passes with a change still unconfirmed.
-  function abandonDesired() {
-    if (!pendingDesired()) return
-    var scope = _desiredCoreRunning !== -1 ? "core" : "settings"
+  function clearDesired() {
     _desiredCoreRunning = -1
     _desiredTunEnabled = -1
     _desiredTunRedirect = -1
-    _desiredAutostartEnabled = -1
     _desiredTailscaleEnabled = -1
     _desiredTailnetProxy = -1
     _desiredMode = ""
-    reportError(1, "mihomo did not reach the requested state", scope)
+  }
+
+  function applyGroups(data) {
+    var parsed = Model.readGroups(data)
+    groups = parsed.groups
+    configEntries = parsed.configs
+    proxiesLoaded = coreRunning
+  }
+
+  function applyRules(data) {
+    var parsed = Model.readRules(data)
+    rules = parsed.own
+    injectedRules = parsed.injected
+    subscriptionRules = parsed.subscription
+  }
+
+  function applyTraffic(data) {
+    var traffic = Model.readTraffic(data)
+    if (!traffic || !coreRunning) return
+    downloadRate = traffic.down
+    uploadRate = traffic.up
+    var history = trafficHistory.slice(1 - trafficHistoryCap)
+    history.push({ down: traffic.down, up: traffic.up })
+    trafficHistory = history
+  }
+
+  /** Folds one snapshot of what is open into the panel's connection log. */
+  function applyConnections(data) {
+    var now = Date.now()
+    var parsed = Model.readConnections(data, now)
+    connectionLog = Model.mergeConnectionLog(connectionLog, parsed.items, now, connectionLogCap)
+    connectionsDownload = parsed.downloadTotal
+    connectionsUpload = parsed.uploadTotal
   }
 
   // ---- writes -------------------------------------------------------------
 
-  function runCore(args, message, action) {
-    if (coreCmd.running) return false
-    _coreAction = action || ""
-    reportDone(message)
-    if (coreCmd.launch(cli(args))) return true
-    _coreAction = ""
+  function toggleCore() {
+    if (!installed || _coreCall !== 0) return
+    var desired = coreActive ? 0 : 1
+    _desiredCoreRunning = desired
+    reportDone(desired === 1 ? "Starting the proxy…" : "Stopping the proxy…")
+    _coreCall = call(desired === 1 ? "start" : "stop", null, function(result, error) {
+      root._coreCall = 0
+      root._desiredCoreRunning = -1
+      if (error) return root.reportError(error, "core")
+      root.applyStatus(result)
+      root.reportDone("")
+    })
+    if (_coreCall === 0) {
+      _desiredCoreRunning = -1
+      actionStatus = ""
+    }
+  }
+
+  // One typed setting. `desired` is the property holding its optimistic value
+  // and `pending` that value; the reply is the daemon's status after the
+  // change, and either way the optimistic value goes.
+  function changeSetting(args, desired, pending, message, scope) {
+    if (!ready || _settingsCall !== 0) return false
+    if (desired !== "") root[desired] = pending
+    reportDone(message || "")
+    _settingsCall = call("settings.set", args, function(result, error) {
+      root._settingsCall = 0
+      if (desired !== "") root[desired] = typeof pending === "string" ? "" : -1
+      if (error) return root.reportError(error, scope || "settings")
+      root.applyStatus(result)
+      root.reportDone("")
+    })
+    if (_settingsCall !== 0) return true
+    if (desired !== "") root[desired] = typeof pending === "string" ? "" : -1
+    actionStatus = ""
     return false
   }
 
-  function toggleCore() {
-    if (!installed || coreCmd.running) return
-    var desired = coreActive ? 0 : 1
-    _desiredCoreRunning = desired
-    if (!runCore(desired === 1 ? ["core", "start"] : ["core", "stop"],
-      desired === 1 ? "Starting mihomo…" : "Stopping mihomo…", "core"))
-      _desiredCoreRunning = -1
-  }
-
-  function repairCore() {
-    if (permissionsOk && !hardeningPending) return
-    runCore(["core", "repair"], "Repairing…", "repair")
-  }
-
-  // Autostart is systemd's `enable`, so it goes through the CLI like the rest
-  // of the unit's lifecycle; the next status read reports what stuck.
-  function toggleAutostart() {
-    if (!installed || coreCmd.running) return
-    var desired = autostartActive ? 0 : 1
-    _desiredAutostartEnabled = desired
-    if (!runCore(["core", "autostart", desired === 1 ? "on" : "off"],
-      desired === 1 ? "Enabling autostart…" : "Disabling autostart…", "autostart"))
-      _desiredAutostartEnabled = -1
-  }
-
   function setMode(next) {
-    if (overrideCmd.running || next === "" || next === effectiveMode) return
-    reportDone("")
-    _desiredMode = next
-    _overrideAction = "mode"
-    if (!overrideCmd.launch(cli(["set", "mode", next]))) {
-      _desiredMode = ""
-      _overrideAction = ""
-    }
+    if (next === "" || next === effectiveMode) return
+    changeSetting({ mode: next }, "_desiredMode", next)
   }
 
   function toggleTun() {
-    if (overrideCmd.running) return
     var desired = tunActive ? 0 : 1
-    reportDone(desired === 1 ? "Enabling TUN…" : "")
-    _desiredTunEnabled = desired
-    _overrideAction = "tun"
-    if (!overrideCmd.launch(cli(["set", "tun", desired === 1 ? "on" : "off"]))) {
-      _desiredTunEnabled = -1
-      _overrideAction = ""
-    }
+    changeSetting({ tun: desired === 1 }, "_desiredTunEnabled", desired,
+      desired === 1 ? "Enabling TUN…" : "")
   }
 
   // The repair for a TUN that will not start, or that starts and carries
   // nothing: turning the redirect off drops to the stack that needs no firewall
-  // rules. The CLI moves `auto-redirect` and `stack` together, so this is one
-  // toggle rather than two.
+  // rules.
   function toggleTunRedirect() {
-    if (overrideCmd.running) return
     var desired = tunRedirectActive ? 0 : 1
-    reportDone(desired === 1 ? "Enabling TUN acceleration…" : "Disabling TUN acceleration…")
-    _desiredTunRedirect = desired
-    _overrideAction = "tunRedirect"
-    if (!overrideCmd.launch(cli(["set", "tun-redirect", desired === 1 ? "on" : "off"]))) {
-      _desiredTunRedirect = -1
-      _overrideAction = ""
-    }
+    changeSetting({ tun_redirect: desired === 1 }, "_desiredTunRedirect", desired,
+      desired === 1 ? "Enabling TUN acceleration…" : "Disabling TUN acceleration…")
   }
 
-  // Turning this on asks for a root password, because tailscaled's environment
-  // is root-owned, so the message says so before the prompt appears.
   function toggleTailscale() {
-    if (overrideCmd.running || !tailscalePresent) return
+    if (!tailscalePresent) return
     var desired = tailscaleActive ? 0 : 1
-    reportDone(desired === 1 ? "Enabling Tailscale…" : "Disabling Tailscale…")
-    _desiredTailscaleEnabled = desired
-    _overrideAction = "tailscale"
-    if (!overrideCmd.launch(cli(["set", "tailscale", desired === 1 ? "on" : "off"]))) {
-      _desiredTailscaleEnabled = -1
-      _overrideAction = ""
-    }
+    changeSetting({ tailscale: desired === 1 }, "_desiredTailscaleEnabled", desired,
+      desired === 1 ? "Enabling Tailscale…" : "Disabling Tailscale…")
   }
 
   function toggleTailnetProxy() {
-    if (overrideCmd.running || !tailscalePresent) return
+    if (!tailscalePresent) return
     var desired = tailnetProxyActive ? 0 : 1
-    reportDone(desired === 1 ? "Routing the tailnet through the proxy…" : "Routing the tailnet through Tailscale…")
-    _desiredTailnetProxy = desired
-    _overrideAction = "tailnetProxy"
-    if (!overrideCmd.launch(cli(["set", "tailnet-proxy", desired === 1 ? "on" : "off"]))) {
-      _desiredTailnetProxy = -1
-      _overrideAction = ""
-    }
+    changeSetting({ tailnet_proxy: desired === 1 }, "_desiredTailnetProxy", desired,
+      desired === 1 ? "Routing the tailnet through the proxy…" : "Routing the tailnet through Tailscale…")
   }
 
   function setPrimaryGroup(name) {
-    if (overrideCmd.running || name === "") return
-    reportDone("")
-    _overrideAction = "group"
-    if (!overrideCmd.launch(cli(["set", "group", name]))) _overrideAction = ""
+    if (name === "") return
+    changeSetting({ primary_group: name }, "", 0, "", "configs")
   }
 
+  // Returns whether the write started; the form waits for `ruleAdded`.
   function addRule(type, value, target) {
-    if (overrideCmd.running) return false
+    if (!ready || _ruleCall !== 0) return false
     reportDone("")
-    _overrideAction = "ruleAdd"
-    if (!overrideCmd.launch(cli(["rule", "add", type, value, target]))) {
-      _overrideAction = ""
-      return false
-    }
-    return true
+    _ruleCall = call("rules.add", { type: type, value: value, target: target }, function(result, error) {
+      root._ruleCall = 0
+      if (error) return root.reportError(error, "rules")
+      root.applyRules(result)
+      root.reportDone("")
+      root.ruleAdded()
+    })
+    return _ruleCall !== 0
   }
 
   function removeRule(index) {
-    if (overrideCmd.running || index <= 0) return
+    if (!ready || _ruleCall !== 0 || index <= 0) return
     reportDone("")
-    _overrideAction = "rule"
-    if (!overrideCmd.launch(cli(["rule", "remove", String(index)]))) _overrideAction = ""
+    _ruleCall = call("rules.remove", { index: index }, function(result, error) {
+      root._ruleCall = 0
+      if (error) return root.reportError(error, "rules")
+      root.applyRules(result)
+    })
   }
 
-  // The subscription names itself from its own headers, so there is nothing to
-  // mark pending: the name only exists once the fetch has come back.
+  // One subscription action at a time. `target` is the subscription it acts
+  // on, "" for an add, which names itself only once the download is back.
+  function subscriptionCall(op, args, target, message) {
+    if (!ready || _subCall !== 0) return
+    pendingSubscription = target
+    reportDone(message)
+    _subCall = call(op, args, function(result, error) {
+      root._subCall = 0
+      root.pendingSubscription = ""
+      if (error) return root.reportError(error, "sub:" + target)
+      if (op === "subscriptions.activate") root.applyStatus(result)
+      root.reportDone("")
+    })
+    if (_subCall === 0) {
+      pendingSubscription = ""
+      actionStatus = ""
+    }
+  }
+
+  // The URL goes to the daemon and nowhere else: it usually carries a token,
+  // and no list shows it again.
   function addSubscription(url) {
-    if (subActionCmd.running) return
-    _subTarget = ""
-    reportDone("Fetching subscription…")
-    subActionCmd.input = url + "\n"
-    if (!subActionCmd.launch(cli(["sub", "add"]))) subActionCmd.input = ""
+    subscriptionCall("subscriptions.add", { url: url }, "", "Fetching subscription…")
   }
 
   function updateSubscription(name) {
-    if (subActionCmd.running || name === "") return
-    pendingSubscription = name
-    _subTarget = name
-    reportDone("Updating " + name + "…")
-    subActionCmd.launch(cli(["sub", "update", name]))
+    if (name === "") return
+    subscriptionCall("subscriptions.update", { name: name }, name, "Updating " + name + "…")
   }
 
   function activateSubscription(name) {
-    if (subActionCmd.running || name === "") return
-    pendingSubscription = name
-    _subTarget = name
-    reportDone("Activating " + name + "…")
-    subActionCmd.launch(cli(["sub", "activate", name]))
+    if (name === "") return
+    subscriptionCall("subscriptions.activate", { name: name }, name, "Activating " + name + "…")
   }
 
   function removeSubscription(name) {
-    if (subActionCmd.running || name === "") return
-    pendingSubscription = name
-    _subTarget = name
-    reportDone("")
-    subActionCmd.launch(cli(["sub", "remove", name]))
+    if (name === "") return
+    subscriptionCall("subscriptions.remove", { name: name }, name, "")
   }
 
-  // Selection is a direct API call: it is live state, not something the CLI
-  // persists (mihomo's `store-selected` does that for us).
+  // A selection is pending until its reply, which carries the group as the
+  // core now has it. Only a selection changes the egress path, so only a
+  // selection is allowed to spend the panel's one event-driven trace call.
   function selectConfig(group, config) {
-    if (!apiReady || apiActionCmd.running || group === "" || config === "") return
+    if (!apiReady || _selectCall !== 0 || group === "" || config === "") return
     pendingConfig = config
     reportDone("")
-    apiActionCmd.launch(apiArgs("PUT", "/proxies/" + encodeURIComponent(group),
-      JSON.stringify({ name: config })))
+    _selectCall = call("groups.select", { group: group, proxy: config }, function(result, error) {
+      root._selectCall = 0
+      root.pendingConfig = ""
+      if (error) {
+        root.reportError(error, "configs")
+      } else {
+        var updated = Model.readGroup(result)
+        if (updated) root.groups = Model.replaceGroup(root.groups, updated)
+        root.reportDone("")
+        root.configChanged()
+      }
+      root.runQueuedTrace()
+    })
+    if (_selectCall === 0) pendingConfig = ""
   }
 
   function configTestState(name) {
@@ -586,72 +717,64 @@ Item {
   // "testing" to their final result without repainting one by one.
   function finishConfigTests(names, delays) {
     var next = copyConfigTestResults()
-    var changedEntries = false
     for (var i = 0; i < names.length; i++) {
       var name = String(names[i])
       var delay = delays && delays[name] !== undefined ? Number(delays[name]) : 0
-      if (isFinite(delay) && delay > 0) {
-        applyDelay(name, delay, false)
-        changedEntries = true
-        next[name] = { state: "success", delay: delay }
-      } else {
-        next[name] = { state: "failed", delay: 0 }
-      }
+      next[name] = isFinite(delay) && delay > 0
+        ? { state: "success", delay: delay } : { state: "failed", delay: 0 }
     }
-    if (changedEntries) configEntriesChanged()
     configTestResults = next
+  }
+
+  // `proxies` names the configs to test; empty tests the whole group, which
+  // the core does concurrently.
+  function runDelayTest(group, names, whole) {
+    var runtime = runtimeKey
+    startConfigTests(names)
+    var args = whole ? { group: group } : { group: group, proxies: names }
+    _delayCall = call("delay.test", args, function(result, error) {
+      root._delayCall = 0
+      if (runtime !== root.runtimeKey) return
+      root.finishConfigTests(names, error ? {} : Model.readDelays(result))
+      if (!whole) return
+      var tested = {}
+      for (var name in root.groupTestedAt) tested[name] = root.groupTestedAt[name]
+      tested[group] = Date.now()
+      root.groupTestedAt = tested
+    })
+    if (_delayCall === 0) finishConfigTests(names, {})
   }
 
   function testConfig(name) {
     if (!apiReady || pingTestsRunning || name === "") return
-    // Provider-backed configs are listed inside a group's `all` array rather
-    // than exposed as top-level `/proxies/<name>` resources.
     var group = Model.groupForConfig(groups, name)
-    if (group === "") return
-    _singleTestName = name
-    startConfigTests([name])
-    if (!delayCmd.launch(apiArgs("GET", "/group/" + encodeURIComponent(group)
-      + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))) {
-      finishConfigTests([name], {})
-      _singleTestName = ""
-    }
+    if (group !== "") runDelayTest(group, [name], false)
   }
 
   function testGroup(name) {
     if (!apiReady || pingTestsRunning || name === "") return
     var group = Model.groupByName(groups, name)
     var names = group && group.all ? group.all.slice() : []
-    if (names.length === 0) return
-    _groupTestNames = names
-    _groupTestName = name
-    startConfigTests(names)
-    // The controller tests the group's configs concurrently. Process keeps
-    // that bulk request asynchronous from the panel's render loop.
-    if (!groupDelayCmd.launch(apiArgs("GET", "/group/" + encodeURIComponent(name)
-      + "/delay?timeout=5000&url=" + encodeURIComponent("http://www.gstatic.com/generate_204")))) {
-      finishConfigTests(names, {})
-      _groupTestNames = []
-    }
+    if (names.length > 0) runDelayTest(name, names, true)
   }
 
-  // A stack closes as one call: curl applies its -X to every URL it is given,
-  // so a row reading x4 costs one process rather than four, which `launch`
-  // would refuse anyway. It runs without -f because half a stack is often
-  // already gone by the time the row is activated, and a 404 on an id mihomo
-  // has forgotten is not something to report.
+  function closeConnections(args) {
+    if (!apiReady || _closeCall !== 0) return
+    _closeCall = call("connections.close", args, function(result, error) {
+      root._closeCall = 0
+      if (error) root.reportError(error, "conns")
+    })
+  }
+
+  // A stack closes as one call. Half a stack is often already gone by the time
+  // the row is activated, which the daemon does not count as a failure.
   function closeStack(stack) {
     var ids = stack ? stack.ids : null
-    if (!apiReady || !ids || ids.length === 0) return
-    var args = ["curl", "-sS", "--max-time", "6", "-H", "@-", "-X", "DELETE"]
-    for (var i = 0; i < ids.length; i++) {
-      args.push("http://" + apiAddress + "/connections/" + encodeURIComponent(ids[i]))
-    }
-    apiActionCmd.launch(args)
+    if (ids && ids.length > 0) closeConnections({ ids: ids.slice() })
   }
 
   function closeAllConnections() {
-    if (!apiReady) return
-    apiActionCmd.launch(apiArgs("DELETE", "/connections"))
+    closeConnections({ all: true })
   }
 
   // A closed connection exists only in the panel's log, so dropping one is a
@@ -676,428 +799,6 @@ Item {
       if (connectionLog[i].open) kept.push(connectionLog[i])
     }
     connectionLog = kept
-  }
-
-  // ---- processes ----------------------------------------------------------
-
-  // Every read and write is one short-lived process; `launch` refuses to
-  // overlap a call with itself, which is what keeps a slow curl from queueing
-  // a second copy behind it on the next tick. `relaunch` is for a call whose
-  // in-flight copy is already obsolete: that copy's answer is dropped and one
-  // fresh call runs after it.
-  component Cmd: Process {
-    id: cmd
-    property string outText: ""
-    property string errText: ""
-    property var queued: null
-    property string input: ""
-    signal finished(int code, string out, string err)
-
-    running: false
-    command: []
-    onStarted: if (stdinEnabled) { write(input); stdinEnabled = false }
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: cmd.outText = text }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: cmd.errText = text }
-    onExited: function(exitCode) {
-      if (cmd.queued === null) return cmd.finished(exitCode, cmd.outText, cmd.errText)
-      var next = cmd.queued
-      cmd.queued = null
-      Qt.callLater(function() { if (!cmd.launch(next)) cmd.finished(-1, "", "") })
-    }
-
-    function launch(args) {
-      if (running || !args || args.length === 0 || args[0] === "") return false
-      outText = ""
-      errText = ""
-      command = args
-      stdinEnabled = input !== ""
-      running = true
-      return true
-    }
-
-    function relaunch(args) {
-      if (!running) return launch(args)
-      if (!args || args.length === 0 || args[0] === "") return false
-      queued = args
-      return true
-    }
-  }
-
-  Cmd {
-    id: syncCmd
-    onFinished: function(code, out, err) {
-      if (code !== 0) {
-        root.reportError(code, err, "core")
-        if (root._syncAttempts < 3) syncRetry.restart()
-      }
-      root.refresh(true)
-    }
-  }
-
-  Timer {
-    id: syncRetry
-    interval: 30000
-    onTriggered: {
-      root._syncAttempts += 1
-      syncCmd.launch(root.cli(["core", "sync"]))
-    }
-  }
-
-  Cmd {
-    id: statusCmd
-    onFinished: function(code, out) { root.applyStatus(out) }
-  }
-
-  Cmd {
-    id: apiInfoCmd
-    onFinished: function(code, out) {
-      if (code !== 0) return
-      var info = Model.parseApiInfo(out)
-      root.apiAddress = info.address
-      root.apiSecret = info.secret
-      if (root.panelOpen && root.apiReady) root.refreshLive()
-    }
-  }
-
-  Cmd {
-    id: subsCmd
-    onFinished: function(code, out) { if (code === 0) root.subscriptions = Model.parseSubscriptions(out) }
-  }
-
-  Cmd {
-    id: rulesCmd
-    onFinished: function(code, out) {
-      if (code !== 0) return
-      root.rules = Model.parseRules(out)
-      if (root.apiReady) apiRulesCmd.launch(root.apiArgs("GET", "/rules"))
-    }
-  }
-
-  Cmd {
-    id: injectedRulesCmd
-    onFinished: function(code, out) {
-      var specs = code === 0 ? Model.parseJson(out, []) : []
-      root.injectedRuleSpecs = Array.isArray(specs) ? specs : []
-    }
-  }
-
-  Cmd {
-    id: apiRulesCmd
-    input: root.apiHeader
-    onFinished: function(code, out) {
-      root.apiRules = code === 0 ? Model.parseApiRules(out) : []
-      if (code !== 0) root.noteApiFailure(code)
-    }
-  }
-
-  Cmd {
-    id: proxiesCmd
-    input: root.apiHeader
-    onFinished: function(code, out) {
-      if (code !== 0) return root.noteApiFailure(code)
-      var parsed = Model.parseProxies(out)
-      root.groups = parsed.groups
-      root.configEntries = parsed.configs
-      root.proxiesLoaded = true
-      if (!apiActionCmd.running) root.confirmSelection()
-    }
-  }
-
-  Cmd {
-    id: configsCmd
-    input: root.apiHeader
-    onFinished: function(code, out) {
-      if (code !== 0) return root.noteApiFailure(code)
-      root.applyConfigs(out)
-    }
-  }
-
-  Cmd {
-    id: connectionsCmd
-    input: root.apiHeader
-    onFinished: function(code, out) {
-      if (root._connectionReadRuntime !== root.runtimeKey) return
-      if (code !== 0) return root.noteApiFailure(code)
-      root.applyConnections(out)
-    }
-  }
-
-  /** Records a controller snapshot and looks up missing process names. */
-  function applyConnections(out) {
-    var now = Date.now()
-    var parsed = Model.parseConnections(out, now)
-    connectionLog = Model.mergeConnectionLog(connectionLog, parsed.items, now, connectionLogCap)
-    connectionsDownload = parsed.downloadTotal
-    connectionsUpload = parsed.uploadTotal
-    if (cliPath !== "" && parsed.items.some(function(entry) {
-      return entry.process === "" && entry.inboundType === "Tun"
-    }) && socketProcessesCmd.launch(cli(["socket-processes"]))) {
-      _pendingConnections = parsed
-      _connectionLookupRuntime = runtimeKey
-    }
-  }
-
-  /** Enriches matching open connections from a lookup for the current core run. */
-  function finishConnections(socketTable) {
-    var parsed = _pendingConnections
-    _pendingConnections = null
-    if (!parsed || _connectionLookupRuntime !== runtimeKey || !socketTable) return
-    var candidates = Object.create(null)
-    parsed.items.forEach(function(entry) { candidates[entry.id] = entry })
-    connectionLog = connectionLog.map(function(entry) {
-      var candidate = candidates[entry.id]
-      if (!entry.open || !candidate || candidate.network !== entry.network
-        || candidate.sourceIP !== entry.sourceIP || candidate.sourcePort !== entry.sourcePort
-        || candidate.destinationIP !== entry.destinationIP || candidate.destinationPort !== entry.destinationPort)
-        return entry
-      return Model.enrichConnections([entry], socketTable)[0]
-    })
-  }
-
-  Cmd {
-    id: socketProcessesCmd
-    onFinished: function(code, out) {
-      root.finishConnections(code === 0 ? Model.parseJson(out, null) : null)
-    }
-  }
-
-  Cmd {
-    id: traceCmd
-    onFinished: function(code, out) {
-      root.traceTesting = false
-      if (code !== 0) {
-        // Keep the last known values internally. The row says "failed" until
-        // the next check, then a successful result replaces them.
-        root.traceFailed = true
-        return
-      }
-      var trace = Model.parseTrace(out)
-      if (trace.ip === "" || trace.latency <= 0) {
-        root.traceFailed = true
-        return
-      }
-      root.traceFailed = false
-      root.egressIp = trace.ip
-      root.egressLatency = trace.latency
-    }
-  }
-
-  Cmd {
-    id: delayCmd
-    input: root.apiHeader
-    onFinished: function(code, out) {
-      var name = root._singleTestName
-      root._singleTestName = ""
-      if (name === "") return
-      var delays = code === 0 ? Model.parseGroupDelay(out) : {}
-      var result = {}
-      if (delays[name] !== undefined) result[name] = delays[name]
-      root.finishConfigTests([name], result)
-    }
-  }
-
-  Cmd {
-    id: groupDelayCmd
-    input: root.apiHeader
-    onFinished: function(code, out) {
-      var names = root._groupTestNames
-      var group = root._groupTestName
-      root._groupTestNames = []
-      root._groupTestName = ""
-      if (names.length === 0) return
-      root.finishConfigTests(names, code === 0 ? Model.parseGroupDelay(out) : {})
-      var tested = {}
-      for (var name in root.groupTestedAt) tested[name] = root.groupTestedAt[name]
-      tested[group] = Date.now()
-      root.groupTestedAt = tested
-    }
-  }
-
-  Cmd {
-    id: coreCmd
-    onFinished: function(code, out, err) {
-      var action = root._coreAction
-      root._coreAction = ""
-      if (code !== 0) {
-        if (action === "core") root._desiredCoreRunning = -1
-        else if (action === "autostart") root._desiredAutostartEnabled = -1
-        root.reportError(code, err, action === "core" ? "core" : "settings")
-      }
-      else root.reportDone("")
-      root.settle()
-    }
-  }
-
-  Cmd {
-    id: subActionCmd
-    onFinished: function(code, out, err) {
-      input = ""
-      root.pendingSubscription = ""
-      if (code !== 0) root.reportError(code, err, "sub:" + root._subTarget)
-      else root.reportDone("")
-      root.settle()
-    }
-  }
-
-  Cmd {
-    id: overrideCmd
-    onFinished: function(code, out, err) {
-      var action = root._overrideAction
-      root._overrideAction = ""
-      if (code !== 0) {
-        if (action === "mode") root._desiredMode = ""
-        else if (action === "tun") root._desiredTunEnabled = -1
-        else if (action === "tunRedirect") root._desiredTunRedirect = -1
-        else if (action === "tailscale") root._desiredTailscaleEnabled = -1
-        else if (action === "tailnetProxy") root._desiredTailnetProxy = -1
-        root.reportError(code, err, action === "group" ? "configs"
-          : (action === "ruleAdd" || action === "rule" ? "rules" : "settings"))
-      }
-      else {
-        root.reportDone("")
-        if (action === "ruleAdd") root.ruleAdded()
-      }
-      root.settle()
-    }
-  }
-
-  Cmd {
-    id: apiActionCmd
-    input: root.apiHeader
-    onFinished: function(code, out, err) {
-      // Only a selection changes the egress path, so only a selection is
-      // allowed to spend the panel's one event-driven trace call.
-      // A selection stays pending until a read that began after it confirms it.
-      var wasSelection = root.pendingConfig !== ""
-      if (code !== 0) {
-        root.confirmSelection()
-        root.reportError(12, err, wasSelection ? "configs" : "conns")
-        root.noteApiFailure(code)
-      }
-      else {
-        root.reportDone("")
-        if (wasSelection) root.configChanged()
-      }
-      if (root.connectionsOpen) root.refreshConnections()
-      if (root.apiReady) proxiesCmd.relaunch(root.apiArgs("GET", "/proxies"))
-      else root.confirmSelection()
-    }
-  }
-
-  function confirmSelection() {
-    if (pendingConfig === "") return
-    pendingConfig = ""
-    runQueuedTrace()
-  }
-
-  // A write lands on disk before the state that reflects it, so re-read a beat
-  // after every action rather than trusting the command's own output.
-  function settle() {
-    delayedRefresh.restart()
-    if (pendingDesired()) settleTimer.restart()
-  }
-
-  // Record a fresh delay on the config entry too, so the parameters view sees
-  // the same manual result as the list's state overlay.
-  function applyDelay(name, delay, notify) {
-    var entry = configEntries[name]
-    if (!entry) return
-    if (!entry.history || typeof entry.history.length !== "number") entry.history = []
-    entry.history.push({ delay: delay })
-    entry.alive = delay > 0
-    if (notify !== false) configEntriesChanged()
-  }
-
-  // `/traffic` is a long-lived stream, so it runs only while the panel is on
-  // screen and dies with it rather than costing a socket all session. A stream
-  // that ends while it is still wanted zeroes its stale rates and reconnects
-  // with a backoff.
-  readonly property bool trafficWanted: panelOpen && apiReady
-  onTrafficWantedChanged: {
-    trafficRetry.attempt = 0
-    trafficRetry.stop()
-    trafficProcess.running = trafficWanted
-  }
-
-  Process {
-    id: trafficProcess
-    running: false
-    stdinEnabled: true
-    // Not apiArgs(): that carries a --max-time, which would sever the stream
-    // on a timer instead of keeping it open for as long as the panel is.
-    command: ["curl", "-fsS", "-N", "-H", "@-", "http://" + root.apiAddress + "/traffic"]
-    onStarted: { write(root.apiHeader); stdinEnabled = false }
-    stdout: SplitParser {
-      onRead: function(line) {
-        var traffic = Model.parseTraffic(line)
-        if (!traffic) return
-        trafficRetry.attempt = 0
-        root.downloadRate = traffic.down
-        root.uploadRate = traffic.up
-        var history = root.trafficHistory.slice(1 - root.trafficHistoryCap)
-        history.push({ down: traffic.down, up: traffic.up })
-        root.trafficHistory = history
-      }
-    }
-    onExited: {
-      stdinEnabled = true
-      root.downloadRate = 0
-      root.uploadRate = 0
-      if (root.trafficWanted) trafficRetry.restart()
-    }
-  }
-
-  Timer {
-    id: trafficRetry
-    property int attempt: 0
-    interval: Math.min(30000, 1000 * Math.pow(2, attempt))
-    onTriggered: {
-      attempt += 1
-      if (root.trafficWanted) trafficProcess.running = true
-    }
-  }
-
-  Timer {
-    id: refreshTimer
-    interval: root.refreshIntervalSec * 1000
-    repeat: true
-    running: true
-    triggeredOnStart: true
-    onTriggered: root.refresh()
-  }
-
-  Timer {
-    id: connectionsTimer
-    interval: root.connectionsOpen ? 2000 : root.refreshIntervalSec * 1000
-    repeat: true
-    running: root.panelOpen && root.apiReady
-    triggeredOnStart: true
-    onTriggered: root.refreshConnections()
-  }
-
-  Timer {
-    id: delayedRefresh
-    interval: 500
-    onTriggered: {
-      root.refresh(true)
-      root.refreshLive(true)
-    }
-  }
-
-  Timer {
-    id: settleTimer
-    interval: root.settleTimeoutMs
-    onTriggered: root.abandonDesired()
-  }
-
-  Timer {
-    interval: 1000
-    repeat: true
-    running: settleTimer.running && root.pendingDesired()
-    onTriggered: {
-      root.refresh()
-      root.refreshLive()
-    }
   }
 
   Timer {

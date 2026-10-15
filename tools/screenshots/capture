@@ -9,15 +9,16 @@ out=$(realpath -m "${1:-$root}")
 shell=/usr/share/omarchy/shell
 wallpaper=/usr/share/omarchy/themes/tokyo-night/backgrounds/0-winding-road.webp
 
-for need in qs jq "$shell/Commons" "$shell/Ui" "$wallpaper"; do
+for need in qs node "$shell/Commons" "$shell/Ui" "$wallpaper"; do
   [[ -e $need ]] || command -v "$need" >/dev/null || { printf 'capture needs %s\n' "$need" >&2; exit 2; }
 done
 
 umask 077
-work= child=
+work= child= daemon=
 cleanup() {
   trap '' INT TERM
   [[ -z $child ]] || { kill -TERM "$child" 2>/dev/null; wait "$child" || true; }
+  [[ -z $daemon ]] || { kill -TERM "$daemon" 2>/dev/null; wait "$daemon" || true; }
   [[ -z $work ]] || rm -rf -- "$work"
 }
 trap cleanup EXIT
@@ -26,27 +27,31 @@ trap 'exit 143' TERM
 work=$(mktemp -d /tmp/omihomo-shots.XXXXXX)
 
 # A private HOME holds the theme and font, so nothing of the desktop running
-# this leaks into the images, and the fake bin directory shadows every command
-# that would reach the network, Hyprland or the real core.
+# this leaks into the images, the fake bin directory shadows Hyprland, and the
+# panel talks to a fake daemon instead of the real core.
 config=$work/config
-mkdir -p "$config/omihomo/bin" "$work/fakebin" "$work/state" "$work/out" \
+mkdir -p "$work/fakebin" "$work/out" \
   "$work/home/.local/state/omarchy/current/theme" "$work/home/.config/fontconfig"
 cp -r "$root/widget" "$config/omihomo/"
 cp "$here/capture.qml" "$config/shell.qml"
 cp -r "$shell/Commons" "$shell/Ui" "$config/"
 cp "$here/KeyboardPanel.qml" "$config/Ui/"
-cp "$here/omihomo" "$config/omihomo/bin/omihomo"
-cp "$here/curl" "$here/hyprctl" "$work/fakebin/"
+cp "$here/hyprctl" "$work/fakebin/"
 cp "$here"/theme/{colors.toml,shell.toml} "$work/home/.local/state/omarchy/current/theme/"
 cp "$here/theme/fonts.conf" "$work/home/.config/fontconfig/"
+
+started=$(($(date +%s) - 12030))
+node "$here/daemon.js" "$work/omihomo.sock" "$here/data" "$started" &
+daemon=$!
+for _ in $(seq 100); do [[ -S $work/omihomo.sock ]] && break; sleep 0.05; done
 
 log=$work/capture.log
 env -i PATH="$work/fakebin:/usr/bin" HOME="$work/home" TZ=UTC LANG=C.UTF-8 \
   XDG_RUNTIME_DIR="$work" XDG_CONFIG_HOME="$work/home/.config" XDG_CACHE_HOME="$work/home/.cache" \
   QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_SCALE_FACTOR=2 \
   QT_QPA_PLATFORMTHEME= QT_QUICK_CONTROLS_STYLE=Fusion \
-  OMIHOMO_SHOTS_DATA="$here/data" OMIHOMO_SHOTS_STATE="$work/state" OMIHOMO_SHOTS_OUT="$work/out" \
-  OMIHOMO_SHOTS_STARTED=$(($(date +%s) - 12030)) OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
+  OMIHOMO_SOCKET="$work/omihomo.sock" OMIHOMO_SHOTS_OUT="$work/out" \
+  OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
   timeout -k 5s 60s qs --no-color -p "$config" >"$log" 2>&1 &
 child=$!
 wait "$child" || true
