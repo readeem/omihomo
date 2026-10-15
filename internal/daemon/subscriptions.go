@@ -502,6 +502,12 @@ func (d *server) downloadGeodata(ctx context.Context, f core.GeodataFile) (strin
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
+	// The file's age is read against the daemon's clock, so it is stamped
+	// by that clock too.
+	if err == nil {
+		now := d.cfg.now()
+		err = os.Chtimes(tmp.Name(), now, now)
+	}
 	if err != nil {
 		os.Remove(tmp.Name())
 		return "", fmt.Errorf("save geodata %s: %w", name, err)

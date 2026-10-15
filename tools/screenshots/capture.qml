@@ -4,7 +4,7 @@ import qs.Commons
 import qs.Commons as Commons
 import "omihomo/widget" as Omihomo
 
-// Opens the real panel against the fake CLI and controller, saves each view,
+// Opens the real panel against the fake daemon, saves each view,
 // then composes the README preview from three of them over the wallpaper.
 ShellRoot {
   id: capture
@@ -102,7 +102,7 @@ ShellRoot {
     interval: 45000
     running: true
     onTriggered: capture.fail("timed out at stage " + capture.stage + ": " + (capture.service ? JSON.stringify({
-      state: capture.service.coreState, api: capture.service.apiAddress, proxies: capture.service.proxiesLoaded,
+      state: capture.service.coreState, link: capture.service.link, proxies: capture.service.proxiesLoaded,
       subs: capture.service.subscriptions.length, rules: capture.service.subscriptionRules.length,
       traffic: capture.service.trafficHistory.length, egress: capture.service.egressIp,
       log: capture.service.connectionLog.length, error: capture.service.lastError

@@ -54,20 +54,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The Omarchy shell imports Service.qml uses, from the release the
-      # widget targets.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: basecamp/omarchy
-          ref: c668141e9c42b13c80c9ca4ea108e11708c5e8a5 # v4.0.4
-          path: .omarchy
-          sparse-checkout: shell/Commons
-          persist-credentials: false
-      - name: install Omarchy shell imports
-        run: |
-          install -d /usr/share/omarchy/shell
-          cp -r .omarchy/shell/Commons /usr/share/omarchy/shell/
-          rm -rf .omarchy
       # As an ordinary account, the way the suites run on a desktop.
       - name: tests/run
         run: |

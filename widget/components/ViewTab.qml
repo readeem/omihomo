@@ -16,7 +16,7 @@ Rectangle {
   property bool alert: false
   property bool gear: false
   readonly property bool current: panel.view === target
-  readonly property color iconColor: panel.needsRepair || panel.tunRedirectBlocked ? theme.urgent
+  readonly property color iconColor: panel.tunRedirectBlocked ? theme.urgent
     : (current || tabMouse.containsMouse ? theme.foreground : theme.dim)
   onIconColorChanged: settingsIcon.requestPaint()
 
@@ -134,7 +134,7 @@ Rectangle {
 
   PanelToolTip {
     visible: tabMouse.containsMouse
-    text: tab.gear ? (tab.panel.needsRepair ? "Settings · needs repair · M" : "Settings · M") : tab.label + " · " + tab.number
+    text: tab.gear ? "Settings · M" : tab.label + " · " + tab.number
     fontFamily: tab.theme.fontFamily
   }
 }

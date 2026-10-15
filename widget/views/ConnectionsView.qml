@@ -57,7 +57,7 @@ ColumnLayout {
     theme: view.theme
     visible: view.service.connectionStacks.length === 0
     Layout.fillWidth: true
-    text: view.panel.liveReady ? "Nothing logged yet." : "mihomo is not running."
+    text: view.panel.liveReady ? "Nothing logged yet." : "The proxy is not running."
     color: view.theme.dim
     font.pixelSize: Style.font.body
   }

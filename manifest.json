@@ -17,20 +17,6 @@
     "description": "Start and stop mihomo, switch subscriptions and configs, edit rules, and watch live connections.",
     "category": "Network",
     "allowMultiple": false,
-    "defaultSection": "right",
-    "defaults": {
-      "refreshIntervalSec": 10
-    },
-    "schema": [
-      {
-        "key": "refreshIntervalSec",
-        "type": "integer",
-        "label": "Status refresh interval (seconds)",
-        "min": 2,
-        "max": 3600,
-        "step": 1,
-        "defaultValue": 10
-      }
-    ]
+    "defaultSection": "right"
   }
 }
