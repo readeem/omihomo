@@ -31,6 +31,8 @@ jobs:
       # releases. no_easytier drops the one outbound that JITs, which the
       # unit's MemoryDenyWriteExecute= would kill. The tarball is built from
       # the commit alone, so building one commit again gives the same bytes.
+      # The vendor tarball is the dependencies' source the GPL asks for, and
+      # their notices ship with the binary.
       - name: build
         id: build
         run: |
@@ -43,10 +45,14 @@ jobs:
             -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
             -o "$stage/omihomo" ./cmd/omihomo
           install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles LICENSE "$stage/"
-          tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --numeric-owner \
-            -C dist -cf - "$name" | gzip -n > "dist/$name-x86_64.tar.gz"
-          rm -r "$stage"
-          (cd dist && sha256sum "$name-x86_64.tar.gz" > "$name-x86_64.tar.gz.sha256")
+          go mod vendor -o dist/vendor
+          (cd dist && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
+            LC_ALL=C sort | while read -r f; do printf '==> %s <==\n' "${f#vendor/}"; cat "$f"; echo; done) > "$stage/THIRD_PARTY_LICENSES"
+          pack() { tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --numeric-owner -C dist -cf - "$1" | gzip -n > "dist/$2"; }
+          pack "$name" "$name-x86_64.tar.gz"
+          pack vendor "$name-vendor.tar.gz"
+          rm -r "$stage" dist/vendor
+          (cd dist && for f in "$name-x86_64.tar.gz" "$name-vendor.tar.gz"; do sha256sum "$f" > "$f.sha256"; done)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cut -d' ' -f1 "dist/$name-x86_64.tar.gz.sha256")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -99,6 +105,7 @@ jobs:
         run: |
           pacman -U --noconfirm build/omihomo-bin-*.pkg.tar.zst
           omihomo version | grep -q "^omihomo v$VERSION "
+          grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo-bin/THIRD_PARTY_LICENSES
           systemctl is-enabled omihomo.socket omihomo.service
           systemd-analyze verify /usr/lib/systemd/system/omihomo.socket /usr/lib/systemd/system/omihomo.service
           systemd-analyze security --offline=yes --threshold=28 /usr/lib/systemd/system/omihomo.service

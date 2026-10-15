@@ -48,20 +48,20 @@ jobs:
           VERSION: ${{ needs.package.outputs.version }}
         run: |
           cd dist
-          sha256sum --check "omihomo-$VERSION-x86_64.tar.gz.sha256"
+          assets=("omihomo-$VERSION-x86_64.tar.gz" "omihomo-$VERSION-vendor.tar.gz")
+          for f in "${assets[@]}"; do sha256sum --check "$f.sha256"; done
           # Draft first: a failed upload must not expose an incomplete release.
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
           fi
           if [[ $(gh release view "$TAG" --json isDraft --jq .isDraft) == true ]]; then
-            gh release upload "$TAG" "omihomo-$VERSION-x86_64.tar.gz" "omihomo-$VERSION-x86_64.tar.gz.sha256" --clobber
+            for f in "${assets[@]}"; do gh release upload "$TAG" "$f" "$f.sha256" --clobber; done
             gh release edit "$TAG" --draft=false
           else
             # Reruns may repair AUR publication, but cannot replace released bytes.
             mkdir published
-            gh release download "$TAG" --dir published --pattern "omihomo-$VERSION-x86_64.tar.gz*"
-            cmp "omihomo-$VERSION-x86_64.tar.gz" "published/omihomo-$VERSION-x86_64.tar.gz"
-            cmp "omihomo-$VERSION-x86_64.tar.gz.sha256" "published/omihomo-$VERSION-x86_64.tar.gz.sha256"
+            gh release download "$TAG" --dir published --pattern "omihomo-$VERSION-*"
+            for f in "${assets[@]}"; do cmp "$f" "published/$f"; cmp "$f.sha256" "published/$f.sha256"; done
           fi
 
   aur:

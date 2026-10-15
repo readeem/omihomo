@@ -15,8 +15,11 @@ service's `MemoryDenyWriteExecute=yes` sandbox.
 The `release` workflow artifact contains:
 
 - `omihomo-X.Y.Z-x86_64.tar.gz`: a versioned directory with the binary, service unit, socket
-  unit, tmpfiles rule and license;
-- `omihomo-X.Y.Z-x86_64.tar.gz.sha256`: a SHA-256 checksum in `sha256sum` format.
+  unit, tmpfiles rule, license, and the license notices of every vendored dependency in
+  `THIRD_PARTY_LICENSES`, which the package installs under `/usr/share/licenses/omihomo-bin`;
+- `omihomo-X.Y.Z-vendor.tar.gz`: the `go mod vendor` tree, so the release carries the source of
+  every module linked into the binary, as GPLv3 requires;
+- a `.sha256` checksum for each, in `sha256sum` format.
 
 The archive uses sorted entries, the commit timestamp, fixed ownership, and gzip without a
 stored timestamp. The package job renders `packaging/aur/PKGBUILD` with the actual version

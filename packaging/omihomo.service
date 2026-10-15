@@ -6,10 +6,9 @@
 [Unit]
 Description=Omihomo proxy daemon
 Documentation=https://github.com/readeem/omihomo/blob/main/docs/daemon.md
-# Subscription downloads want a network; resolvectl wants resolved.
-# Ordering only.
-Wants=network-online.target
-After=network-online.target systemd-resolved.service
+# The proxy comes back before the network does, on what was last accepted;
+# refreshes wait for the network on their own. resolvectl wants resolved.
+After=network.target systemd-resolved.service
 
 [Service]
 Type=notify
