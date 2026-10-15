@@ -109,6 +109,9 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	if req.URL.Scheme != "https" || req.URL.Host == "" {
 		return fmt.Errorf("redirect refused: %w", ErrInsecure)
 	}
+	// The client names the URL it was sent from, token and all, to wherever
+	// it is sent next.
+	req.Header.Del("Referer")
 	return nil
 }
 

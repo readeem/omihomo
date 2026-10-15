@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/metacubex/mihomo/component/geodata/router"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/readeem/omihomo/internal/core"
 )
 
@@ -76,8 +79,35 @@ func TestBrokenGeodataIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "download")
 	os.WriteFile(path, []byte("<html>not a database</html>"), 0o600)
 	for _, f := range []core.GeodataFile{{Path: "/x/geoip.metadb"}, {Path: "/x/GeoLite2-ASN.mmdb"}, {Path: "/x/GeoSite.dat"}} {
-		if err := shared.CheckGeodata(f, path); err == nil {
+		if err := shared.CheckGeodata(f, path, core.Profile{}); err == nil {
 			t.Errorf("%s took garbage", filepath.Base(f.Path))
 		}
+	}
+}
+
+// A site list must hold the categories the rules match.
+func TestASiteListNeedsTheCategoriesInUse(t *testing.T) {
+	list := &router.GeoSiteList{Entry: []*router.GeoSite{
+		{CountryCode: "CN", Domain: []*router.Domain{{Type: router.Domain_Domain, Value: "example.cn"}}},
+	}}
+	data, err := proto.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "site")
+	f := core.GeodataFile{Path: "/x/GeoSite.dat"}
+	uses := func(rules ...core.Rule) core.Profile { return core.Profile{Rules: rules} }
+	os.WriteFile(path, data, 0o600)
+	if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "cn", Target: "DIRECT"},
+		core.Rule{Type: "NOT", Value: "((GEOSITE,!CN@ads))", Target: "DIRECT"})); err != nil {
+		t.Fatalf("a list with the category = %v", err)
+	}
+	if err := shared.CheckGeodata(f, path, uses(core.Rule{Type: "GEOSITE", Value: "google", Target: "DIRECT"})); err == nil {
+		t.Error("a list without the category was taken")
+	}
+	// One empty entry is a valid message but no list.
+	os.WriteFile(path, []byte{0x0a, 0x00}, 0o600)
+	if err := shared.CheckGeodata(f, path, core.Profile{}); err == nil {
+		t.Error("an empty site list was taken")
 	}
 }

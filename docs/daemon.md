@@ -279,7 +279,8 @@ core/                    the core's home: selection cache and geodata
 
 Settings are typed and each is checked by the daemon; there is no raw YAML, so the owner account
 cannot make the root daemon run something the settings do not describe. A change the core would
-not run is refused, whether or not the proxy runs. The service starts at
+not run is refused, whether or not the proxy runs, and so is one whose geodata does not
+download, since the core cannot check it. The service starts at
 boot and turns the proxy back on if it was on, running what was last accepted, and retries every
 minute until it comes up or the owner starts or stops it.
 
@@ -293,7 +294,7 @@ while that subscription runs.
 ## Subscriptions
 
 The daemon downloads subscriptions, their providers and geodata itself, with one downloader:
-HTTPS only, redirects included; at most 64 MiB once decoded, for a subscription and all its
+HTTPS only, redirects included, which never send a `Referer`; at most 64 MiB once decoded, for a subscription and all its
 providers together; 10 seconds to connect and 60 for the
 whole download, 5 minutes for geodata; `clash.meta` as the user agent; no proxy from the
 environment. Errors never repeat a URL, which may carry a token, and no list shows one.
@@ -339,8 +340,8 @@ apart. Subscription records show the last error and the next refresh.
 
 Geodata the rules need (`GEOIP`, `GEOSITE`, ASN rules, in rule sets too) is downloaded into the
 core's home before the core runs them, from MetaCubeX's releases, and again once it is a week
-old. A download replaces the file in place only once the core has opened it: mihomo exits on a
-database it cannot read. Without the files the proxy does not start.
+old. A download replaces the file in place only once the core has opened it and found the site
+categories the rules use: mihomo exits on a database it cannot read. Without the files the proxy does not start.
 
 ## The mihomo core
 

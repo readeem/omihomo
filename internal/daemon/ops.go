@@ -404,12 +404,10 @@ func (d *server) saveSettings(next state.Settings) *protocol.Error {
 func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profile) *protocol.Error {
 	if !d.running() {
 		// Nothing runs, but what is stored is what the next start runs, so
-		// the core checks it. Geodata that cannot download now only means
-		// the check waits for the start.
+		// the core checks it, with the geodata that takes.
 		cfg := runConfig(next, p)
 		if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
-			d.log.Warn("a change is stored unchecked", "err", err)
-			return nil
+			return fail(protocol.CodeFetch, "%v", err)
 		}
 		if err := d.core.Check(ctx, cfg); err != nil {
 			return fail(protocol.CodeCore, "the core would not run it: %v", err)

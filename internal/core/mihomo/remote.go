@@ -2,9 +2,11 @@ package mihomo
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/metacubex/mihomo/common/convert"
@@ -67,7 +69,36 @@ func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
 	return out
 }
 
-func (c *Core) CheckGeodata(f core.GeodataFile, path string) error {
+// siteRule finds the categories GEOSITE rules match, on their own or nested
+// in a logic rule.
+var siteRule = regexp.MustCompile(`(?i)(?:^|[(,])\s*GEOSITE\s*,\s*([^,()]+)`)
+
+// siteCategories are the GEOSITE categories p's rules match, without
+// negation or attributes.
+func siteCategories(p core.Profile) []string {
+	var out []string
+	scan := func(line string) {
+		for _, m := range siteRule.FindAllStringSubmatch(line, -1) {
+			name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(m[1]), "!"), "@")
+			if name != "" && !slices.ContainsFunc(out, func(s string) bool { return strings.EqualFold(s, name) }) {
+				out = append(out, name)
+			}
+		}
+	}
+	for _, r := range p.Rules {
+		scan(r.Type + "," + r.Value)
+	}
+	for _, rs := range p.RuleSets {
+		if rs.Behavior == "classical" {
+			for _, line := range rs.Payload {
+				scan(line)
+			}
+		}
+	}
+	return out
+}
+
+func (c *Core) CheckGeodata(f core.GeodataFile, path string, p core.Profile) error {
 	switch filepath.Base(f.Path) {
 	case filepath.Base(C.Path.GeoSite()):
 		data, err := os.ReadFile(path)
@@ -75,8 +106,22 @@ func (c *Core) CheckGeodata(f core.GeodataFile, path string) error {
 			return err
 		}
 		var list router.GeoSiteList
-		if err := proto.Unmarshal(data, &list); err != nil || len(list.Entry) == 0 {
+		if err := proto.Unmarshal(data, &list); err != nil {
 			return errors.New("not a site list")
+		}
+		domains := 0
+		for _, e := range list.Entry {
+			domains += len(e.Domain)
+		}
+		if domains == 0 {
+			return errors.New("the site list is empty")
+		}
+		for _, name := range siteCategories(p) {
+			if !slices.ContainsFunc(list.Entry, func(e *router.GeoSite) bool {
+				return strings.EqualFold(e.CountryCode, name) && len(e.Domain) > 0
+			}) {
+				return fmt.Errorf("the site list has no category %q, which the rules use", name)
+			}
 		}
 		return nil
 	default:

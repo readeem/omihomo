@@ -469,14 +469,14 @@ func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("geodata %s: %w", filepath.Base(f.Path), err)
 		}
-		if err := d.fetchGeodata(ctx, f); err != nil {
+		if err := d.fetchGeodata(ctx, f, p); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d *server) fetchGeodata(ctx context.Context, f core.GeodataFile) error {
+func (d *server) fetchGeodata(ctx context.Context, f core.GeodataFile, p core.Profile) error {
 	name := filepath.Base(f.Path)
 	d.log.Info("downloading geodata", "file", name)
 	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: f.URL, Timeout: geodataTimeout})
@@ -499,7 +499,7 @@ func (d *server) fetchGeodata(ctx context.Context, f core.GeodataFile) error {
 		return fmt.Errorf("save geodata %s: %w", name, err)
 	}
 	// What is in place keeps working until a download proves usable.
-	if err := d.core.CheckGeodata(f, tmp.Name()); err != nil {
+	if err := d.core.CheckGeodata(f, tmp.Name(), p); err != nil {
 		return fmt.Errorf("the geodata %s that downloaded is not usable: %w", name, err)
 	}
 	if err := os.Rename(tmp.Name(), f.Path); err != nil {
@@ -519,7 +519,7 @@ func (d *server) refreshGeodata(ctx context.Context) {
 		if err != nil || d.cfg.now().Sub(info.ModTime()) < geodataAge {
 			continue
 		}
-		if err := d.fetchGeodata(ctx, f); err != nil {
+		if err := d.fetchGeodata(ctx, f, p); err != nil {
 			d.log.Warn("geodata update failed", "err", err)
 		}
 	}

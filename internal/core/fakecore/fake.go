@@ -299,7 +299,7 @@ func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
 }
 
 // CheckGeodata takes any file that is not empty.
-func (c *Core) CheckGeodata(f core.GeodataFile, path string) error {
+func (c *Core) CheckGeodata(f core.GeodataFile, path string, p core.Profile) error {
 	info, err := os.Stat(path)
 	if err == nil && info.Size() == 0 {
 		err = errors.New("empty")

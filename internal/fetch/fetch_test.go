@@ -121,6 +121,33 @@ func TestRedirects(t *testing.T) {
 	}
 }
 
+// A redirect never tells the next server where it came from: that URL
+// carries the subscription's token.
+func TestRedirectsSendNoReferer(t *testing.T) {
+	referers := make(chan string, 4)
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		referers <- r.Header.Get("Referer")
+		if r.URL.Path == "/hop" {
+			http.Redirect(w, r, "/final", http.StatusFound)
+			return
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer other.Close()
+	srv, f := server(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/hop", http.StatusFound)
+	})
+	if _, err := get(f, srv.URL+"/s?token="+token); err != nil {
+		t.Fatal(err)
+	}
+	close(referers)
+	for ref := range referers {
+		if ref != "" {
+			t.Errorf("a redirect sent Referer %q", ref)
+		}
+	}
+}
+
 func TestTooLarge(t *testing.T) {
 	const limit = 1 << 10
 	big := bytes.Repeat([]byte("a"), limit+1)

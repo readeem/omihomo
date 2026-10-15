@@ -625,3 +625,25 @@ func TestChangesWhileStoppedAreChecked(t *testing.T) {
 		t.Fatalf("the refused rule was kept: %+v", list)
 	}
 }
+
+// A change that needs geodata which does not download is not kept unchecked.
+func TestAChangeNeedingGeodataThatDoesNotComeIsRefused(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	c0 := fakecore.New()
+	c0.SetGeodata(func(p core.Profile) []core.GeodataFile {
+		if slices.ContainsFunc(p.Rules, func(r core.Rule) bool { return r.Type == "GEOSITE" }) {
+			return []core.GeodataFile{{Path: filepath.Join(t.TempDir(), "GeoSite.dat"), URL: o.URL + "/geosite.dat"}}
+		}
+		return nil
+	})
+	h := serveCore(t, os.Getuid(), c0, o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "GEOSITE", Value: "cn", Target: "DIRECT"}); err.Code != protocol.CodeFetch {
+		t.Fatalf("a rule whose geodata does not come = %v", err)
+	}
+	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Rules) != 0 {
+		t.Fatalf("the rule was kept: %+v", list)
+	}
+}
