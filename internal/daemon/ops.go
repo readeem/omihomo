@@ -17,75 +17,8 @@ import (
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/state"
 )
-
-type settings struct {
-	mode         string
-	tun          bool
-	tunRedirect  bool
-	tailscale    bool
-	tailnetProxy bool
-	primaryGroup string
-}
-
-func defaultSettings() settings { return settings{mode: protocol.ModeRule} }
-
-// tunBypass is the address space that never leaves through TUN: loopback,
-// the private, CGNAT and link-local ranges, the documentation and multicast
-// blocks, and their IPv6 equivalents. Without it auto-route swallows the
-// LAN, and the router, printers and local DNS stop answering once TUN is up.
-//
-// The multicast and reserved space stops just short of the last address:
-// sing-tun cannot put a range that runs to it in an nftables interval set,
-// and TUN redirect then never starts.
-var tunBypass = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	tailnetRange,
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("224.0.0.0/4"),
-	netip.MustParsePrefix("240.0.0.0/5"),
-	netip.MustParsePrefix("::/127"),
-	netip.MustParsePrefix("fc00::/7"),
-	netip.MustParsePrefix("fe80::/10"),
-	netip.MustParsePrefix("ff00::/9"),
-}
-
-var (
-	tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
-	// Tailscale's MagicDNS resolver sits inside the tailnet range but must
-	// still be answered by Tailscale when the rest of the tailnet is proxied.
-	tailscaleDNS = netip.MustParsePrefix("100.100.100.100/32")
-)
-
-func (s settings) bypass() []netip.Prefix {
-	if !s.tailnetProxy {
-		return slices.Clone(tunBypass)
-	}
-	out := slices.DeleteFunc(slices.Clone(tunBypass), func(p netip.Prefix) bool { return p == tailnetRange })
-	return append(out, tailscaleDNS)
-}
-
-func (s settings) config(profile core.Profile) core.Config {
-	return core.Config{
-		Mode:         s.mode,
-		TUN:          s.tun,
-		TUNRedirect:  s.tunRedirect,
-		Tailscale:    s.tailscale,
-		TailnetProxy: s.tailnetProxy,
-		PrimaryGroup: s.primaryGroup,
-		TUNBypass:    s.bypass(),
-		Profile:      profile,
-	}
-}
 
 // Bounds on what a client may name in one call.
 const (
@@ -217,9 +150,41 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return nil, err
 		}
 		return d.egress(ctx)
-	case protocol.OpSubscriptions, protocol.OpSubscriptionAdd, protocol.OpSubscriptionUpdate,
-		protocol.OpSubscriptionUse, protocol.OpSubscriptionRemove, protocol.OpRuleAdd, protocol.OpRuleRemove:
-		return nil, fail(protocol.CodeUnsupported, "%s is not implemented by this daemon yet", req.Op)
+	case protocol.OpSubscriptions:
+		if err := decode(req.Args, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return d.subscriptionList(), nil
+	case protocol.OpSubscriptionAdd:
+		var args protocol.SubscriptionURLArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		return d.addSubscription(ctx, args.URL)
+	case protocol.OpSubscriptionUpdate, protocol.OpSubscriptionUse, protocol.OpSubscriptionRemove:
+		var args protocol.NameArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		switch req.Op {
+		case protocol.OpSubscriptionUpdate:
+			return d.updateSubscription(ctx, args.Name)
+		case protocol.OpSubscriptionUse:
+			return d.activateSubscription(ctx, args.Name)
+		}
+		return d.removeSubscription(ctx, args.Name)
+	case protocol.OpRuleAdd:
+		var args protocol.RuleArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		return d.addRule(ctx, args)
+	case protocol.OpRuleRemove:
+		var args protocol.IndexArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		return d.removeRule(ctx, args.Index)
 	default:
 		return nil, fail(protocol.CodeUnknownOp, "unknown op %q", req.Op)
 	}
@@ -228,26 +193,31 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 func (d *server) status() protocol.Status {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	bypass := []string{}
-	for _, p := range d.settings.bypass() {
-		bypass = append(bypass, p.String())
+	routed := []string{}
+	for _, p := range bypass(d.settings) {
+		routed = append(routed, p.String())
+	}
+	active := ""
+	if sub := d.activeSub(); sub != nil {
+		active = sub.Name
 	}
 	return protocol.Status{
-		State:            d.state,
-		Detail:           d.detail,
-		PrimaryGroup:     d.settings.primaryGroup,
-		Mode:             d.settings.mode,
-		TUN:              d.settings.tun,
-		TUNRedirect:      d.settings.tunRedirect,
-		Tailscale:        d.settings.tailscale,
-		TailscalePresent: d.cfg.tailscalePresent(),
-		TailnetProxy:     d.settings.tailnetProxy,
-		StartedAt:        d.startedAt,
-		TUNBypass:        bypass,
+		State:              d.state,
+		Detail:             d.detail,
+		ActiveSubscription: active,
+		PrimaryGroup:       d.settings.PrimaryGroup,
+		Mode:               d.settings.Mode,
+		TUN:                d.settings.TUN,
+		TUNRedirect:        d.settings.TUNRedirect,
+		Tailscale:          d.settings.Tailscale,
+		TailscalePresent:   d.cfg.tailscalePresent(),
+		TailnetProxy:       d.settings.TailnetProxy,
+		StartedAt:          d.startedAt,
+		TUNBypass:          routed,
 	}
 }
 
-var stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules}
+var stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions}
 
 var allStreams = append(slices.Clone(stateStreams), protocol.StreamTraffic, protocol.StreamConnections)
 
@@ -264,6 +234,8 @@ func (d *server) snapshot(ctx context.Context, stream string) any {
 	case protocol.StreamRules:
 		rules, _ := d.rules(ctx)
 		return rules
+	case protocol.StreamSubscriptions:
+		return d.subscriptionList()
 	}
 	return nil
 }
@@ -344,29 +316,51 @@ func (d *server) setState(state, detail string) {
 func (d *server) start(ctx context.Context) (any, *protocol.Error) {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	if err := d.startLocked(ctx); err != nil {
+		return nil, err
+	}
+	if err := d.saveRunning(true); err != nil {
+		return nil, err
+	}
+	return d.status(), nil
+}
+
+// startLocked starts the proxy on the active profile. The caller holds
+// opMu.
+func (d *server) startLocked(ctx context.Context) *protocol.Error {
+	d.mu.Lock()
+	d.restorePending = false
+	d.mu.Unlock()
 	if d.running() {
-		return d.status(), nil
+		return nil
 	}
 	d.setState(protocol.StateStarting, "")
 	d.publish(ctx)
 	d.mu.Lock()
-	cfg := d.settings.config(d.cfg.profile)
+	cfg := runConfig(d.settings, d.profile)
 	d.mu.Unlock()
-	if err := d.core.Apply(ctx, cfg); err != nil {
+	err := d.ensureGeodata(ctx, cfg.Profile)
+	if err == nil {
+		err = d.core.Apply(ctx, cfg)
+	}
+	if err != nil {
 		d.log.Error("start the proxy", "err", err)
 		d.setState(protocol.StateStopped, err.Error())
 		d.publish(ctx)
-		return nil, coreError(err)
+		return coreError(err)
 	}
 	d.log.Info("proxy started")
 	d.setState(protocol.StateOn, "")
 	d.publish(ctx)
-	return d.status(), nil
+	return nil
 }
 
 func (d *server) stop(ctx context.Context) (any, *protocol.Error) {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	d.mu.Lock()
+	d.restorePending = false
+	d.mu.Unlock()
 	if err := d.core.Stop(ctx); err != nil {
 		d.log.Error("stop the proxy", "err", err)
 		return nil, coreError(err)
@@ -374,48 +368,124 @@ func (d *server) stop(ctx context.Context) (any, *protocol.Error) {
 	d.log.Info("proxy stopped")
 	d.setState(protocol.StateStopped, "")
 	d.publish(ctx)
+	if err := d.saveRunning(false); err != nil {
+		return nil, err
+	}
 	return d.status(), nil
+}
+
+// saveRunning records whether the proxy should be on after a restart.
+func (d *server) saveRunning(on bool) *protocol.Error {
+	d.mu.Lock()
+	next := d.settings
+	d.mu.Unlock()
+	if next.Running == on {
+		return nil
+	}
+	next.Running = on
+	return d.saveSettings(next)
+}
+
+// saveSettings stores next and makes it current. The caller holds opMu.
+func (d *server) saveSettings(next state.Settings) *protocol.Error {
+	if err := d.store.SaveSettings(next); err != nil {
+		d.log.Error("save the settings", "err", err)
+		return fail(protocol.CodeInternal, "the settings could not be saved: %v", err)
+	}
+	d.mu.Lock()
+	d.settings = next
+	d.mu.Unlock()
+	return nil
+}
+
+// reapply runs next settings and profile on a running core, or checks them
+// while it is stopped. A core that cannot put the previous config
+// back is shown stopped. The caller holds opMu.
+func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profile) *protocol.Error {
+	if !d.running() {
+		// Nothing runs, but what is stored is what the next start runs, so
+		// the core checks it, with the geodata that takes.
+		cfg := runConfig(next, p)
+		if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
+			return fail(protocol.CodeFetch, "%v", err)
+		}
+		if err := d.core.Check(ctx, cfg); err != nil {
+			return fail(protocol.CodeCore, "the core would not run it: %v", err)
+		}
+		return nil
+	}
+	cfg := runConfig(next, p)
+	err := d.ensureGeodata(ctx, cfg.Profile)
+	if err == nil {
+		err = d.core.Apply(ctx, cfg)
+	}
+	if err != nil {
+		d.log.Error("apply a change", "err", err)
+		if errors.Is(err, core.ErrStopped) {
+			d.setState(protocol.StateStopped, err.Error())
+			d.publish(ctx)
+		}
+		return coreError(err)
+	}
+	return nil
+}
+
+// acceptContent reports why subscription content p would not run with s: it runs
+// p when p is to be what runs and the proxy is on, and only checks it
+// otherwise, so content that fails is never stored as one that works. The
+// caller holds opMu.
+func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Profile, runs bool) *protocol.Error {
+	if runs && d.running() {
+		return d.reapply(ctx, s, p)
+	}
+	cfg := runConfig(s, p)
+	if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
+		return fail(protocol.CodeFetch, "%v", err)
+	}
+	if err := d.core.Check(ctx, cfg); err != nil {
+		return fail(protocol.CodeRejected, "the core would not run it: %v", err)
+	}
+	return nil
 }
 
 func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (any, *protocol.Error) {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
-	next := d.settings
+	next, p := d.settings, d.profile
 	d.mu.Unlock()
 
 	if args.Mode != nil {
 		switch *args.Mode {
 		case protocol.ModeRule, protocol.ModeGlobal, protocol.ModeDirect:
-			next.mode = *args.Mode
+			next.Mode = *args.Mode
 		default:
 			return nil, fail(protocol.CodeInvalid, "mode must be rule, global or direct")
 		}
 	}
 	if args.TUN != nil {
-		next.tun = *args.TUN
+		next.TUN = *args.TUN
 	}
 	if args.TUNRedirect != nil {
-		next.tunRedirect = *args.TUNRedirect
+		next.TUNRedirect = *args.TUNRedirect
 	}
 	if args.Tailscale != nil {
-		next.tailscale = *args.Tailscale
+		next.Tailscale = *args.Tailscale
 	}
 	if args.TailnetProxy != nil {
-		next.tailnetProxy = *args.TailnetProxy
+		next.TailnetProxy = *args.TailnetProxy
 	}
 	if (args.Tailscale != nil && *args.Tailscale || args.TailnetProxy != nil && *args.TailnetProxy) &&
 		!d.cfg.tailscalePresent() {
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
 	}
-	running := d.running()
 	if args.PrimaryGroup != nil {
 		name := *args.PrimaryGroup
 		if name != "" {
 			if err := validName("group", name); err != nil {
 				return nil, err
 			}
-			if running {
+			if d.running() {
 				groups, err := d.core.Groups(ctx)
 				if err != nil {
 					return nil, coreError(err)
@@ -425,22 +495,15 @@ func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (a
 				}
 			}
 		}
-		next.primaryGroup = name
+		next.PrimaryGroup = name
 	}
 
-	if running {
-		if err := d.core.Apply(ctx, next.config(d.cfg.profile)); err != nil {
-			d.log.Error("apply settings", "err", err)
-			if errors.Is(err, core.ErrStopped) {
-				d.setState(protocol.StateStopped, err.Error())
-				d.publish(ctx)
-			}
-			return nil, coreError(err)
-		}
+	if err := d.reapply(ctx, next, p); err != nil {
+		return nil, err
 	}
-	d.mu.Lock()
-	d.settings = next
-	d.mu.Unlock()
+	if err := d.saveSettings(next); err != nil {
+		return nil, err
+	}
 	d.publish(ctx)
 	return d.status(), nil
 }
@@ -483,10 +546,18 @@ func (d *server) testDelay(ctx context.Context, args protocol.DelayArgs) (any, *
 	return protocol.DelayResult{Delays: delays}, nil
 }
 
+// rules are the runtime's rules, or the owner's own while the proxy is
+// stopped.
 func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error) {
 	rules, err := d.core.Rules(ctx)
 	if errors.Is(err, core.ErrNotRunning) {
-		return protocol.RuleList{Rules: []protocol.Rule{}}, nil
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		out := []protocol.Rule{}
+		for _, r := range d.settings.Rules {
+			out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: protocol.SourceUser})
+		}
+		return protocol.RuleList{Rules: out}, nil
 	}
 	if err != nil {
 		return protocol.RuleList{}, coreError(err)

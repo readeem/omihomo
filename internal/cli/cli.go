@@ -33,6 +33,8 @@ const (
 	ExitForbidden   = 13 // this account does not own the daemon
 	ExitVersion     = 14 // the daemon speaks another protocol version
 	ExitUnsupported = 15
+	ExitRejected    = 20 // a subscription's content is not usable
+	ExitFetch       = 21 // a download failed
 )
 
 // Env is what a command reads and writes besides its arguments.
@@ -106,6 +108,10 @@ func exitCode(env Env, err error) int {
 			return ExitForbidden
 		case protocol.CodeUnsupported:
 			return ExitUnsupported
+		case protocol.CodeRejected:
+			return ExitRejected
+		case protocol.CodeFetch:
+			return ExitFetch
 		}
 	}
 	return ExitFailure
@@ -339,13 +345,13 @@ func (a *app) versionCommand() *ffcli.Command {
 func (a *app) watchCommand() *ffcli.Command {
 	cmd := &ffcli.Command{Name: "watch", ShortUsage: "omihomo watch [<stream>...]",
 		ShortHelp: "print pushed events as JSON lines",
-		LongHelp: "Streams are status, groups, rules, traffic and connections; all of them by default.\n" +
+		LongHelp: "Streams are status, groups, rules, subscriptions, traffic and connections; all of\nthem by default.\n" +
 			`Each event prints as {"stream","data"}, or {"stream","error"} when it could not be sent.`,
 		FlagSet: a.flags("watch")}
 	cmd.Exec = func(ctx context.Context, streams []string) error {
 		if len(streams) == 0 {
 			streams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules,
-				protocol.StreamTraffic, protocol.StreamConnections}
+				protocol.StreamSubscriptions, protocol.StreamTraffic, protocol.StreamConnections}
 		}
 		c, err := dial(ctx)
 		if err != nil {

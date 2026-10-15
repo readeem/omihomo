@@ -8,10 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +25,7 @@ import (
 )
 
 // serve runs a fake-core daemon owned by ownerUID and points the CLI at it.
-func serve(t *testing.T, ownerUID int) {
+func serve(t *testing.T, ownerUID int, opts ...daemon.ConfigOpt) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "omihomo-cli-")
 	if err != nil {
@@ -38,11 +41,15 @@ func serve(t *testing.T, ownerUID int) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	d := daemon.New(fakecore.New(),
+	d, err := daemon.New(fakecore.New(), append([]daemon.ConfigOpt{
 		daemon.WithOwnerFile(ownerFile),
+		daemon.WithStateDir(filepath.Join(dir, "state")),
 		daemon.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		daemon.WithTailscaleProbe(func() bool { return false }),
-	)
+	}, opts...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() { d.Run(ctx, l); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 	t.Setenv("OMIHOMO_SOCKET", socket)
@@ -92,11 +99,72 @@ func TestCommandsRunOverTheSocket(t *testing.T) {
 	if code, _, _ := run(t, "", "set", "tailscale", "on"); code != cli.ExitState {
 		t.Fatalf("tailscale without tailscaled exit %d", code)
 	}
-	if code, _, _ := run(t, "https://example.com/sub\n", "sub", "add"); code != cli.ExitUnsupported {
-		t.Fatalf("sub add exit %d", code)
+	if code, _, _ := run(t, "http://example.com/sub\n", "sub", "add"); code != cli.ExitUsage {
+		t.Fatalf("sub add over http exit %d", code)
 	}
 	if code, _, _ := run(t, "", "stop"); code != cli.ExitOK {
 		t.Fatalf("stop exit %d", code)
+	}
+}
+
+// The subscription and settings commands, end to end: the daemon downloads
+// over HTTPS, keeps state, and the CLI prints what it says.
+func TestSubscriptionAndSettingsCommands(t *testing.T) {
+	var body atomic.Value
+	body.Store("proxies:\n  - {name: Tokyo, type: trojan, server: tokyo.example, port: 443, password: p}\n" +
+		"proxy-groups:\n  - {name: Proxy, type: select, proxies: [Tokyo, DIRECT]}\nrules:\n  - MATCH,Proxy\n")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Profile-Title", "Work")
+		w.Header().Set("Subscription-Userinfo", "upload=1; download=2; total=3")
+		fmt.Fprint(w, body.Load())
+	}))
+	defer srv.Close()
+	serve(t, os.Getuid(), daemon.WithTransport(srv.Client().Transport))
+
+	code, out, errOut := run(t, srv.URL+"/s?token=s3cret\n", "sub", "add")
+	var sub protocol.Subscription
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &sub) != nil || sub.Name != "Work" || !sub.Active || *sub.Total != 3 {
+		t.Fatalf("sub add: %d %q %s", code, out, errOut)
+	}
+	if code, out, _ := run(t, "", "sub", "list"); code != cli.ExitOK || !strings.Contains(out, `"name":"Work"`) || strings.Contains(out, "s3cret") {
+		t.Fatalf("sub list: %d %q", code, out)
+	}
+	if code, _, _ := run(t, "", "sub", "update", "Work"); code != cli.ExitState {
+		t.Fatalf("an update right after the add exit %d", code)
+	}
+	if code, _, _ := run(t, "", "rule", "add", "DOMAIN-SUFFIX", "example.com", "Proxy"); code != cli.ExitOK {
+		t.Fatalf("rule add exit %d", code)
+	}
+	if code, _, errOut := run(t, "", "rule", "add", "IP-CIDR", "not-a-cidr", "DIRECT"); code != cli.ExitUsage || !strings.Contains(errOut, "invalid IP-CIDR") {
+		t.Fatalf("rule add with a bad value: %d %s", code, errOut)
+	}
+	if code, out, _ := run(t, "", "rule", "list"); code != cli.ExitOK || !strings.Contains(out, `"value":"example.com"`) {
+		t.Fatalf("rule list: %d %q", code, out)
+	}
+	if code, out, _ := run(t, "", "set", "mode", "direct"); code != cli.ExitOK || !strings.Contains(out, `"active_subscription":"Work"`) {
+		t.Fatalf("set mode: %d %q", code, out)
+	}
+	if code, _, _ := run(t, "", "start"); code != cli.ExitOK {
+		t.Fatalf("start exit %d", code)
+	}
+	if code, _, _ := run(t, "", "sub", "remove", "Work"); code != cli.ExitState {
+		t.Fatalf("removing the running subscription exit %d", code)
+	}
+	if code, _, _ := run(t, "", "rule", "remove", "1"); code != cli.ExitOK {
+		t.Fatalf("rule remove exit %d", code)
+	}
+	if code, _, _ := run(t, "", "stop"); code != cli.ExitOK {
+		t.Fatalf("stop exit %d", code)
+	}
+	if code, out, _ := run(t, "", "sub", "remove", "Work"); code != cli.ExitOK || out != "" {
+		t.Fatalf("sub remove: %d %q", code, out)
+	}
+	body.Store("not a subscription")
+	if code, _, _ := run(t, srv.URL+"/other\n", "sub", "add"); code != cli.ExitRejected {
+		t.Fatalf("an unusable subscription exit %d", code)
+	}
+	if code, _, _ := run(t, "https://127.0.0.1:1/none\n", "sub", "add"); code != cli.ExitFetch {
+		t.Fatalf("an unreachable subscription exit %d", code)
 	}
 }
 

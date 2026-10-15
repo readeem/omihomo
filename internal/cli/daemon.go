@@ -14,13 +14,13 @@ import (
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 
-	"github.com/readeem/omihomo/internal/clashfile"
 	"github.com/readeem/omihomo/internal/client"
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/core/fakecore"
 	"github.com/readeem/omihomo/internal/core/mihomo"
 	"github.com/readeem/omihomo/internal/daemon"
 	"github.com/readeem/omihomo/internal/owner"
+	"github.com/readeem/omihomo/internal/state"
 	"github.com/readeem/omihomo/internal/systemd"
 )
 
@@ -30,7 +30,7 @@ func (a *app) daemonCommand() *ffcli.Command {
 	ownerFile := set.String("owner-file", owner.DefaultPath, "file recording the owner's uid")
 	coreName := set.String("core", "mihomo", "proxy core to run: mihomo, or fake to proxy nothing")
 	home := set.String("home", defaultHome, "the core's directory for its state and geodata")
-	profile := set.String("profile", "", "development only: run the proxies, groups and rules of this Clash YAML file")
+	stateDir := set.String("state", state.DefaultDir, "the daemon's directory for settings and subscriptions")
 	cmd := &ffcli.Command{Name: "daemon", ShortUsage: "omihomo daemon [flags]", ShortHelp: "run the daemon",
 		LongHelp: "Serves until SIGTERM or SIGINT. Under systemd it takes the socket from socket\n" +
 			"activation and reports readiness; started by hand it binds --socket itself.",
@@ -43,14 +43,6 @@ func (a *app) daemonCommand() *ffcli.Command {
 		// only, the core's selection cache included.
 		syscall.Umask(0o077)
 		log := slog.New(slog.NewTextHandler(a.env.Stderr, nil))
-		var opts []daemon.ConfigOpt
-		if *profile != "" {
-			p, err := loadProfile(*profile, log)
-			if err != nil {
-				return err
-			}
-			opts = append(opts, daemon.WithProfile(p))
-		}
 		var c core.Core
 		switch *coreName {
 		case "fake":
@@ -66,29 +58,12 @@ func (a *app) daemonCommand() *ffcli.Command {
 		default:
 			return usage(cmd, "unknown core %q", *coreName)
 		}
-		return serve(ctx, log, c, *socket, *ownerFile, opts...)
+		return serve(ctx, log, c, *socket, *ownerFile, daemon.WithStateDir(*stateDir))
 	}
 	return cmd
 }
 
 const defaultHome = "/var/lib/omihomo/core"
-
-func loadProfile(path string, log *slog.Logger) (core.Profile, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return core.Profile{}, fmt.Errorf("read the profile: %w", err)
-	}
-	p, skipped, err := clashfile.Parse(data)
-	if err != nil {
-		return core.Profile{}, fmt.Errorf("read the profile %s: %w", path, err)
-	}
-	for _, what := range skipped {
-		log.Warn("the profile leaves out " + what)
-	}
-	log.Warn("running a development profile", "path", path,
-		"proxies", len(p.Proxies), "groups", len(p.Groups), "rules", len(p.Rules))
-	return p, nil
-}
 
 func serve(ctx context.Context, log *slog.Logger, c core.Core, socket, ownerFile string, opts ...daemon.ConfigOpt) error {
 	listeners, err := systemd.Listeners()
@@ -106,7 +81,10 @@ func serve(ctx context.Context, log *slog.Logger, c core.Core, socket, ownerFile
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	opts = append([]daemon.ConfigOpt{daemon.WithOwnerFile(ownerFile), daemon.WithVersion(Version), daemon.WithLogger(log)}, opts...)
-	d := daemon.New(c, opts...)
+	d, err := daemon.New(c, opts...)
+	if err != nil {
+		return fmt.Errorf("read the state: %w", err)
+	}
 	if err := systemd.Notify("READY=1"); err != nil {
 		log.Warn("notify systemd", "err", err)
 	}

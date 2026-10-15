@@ -27,10 +27,14 @@ import (
 )
 
 type harness struct {
-	socket string
-	core   *fakecore.Core
-	done   chan error
-	cancel context.CancelFunc
+	socket   string
+	stateDir string
+	core     *fakecore.Core
+	coreIf   core.Core
+	clock    *clock
+	opts     []daemon.ConfigOpt
+	done     chan error
+	cancel   context.CancelFunc
 }
 
 // serve runs a daemon on a fresh socket with the given owner uid, or no
@@ -54,32 +58,59 @@ func serveCore(t *testing.T, ownerUID int, c core.Core, opts ...daemon.ConfigOpt
 			t.Fatal(err)
 		}
 	}
-	h := &harness{socket: filepath.Join(dir, "s"), done: make(chan error, 1)}
+	h := &harness{socket: filepath.Join(dir, "s"), stateDir: filepath.Join(dir, "state"), coreIf: c, clock: newClock()}
 	h.core, _ = c.(*fakecore.Core)
-	l, err := net.Listen("unix", h.socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts = append([]daemon.ConfigOpt{
+	h.opts = append([]daemon.ConfigOpt{
 		daemon.WithOwnerFile(ownerFile),
+		daemon.WithStateDir(h.stateDir),
 		daemon.WithVersion("test"),
 		daemon.WithTick(10 * time.Millisecond),
 		daemon.WithTailscaleProbe(func() bool { return true }),
 		daemon.WithLogger(discardLogger()),
+		daemon.WithClock(h.clock.Now),
 	}, opts...)
-	ctx, cancel := context.WithCancel(context.Background())
-	h.cancel = cancel
-	d := daemon.New(c, opts...)
-	go func() { h.done <- d.Run(ctx, l) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-h.done:
-		case <-time.After(5 * time.Second):
-			t.Error("daemon did not shut down")
-		}
-	})
+	h.start(t)
+	t.Cleanup(func() { h.shutdown(t) })
 	return h
+}
+
+func (h *harness) start(t *testing.T) {
+	t.Helper()
+	l, err := net.Listen("unix", h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := daemon.New(h.coreIf, h.opts...)
+	if err != nil {
+		l.Close()
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	h.cancel, h.done = cancel, make(chan error, 1)
+	go func() { h.done <- d.Run(ctx, l) }()
+}
+
+func (h *harness) shutdown(t *testing.T) {
+	t.Helper()
+	if h.cancel == nil {
+		return
+	}
+	h.cancel()
+	h.cancel = nil
+	select {
+	case <-h.done:
+	case <-time.After(5 * time.Second):
+		t.Error("daemon did not shut down")
+	}
+}
+
+// restart stops the daemon and starts another on the same state and core,
+// as a reboot would.
+func (h *harness) restart(t *testing.T) {
+	t.Helper()
+	h.shutdown(t)
+	os.Remove(h.socket)
+	h.start(t)
 }
 
 func (h *harness) dial(t *testing.T) *client.Client {
@@ -355,14 +386,9 @@ func TestEgress(t *testing.T) {
 	}
 }
 
-func TestUnsupportedOpsAreNamed(t *testing.T) {
+func TestUnknownOpsAreNamed(t *testing.T) {
 	h := serve(t, os.Getuid())
 	c := h.dial(t)
-	for _, op := range []string{protocol.OpSubscriptions, protocol.OpSubscriptionAdd, protocol.OpRuleAdd} {
-		if err := callErr(t, c, op, nil); err.Code != protocol.CodeUnsupported {
-			t.Errorf("%s = %v", op, err)
-		}
-	}
 	if err := callErr(t, c, "reboot", nil); err.Code != protocol.CodeUnknownOp {
 		t.Errorf("unknown op = %v", err)
 	}
@@ -595,13 +621,15 @@ func TestShutdownStopsTheCore(t *testing.T) {
 }
 
 func TestTheCoreRunsTheProfileAndSettings(t *testing.T) {
-	profile := core.Profile{Proxies: []core.Proxy{{Name: "Tokyo", Type: "vless"}}}
-	h := serve(t, os.Getuid(), daemon.WithProfile(profile))
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{PrimaryGroup: ptr("Proxy")})
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	cfg, _ := h.core.Config()
-	if len(cfg.Profile.Proxies) != 1 || cfg.Profile.Proxies[0].Name != "Tokyo" || cfg.PrimaryGroup != "Proxy" {
+	if len(cfg.Profile.Proxies) != 2 || cfg.Profile.Proxies[0].Name != "Tokyo" || cfg.PrimaryGroup != "Proxy" {
 		t.Fatalf("core runs %+v", cfg)
 	}
 	if !slices.Contains(cfg.TUNBypass, netip.MustParsePrefix("192.168.0.0/16")) {

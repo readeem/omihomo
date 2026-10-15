@@ -103,6 +103,9 @@ const MaxConnections = 1000
 // stopped. Implementations must be safe for concurrent use.
 type Core interface {
 	Apply(ctx context.Context, cfg Config) error
+	// Check reports why cfg would not run, without running it or changing
+	// what runs. Geodata it needs must be in place, as for Apply.
+	Check(ctx context.Context, cfg Config) error
 	Stop(ctx context.Context) error
 
 	Groups(ctx context.Context) ([]protocol.Group, error)
@@ -125,4 +128,26 @@ type Core interface {
 	// DialContext opens a connection routed by the running config, as if a
 	// local application had made it through the proxy.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+
+	// ParseLinks reads a list of share links, plain or base64, into proxies
+	// written the way a subscription's YAML writes them: "name", "type" and
+	// the protocol's fields. They are remote content, still to be
+	// allowlisted. It works whether or not the core runs.
+	ParseLinks(data []byte) ([]map[string]any, error)
+
+	// Geodata names the files the rules of p match against, with where each
+	// is downloaded from. The daemon fetches the ones missing before an
+	// Apply; the core never fetches them itself.
+	Geodata(p Profile) []GeodataFile
+	// CheckGeodata reports why the file at path is not usable as f for the
+	// rules of p, before the daemon puts it in place: a broken database can
+	// end the process, and one without what the rules match fails them.
+	CheckGeodata(f GeodataFile, path string, p Profile) error
+}
+
+// GeodataFile is one geodata file a profile needs: Path is absolute, URL is
+// HTTPS.
+type GeodataFile struct {
+	Path string
+	URL  string
 }

@@ -7,9 +7,11 @@ go 1.27.2
 godebug default=go1.20
 
 require (
+	github.com/dlclark/regexp2 v1.12.0
 	github.com/metacubex/mihomo v1.19.32
 	github.com/peterbourgon/ff/v3 v3.4.0
 	go.yaml.in/yaml/v3 v3.0.5
+	google.golang.org/protobuf v1.34.2
 )
 
 require (
@@ -22,7 +24,6 @@ require (
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/coder/websocket v1.8.12 // indirect
 	github.com/coreos/go-iptables v0.8.0 // indirect
-	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dunglas/httpsfv v1.0.2 // indirect
 	github.com/easytier/easytier/easytier-go v0.0.0-20260910071355-3d0c9c3ca5e2 // indirect
 	github.com/enfein/mieru/v3 v3.38.0 // indirect
@@ -145,7 +146,6 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
 )
 
 // Copied from mihomo's go.mod, since a replace only applies in the main
