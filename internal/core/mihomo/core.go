@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
+	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
@@ -65,6 +67,9 @@ type Core struct {
 	// generation counts commits and stops, so a drain knows when the
 	// stop it follows is over.
 	generation uint64
+
+	procMu sync.Mutex
+	procs  map[string]string
 }
 
 var _ core.Core = (*Core)(nil)
@@ -519,10 +524,34 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 		Open:          len(infos),
 		Connections:   make([]protocol.Connection, 0, min(len(infos), core.MaxConnections)),
 	}
+	c.procMu.Lock()
+	defer c.procMu.Unlock()
+	procs := make(map[string]string, cap(out.Connections))
 	for _, info := range infos[:min(len(infos), core.MaxConnections)] {
-		out.Connections = append(out.Connections, connection(info))
+		conn := connection(info)
+		if conn.Process == "" {
+			name, ok := c.procs[conn.ID]
+			if !ok {
+				name = dualStackProcess(info.Metadata)
+			}
+			procs[conn.ID] = name
+			conn.Process = name
+		}
+		out.Connections = append(out.Connections, conn)
 	}
+	c.procs = procs
 	return out, nil
+}
+
+func dualStackProcess(m *C.Metadata) string {
+	if m.NetWork != C.UDP || !m.SrcIP.Is4() {
+		return ""
+	}
+	_, path, err := process.FindProcessName(process.UDP, netip.AddrFrom16(m.SrcIP.As16()), int(m.SrcPort))
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(path)
 }
 
 func connection(info *statistic.TrackerInfo) protocol.Connection {

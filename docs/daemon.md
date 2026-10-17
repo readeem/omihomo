@@ -289,6 +289,10 @@ type and none may hold a comma. A target must be `DIRECT`, `REJECT`, `REJECT-DRO
 proxy of the active subscription. A rule whose target another subscription lacks is left out
 while that subscription runs.
 
+`PROCESS-NAME` and `PROCESS-PATH` never match IPv4 UDP traffic from a socket bound to `[::]`,
+such as QUIC from cloudflared: mihomo looks that socket up as IPv4 and misses it. Connection
+listings still name the process, because the daemon repeats the lookup as IPv6.
+
 ## Subscriptions
 
 The daemon downloads subscriptions, their providers and geodata itself, with one downloader:
