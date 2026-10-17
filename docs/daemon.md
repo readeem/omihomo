@@ -259,7 +259,7 @@ Removing the package also removes Omihomo's Tailscale proxy drop-in and reloads 
 For permanent removal, stop/uninstall first, then explicitly delete `/var/lib/omihomo` and
 `/etc/systemd/system/omihomo.socket.d/owner.conf`. This erases subscription credentials and settings.
 Old source data remains separately under the owner's data directory and can be deleted after
-verifying migration.
+verifying migration; see [old data cleanup](upgrade.md#remove-the-old-data).
 
 ## State
 

@@ -22,3 +22,20 @@ Original data stays in the old data directory for recovery; the daemon uses `/va
 Existing daemon settings and subscriptions are never overwritten. After checking connectivity
 and imported settings, remove `mihomo-bin` or `mihomo` if nothing else needs it. A successful
 cutover has no automatic undo; returning to the old version requires reinstalling its integration.
+
+## Remove the old data
+
+After verifying the imported settings and connectivity, run as your ordinary user:
+
+```sh
+rm -rI -- "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo"
+```
+
+If you passed `--legacy-data`, use that exact directory instead. This deletes the old
+subscriptions, credentials, overrides, runtime and caches. The new daemon never reads them.
+Keep `/var/lib/omihomo` and the current systemd units and drop-ins; no service restart is needed.
+Do not run the old version's uninstaller, which can remove the current Tailscale integration.
+
+If `tools/test-cutover` retained a previous plugin, remove only the backup directory printed
+by the script (`.omihomo-before-cutover.XXXXXX`, including its `plugin` child) with `rm -rI --`.
+Keep the active `dev.readeem.omihomo` plugin and the checkout it points to.
