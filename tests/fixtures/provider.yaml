@@ -1,3 +1,0 @@
-proxies:
-  - name: Provider local
-    type: direct

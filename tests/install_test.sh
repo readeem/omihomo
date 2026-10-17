@@ -41,7 +41,8 @@ check_install() {
   fi
 }
 
-commands=$'yay <-S> <omihomo-bin>\nsudo </usr/bin/omihomo> <claim>'
+export XDG_DATA_HOME="$test_root/data" XDG_CONFIG_HOME="$test_root/config"
+commands=$(printf 'yay <-S> <omihomo-bin>\nsudo </usr/bin/omihomo> <claim> <--legacy-data> <%s/omihomo> <--legacy-config> <%s>' "$XDG_DATA_HOME" "$XDG_CONFIG_HOME")
 check_install 0 0 0 "$commands"
 check_install 42 0 42 'yay <-S> <omihomo-bin>'
 check_install 0 43 43 "$commands"

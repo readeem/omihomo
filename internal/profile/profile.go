@@ -103,8 +103,7 @@ func Read(body []byte, links Links) (*Document, error) {
 // yamlError keeps the parser's reason without the content it quotes, which
 // may hold credentials.
 func yamlError(err error) string {
-	var te *yaml.TypeError
-	if errors.As(err, &te) {
+	if te, ok := errors.AsType[*yaml.TypeError](err); ok {
 		return fmt.Sprintf("%d values have the wrong type", len(te.Errors))
 	}
 	msg := err.Error()
@@ -362,7 +361,7 @@ func (b *builder) newFilter(def map[string]any) (filter, error) {
 	compile := func(key string) ([]*regexp2.Regexp, error) {
 		s, _ := def[key].(string)
 		var out []*regexp2.Regexp
-		for _, expr := range strings.Split(s, "`") {
+		for expr := range strings.SplitSeq(s, "`") {
 			if expr == "" {
 				continue
 			}
@@ -382,7 +381,7 @@ func (b *builder) newFilter(def map[string]any) (filter, error) {
 		return f, err
 	}
 	if s, _ := def["exclude-type"].(string); s != "" {
-		for _, t := range strings.Split(s, "|") {
+		for t := range strings.SplitSeq(s, "|") {
 			f.excludeTypes = append(f.excludeTypes, strings.ToLower(strings.TrimSpace(t)))
 		}
 	}

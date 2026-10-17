@@ -26,25 +26,20 @@ const (
 )
 
 func (a *app) claimCommand() *ffcli.Command {
-	cmd := &ffcli.Command{Name: "claim", ShortUsage: "sudo omihomo claim",
+	flags := a.flags("claim")
+	legacyData := flags.String("legacy-data", "", "old data directory (defaults to the invoking account's .local/share/omihomo)")
+	legacyConfig := flags.String("legacy-config", "", "old config directory (defaults to the invoking account's .config)")
+	cmd := &ffcli.Command{Name: "claim", ShortUsage: "sudo omihomo claim [flags]",
 		ShortHelp: "make the account that runs sudo the owner",
 		LongHelp: "Records the account that ran sudo as the one owner of this install, gives it the\n" +
 			"daemon's socket, and starts the daemon. The install step runs it after installing\n" +
 			"the package; running it again from another account moves the install to that account.",
-		FlagSet: a.flags("claim")}
+		FlagSet: flags}
 	cmd.Exec = func(ctx context.Context, args []string) error {
 		if len(args) != 0 {
 			return usage(cmd, "claim takes no arguments")
 		}
-		return claimer{
-			euid:      os.Geteuid(),
-			getenv:    os.Getenv,
-			ownerFile: owner.DefaultPath,
-			dropIn:    defaultDropIn,
-			systemctl: func(ctx context.Context, args ...string) error {
-				return runSystemctl(ctx, a.env.Stderr, args...)
-			},
-		}.claim(ctx)
+		return a.claimInstall(ctx, *legacyData, *legacyConfig)
 	}
 	return cmd
 }

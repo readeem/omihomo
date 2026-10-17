@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,6 +38,7 @@ type config struct {
 	tick             time.Duration
 	egressURL        string
 	tailscalePresent func() bool
+	tailscaleSync    func(context.Context, bool) error
 	maxClients       int
 	groupsEvery      time.Duration
 	stateDir         string
@@ -69,6 +71,11 @@ func WithEgressURL(url string) ConfigOpt {
 // WithTailscaleProbe reports whether tailscaled is installed.
 func WithTailscaleProbe(present func() bool) ConfigOpt {
 	return func(c *config) { set(&c.tailscalePresent, present, present != nil) }
+}
+
+// WithTailscaleSync applies the fixed host integration when its setting changes.
+func WithTailscaleSync(sync func(context.Context, bool) error) ConfigOpt {
+	return func(c *config) { c.tailscaleSync = sync }
 }
 
 // WithStateDir keeps the daemon's state in dir instead of
@@ -206,6 +213,14 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	if d.subs, err = store.Subscriptions(); err != nil {
 		return nil, err
 	}
+	if _, err := owner.Load(cfg.ownerFile); err == nil && cfg.tailscaleSync != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := cfg.tailscaleSync(ctx, d.settings.Tailscale); err != nil {
+			return nil, fmt.Errorf("restore Tailscale integration: %w", err)
+		}
+	}
+
 	d.restorePending = d.settings.Running
 	if active := d.activeSub(); active != nil {
 		p, err := d.loadProfile(*active)

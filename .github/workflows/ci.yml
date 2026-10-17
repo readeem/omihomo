@@ -23,13 +23,13 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: go vet
-        run: go vet -tags with_gvisor ./...
+        run: go vet -tags with_gvisor,no_easytier ./...
       # mihomo races with itself (its log level, delay history and health
       # checks share unguarded state), so its package runs without -race.
       - name: go test
         run: |
           go test -race $(go list ./... | grep -v /internal/core/mihomo$)
-          go test -tags with_gvisor ./internal/core/mihomo
+          go test -tags with_gvisor,no_easytier ./internal/core/mihomo
       # A replace only applies in the main module, so ours copies mihomo's;
       # a bump that changes theirs must change ours.
       - name: mihomo replace
@@ -38,7 +38,7 @@ jobs:
           upstream=$(go mod download -json "github.com/metacubex/mihomo@$version" | jq -r .GoMod)
           diff <(go mod edit -json "$upstream" | jq -S .Replace) <(go mod edit -json | jq -S .Replace)
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest -tags with_gvisor,no_easytier ./...
 
   package:
     uses: ./.github/workflows/package.yml
@@ -50,7 +50,7 @@ jobs:
     container: archlinux:base@sha256:4e77cf2ea5f410e6f8be5abf93ccf17ce2436e87a138c167208356711a405dbd
     steps:
       - name: install tools
-        run: pacman -Syu --noconfirm --needed git nodejs jq go-yq curl quickshell diffutils
+        run: pacman -Syu --noconfirm --needed git nodejs quickshell
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

@@ -33,6 +33,7 @@ UMask=0077
 
 # Read-only OS; uid 0 still owns /etc, so this matters.
 ProtectSystem=strict
+ReadWritePaths=/etc/systemd/system/tailscaled.service.d
 # exe paths still resolve (d_path)
 ProtectHome=yes
 PrivateTmp=yes

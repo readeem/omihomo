@@ -22,6 +22,7 @@ import (
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/state"
 	"github.com/readeem/omihomo/internal/systemd"
+	"github.com/readeem/omihomo/internal/tailscale"
 )
 
 func (a *app) daemonCommand() *ffcli.Command {
@@ -58,7 +59,7 @@ func (a *app) daemonCommand() *ffcli.Command {
 		default:
 			return usage(cmd, "unknown core %q", *coreName)
 		}
-		return serve(ctx, log, c, *socket, *ownerFile, daemon.WithStateDir(*stateDir))
+		return serve(ctx, log, c, *socket, *ownerFile, daemon.WithStateDir(*stateDir), daemon.WithTailscaleSync(tailscale.Sync))
 	}
 	return cmd
 }

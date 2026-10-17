@@ -1,0 +1,190 @@
+package migration
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/readeem/omihomo/internal/state"
+)
+
+const cached = `proxies:
+- {name: Example, type: direct}
+proxy-groups:
+- {name: Proxy, type: select, proxies: [Example]}
+rules: ["MATCH,Proxy"]
+`
+
+func fixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "old")
+	os.MkdirAll(filepath.Join(source, "cache"), 0o700)
+	write(t, source, "subscriptions.json", `[{"name":"Example","url":"https://example.com/sub","updated_at":"2026-10-10T12:00:00Z","update_interval_hours":24,"userinfo":{"total":1024}}]`)
+	write(t, source, "cache/Example.yaml", cached)
+	write(t, source, "active", "Example\n")
+	write(t, source, "override.yaml", `config:
+  mode: global
+  tun: {enable: true, auto-redirect: true}
+  external-controller: 0.0.0.0:9090
+  secret: never-import-this
+omihomo: {primary-group: Proxy, tailscale: true, tailnet-proxy: true}
+rules:
+  prepend: ["DOMAIN-SUFFIX,example.com,DIRECT"]
+`)
+	return source, filepath.Join(dir, "new")
+}
+
+func write(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func noLinks([]byte) ([]map[string]any, error) { return nil, errors.New("not links") }
+
+func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
+	source, target := fixture(t)
+	m, err := Prepare(context.Background(), source, target, true, noLinks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err := m.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs, err := store.Subscriptions()
+	if err != nil || len(subs.List) != 1 || subs.Active != subs.List[0].ID {
+		t.Fatalf("subscriptions: %+v %v", subs, err)
+	}
+	sub := subs.List[0]
+	if sub.Name != "Example" || sub.IntervalSeconds != 86400 || sub.UpdatedAt != 1791633600000 || sub.Total == nil || *sub.Total != 1024 {
+		t.Fatalf("record: %+v", sub)
+	}
+	settings, err := store.Settings()
+	if err != nil || !settings.Running || settings.Mode != "global" || !settings.TUN || !settings.TUNRedirect || !settings.Tailscale || !settings.TailnetProxy || settings.PrimaryGroup != "Proxy" || len(settings.Rules) != 1 {
+		t.Fatalf("settings: %+v %v", settings, err)
+	}
+	bytes, _ := os.ReadFile(filepath.Join(target, "settings.json"))
+	if strings.Contains(string(bytes), "never-import") || strings.Contains(string(bytes), "external-controller") {
+		t.Fatal("raw overrides imported")
+	}
+	snap, err := store.Snapshot(sub.ID)
+	if err != nil || string(snap.Body) != cached {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if info, _ := os.Stat(target); info.Mode().Perm() != 0o700 {
+		t.Fatal(info.Mode())
+	}
+	if _, err := Prepare(context.Background(), source, target, false, noLinks); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rollback: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "subscriptions.json")); err != nil {
+		t.Fatal("source removed")
+	}
+}
+
+func TestImportReadsRawWrapperAndCachedHTTPProvider(t *testing.T) {
+	for _, kind := range []string{"file", "http"} {
+		t.Run(kind, func(t *testing.T) {
+			source, target := fixture(t)
+			write(t, source, "providers/raw.yaml", cached)
+			write(t, source, "cache/Example.yaml", "proxy-providers:\n  subscription: {type: "+kind+", path: ./providers/raw.yaml, url: https://example.com/provider}\nproxy-groups:\n- {name: Proxy, type: select, use: [subscription]}\nrules: [\"MATCH,Proxy\"]\n")
+			if kind == "http" {
+				write(t, source, "providers/raw.yaml", "proxies: [{name: Example, type: direct}]\n")
+			}
+			m, err := Prepare(context.Background(), source, target, false, noLinks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			store, _ := state.Open(m.Dir)
+			subs, _ := store.Subscriptions()
+			snap, err := store.Snapshot(subs.List[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "file" && string(snap.Body) != cached {
+				t.Fatal("wrapper not expanded")
+			}
+			if kind == "http" && len(snap.Providers) != 1 {
+				t.Fatal("HTTP cache lost")
+			}
+		})
+	}
+}
+
+func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
+	for _, kind := range []string{"traversal", "symlink", "fifo", "broken YAML", "invalid active", "invalid rule", "oversized", "existing state"} {
+		t.Run(kind, func(t *testing.T) {
+			source, target := fixture(t)
+			switch kind {
+			case "traversal":
+				write(t, source, "subscriptions.json", `[{"name":"../outside","url":"https://example.com"}]`)
+			case "symlink":
+				os.Remove(filepath.Join(source, "cache/Example.yaml"))
+				os.Symlink("/etc/passwd", filepath.Join(source, "cache/Example.yaml"))
+			case "fifo":
+				os.Remove(filepath.Join(source, "cache/Example.yaml"))
+				syscall.Mkfifo(filepath.Join(source, "cache/Example.yaml"), 0o600)
+			case "broken YAML":
+				write(t, source, "override.yaml", "config: [")
+			case "invalid active":
+				write(t, source, "active", "missing")
+			case "invalid rule":
+				write(t, source, "override.yaml", "rules: {prepend: [\"IP-CIDR,999.0.0.0/8,DIRECT\"]}")
+			case "oversized":
+				os.Truncate(filepath.Join(source, "subscriptions.json"), (1<<20)+1)
+			case "existing state":
+				write(t, target, "settings.json", "{}")
+			}
+			m, err := Prepare(context.Background(), source, target, false, noLinks)
+			if m != nil {
+				m.Close()
+			}
+			if err == nil {
+				t.Fatal("accepted unsafe import")
+			}
+			if _, err := os.Stat(filepath.Join(source, "subscriptions.json")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(target, "subscriptions.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("partial state published")
+			}
+		})
+	}
+}
+
+func TestImportWaitsForOldStateWriter(t *testing.T) {
+	source, target := fixture(t)
+	f, err := os.OpenFile(filepath.Join(source, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := Prepare(context.Background(), source, target, false, noLinks); err == nil || m != nil {
+		t.Fatal("import raced the old writer")
+	}
+}

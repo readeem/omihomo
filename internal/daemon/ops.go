@@ -402,16 +402,56 @@ func (d *server) commitSettings(ctx context.Context, next state.Settings, p core
 	d.mu.Lock()
 	prev := d.settings
 	d.mu.Unlock()
-	if err := d.reapply(ctx, next, p); err != nil {
-		return err
+	syncHost := func(on bool) error {
+		if d.cfg.tailscaleSync == nil {
+			return nil
+		}
+		return d.cfg.tailscaleSync(ctx, on)
 	}
-	if err := d.saveSettings(next); err != nil {
-		if !d.rollback(ctx, prev, p) {
+	changed := next.Tailscale != prev.Tailscale
+	revert := func(failure *protocol.Error) *protocol.Error {
+		var hostErr error
+		if changed && !prev.Tailscale {
+			hostErr = syncHost(false)
+		}
+		restored := d.rollback(ctx, prev, p)
+		if changed && prev.Tailscale {
+			hostErr = errors.Join(hostErr, syncHost(true))
+		}
+		if !restored {
 			d.mu.Lock()
 			d.settings = next
 			d.mu.Unlock()
+			if changed {
+				hostErr = errors.Join(hostErr, syncHost(next.Tailscale))
+			}
+		}
+		if hostErr != nil {
+			d.log.Error("restore Tailscale integration", "err", hostErr)
+			failure.Message += "; restore Tailscale integration: " + hostErr.Error()
+		}
+		return failure
+	}
+	if changed && !next.Tailscale {
+		if err := syncHost(false); err != nil {
+			return fail(protocol.CodeCore, "Tailscale integration failed: %v", err)
+		}
+	}
+	if err := d.reapply(ctx, next, p); err != nil {
+		if changed && !next.Tailscale {
+			if restore := syncHost(prev.Tailscale); restore != nil {
+				err.Message += "; restore Tailscale integration: " + restore.Error()
+			}
 		}
 		return err
+	}
+	if changed && next.Tailscale {
+		if err := syncHost(true); err != nil {
+			return revert(fail(protocol.CodeCore, "Tailscale integration failed: %v", err))
+		}
+	}
+	if err := d.saveSettings(next); err != nil {
+		return revert(err)
 	}
 	return nil
 }
@@ -530,6 +570,7 @@ func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (a
 	if err := d.commitSettings(ctx, next, p); err != nil {
 		return nil, err
 	}
+
 	d.publish(ctx)
 	return d.status(), nil
 }

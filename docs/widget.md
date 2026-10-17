@@ -5,7 +5,7 @@ else in that folder is loaded from there.
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | Plugin id `omihomo`, one bar-widget entry point |
+| `manifest.json` | Plugin id `dev.readeem.omihomo`, one bar-widget entry point |
 | `widget/Panel.qml` | Bar button, the popup's header, tabs, and key hints; the panel state and the cursor and key handling for every view |
 | `widget/views/` | One file per view (`ConfigsView`, `SubscriptionsView`, `RulesView`, `ConnectionsView`, `SettingsView`) and the rows only that view uses |
 | `widget/components/` | Shared pieces: `Theme`, text, buttons, fields, the switch, tabs, `TrafficGraph`, `FlowDiagram`, and `NavRow`, the base of every cursor row |
@@ -205,6 +205,17 @@ omarchy plugin add https://github.com/readeem/omihomo.git --enable
 Then place it with `omarchy bar move dev.readeem.omihomo`. Installing the core itself is the
 panel's install card, or `bin/omihomo-install` in a terminal.
 
+## Development
+
+After building with `./tools/build-package`, run `./tools/test-cutover` from a local terminal.
+It installs and claims the daemon before linking this checkout as the user plugin, preserves
+an existing plugin directory as a backup, enables and places the widget, and runs
+`omarchy restart shell`. This changes the installed proxy and can interrupt connections.
+Use [the manual checklist](../tests/README.md#manual-cutover-test) after ending dependent sessions.
+
+When the plugin already links this checkout, later QML changes need only `omarchy restart shell`.
+Rebuild and reinstall the local package for Go changes.
+
 ## Verifying a change
 
 `tests/run` includes Quickshell-native service tests, `tests/daemon_state_test.sh`. They run
@@ -229,7 +240,8 @@ fake`, see [daemon.md](daemon.md#running-it)) and point the shell at it with `OM
 
 ## Screenshots
 
-The README images are generated, never taken by hand:
+Screenshot capture is a maintainer operation using invented fixture data. Agents must not run it
+or otherwise render/smoke-test the widget; changes are tried manually in the installed shell:
 
 ```sh
 tools/screenshots/capture            # rewrites preview.png and assets/screenshots/

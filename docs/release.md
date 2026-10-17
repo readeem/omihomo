@@ -2,7 +2,8 @@
 
 Omihomo releases provide the Go daemon for Linux x86_64. The widget remains a separate Omarchy
 plugin. The AUR package `omihomo-bin` installs the prebuilt daemon and its systemd units; it does
-not compile Go on the user's machine.
+not compile Go on the user's machine. Runtime dependencies are systemd and util-linux
+(the owner claim uses `runuser`); the core is embedded.
 
 ## What CI builds
 
@@ -47,6 +48,39 @@ Before the first release:
 4. Ensure GitHub Actions can create releases with `contents: write`. Package-building jobs
    only need read access; only the AUR publication job uses the `aur` environment and SSH key.
 
+Generate the dedicated CI key from a local terminal (choose an unused filename). CI needs an
+unencrypted key; it is authorized for the AUR account's packages, not just one repository:
+
+```sh
+umask 077
+ssh-keygen -t ed25519 -N '' -C 'Omihomo AUR releases' -f "$HOME/.ssh/omihomo-aur"
+cat "$HOME/.ssh/omihomo-aur.pub"
+```
+
+Paste only the `.pub` contents into your AUR account's SSH public keys field. Verify the AUR
+server's host fingerprint against its official SSH fingerprints before accepting the first
+connection, then check authentication without publishing:
+
+```sh
+ssh -i "$HOME/.ssh/omihomo-aur" -o IdentitiesOnly=yes aur@aur.archlinux.org list-repos
+```
+
+After creating the `aur` GitHub environment and its **tag-only `v*`** deployment rule, add the
+private key through stdin from a checkout of this repository:
+
+```sh
+gh secret set AUR_SSH_PRIVATE_KEY --env aur < "$HOME/.ssh/omihomo-aur"
+```
+
+Do not paste the private key into an issue, workflow, command argument or repository file.
+No initial manual AUR push is needed: after the first GitHub release is published, the workflow
+clones the empty package repository and pushes `PKGBUILD`, `.SRCINFO`, and `omihomo.install`.
+The package name must be available or already maintained by your AUR account. If another account
+owns it, resolve ownership before releasing.
+
+These steps follow [Arch's AUR submission guidelines](https://wiki.archlinux.org/title/AUR_submission_guidelines)
+and [GitHub's environment protection rules](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+
 The release job pins AUR's SSH ed25519 host key instead of trusting a key fetched at runtime:
 
 ```text
@@ -57,6 +91,12 @@ If AUR rotates that key, verify the replacement through AUR's official infrastru
 information before updating the workflow. Do not disable strict host key checking.
 
 ## Publish a version
+
+Before publishing, complete the manual tests and a maintainer security review. Review the root
+service's networking and process-inspection capabilities, owner-only socket, private subscription
+state, fixed Tailscale drop-in write access, embedded dependency scan, release checksums and the
+AUR environment's key exposure. Publishing a tag exposes a public release and enables automated
+AUR publication; do not use it as a test run.
 
 Merge the intended changes and the `manifest.json` version bump first. From the exact commit
 to release, create and push a tag matching that version. For example, for manifest version
@@ -92,3 +132,11 @@ sha256sum -c omihomo-2.0.0-x86_64.tar.gz.sha256
 Users install and claim the daemon with the commands in [daemon installation](daemon.md#install-on-arch-linux).
 Upgrades use the normal AUR update flow; the package restarts a running daemon. No standalone
 core downloader or self-update service is added by this release path.
+
+## Local test package
+
+`./tools/build-package` builds the release-shaped binary and dependency source archives, checksums,
+local Arch package and rendered AUR metadata under ignored `dist/`, without installing or publishing anything. It needs
+Go, `jq`, and Arch's `base-devel` tools. Use [the manual checklist](../tests/README.md#manual-cutover-test)
+for the actual cutover. CI still rebuilds and tests the exact tagged commit before publication;
+local test archives must never replace published release assets.

@@ -76,7 +76,7 @@ type Usage struct {
 
 func ReadUsage(h http.Header) Usage {
 	var u Usage
-	for _, field := range strings.Split(h.Get("Subscription-Userinfo"), ";") {
+	for field := range strings.SplitSeq(h.Get("Subscription-Userinfo"), ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
 		if !ok {
 			continue

@@ -27,7 +27,7 @@ func TestOnlyTheCoreImportsMihomo(t *testing.T) {
 		if pkg == "github.com/readeem/omihomo/internal/core/mihomo" {
 			continue
 		}
-		for _, imp := range strings.Fields(imports) {
+		for imp := range strings.FieldsSeq(imports) {
 			if imp == mihomo || strings.HasPrefix(imp, mihomo+"/") {
 				t.Errorf("%s imports %s", pkg, imp)
 			}

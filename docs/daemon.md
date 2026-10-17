@@ -19,9 +19,8 @@ sudo /usr/bin/omihomo claim
 The plugin checkout provides `bin/omihomo-install` to run the first two commands in order. Run
 that script without `sudo`; it requests privileges only for claiming the daemon (and when yay
 installs the package). If installation fails it does not claim; if claiming fails the script
-returns an error. The absolute binary path avoids the plugin's existing `bin/omihomo` shell CLI.
-The current widget still uses that legacy CLI; migration to the daemon and wiring its install
-button to this new entrypoint are separate work.
+returns an error. Custom XDG directories are passed to `claim` by the installer.
+The widget and command line both use the daemon socket.
 
 The package installs `/usr/bin/omihomo`, `omihomo.service`, `omihomo.socket`, and a tmpfiles rule
 for `/var/lib/omihomo`. It enables both units and starts them when systemd is running. Before
@@ -33,10 +32,21 @@ restart, including a retry after a failed systemd command. Running `sudo /usr/bi
 from another account transfers access to that account; it does not create shared access.
 Running it again from the same account repairs the setup and restarts the daemon.
 
+On the first claim of an old installation, the importer stages cached subscriptions, usage and
+refresh metadata, the active subscription and typed settings. Cached HTTP providers are read
+locally when available, otherwise fetched with the normal HTTPS/size/time limits. Raw subscription
+wrappers are expanded from their confined local cache. Unusable input aborts before stopping the
+old runtime. Successful setup removes its user units and wants links, privilege hooks and CLI
+launcher (symlink or recognized shell wrapper), and clears setuid, ACLs and capabilities on old mihomo. An old running proxy must start
+successfully in the daemon. Failures roll back and restart the previously active user units.
+Original source data stays untouched as recovery data; it is never read by the daemon afterward.
+See [the CLI reference](cli.md) for custom paths and unsupported raw overrides.
+
 The service runs as root because systemd-resolved authorizes the TUN DNS setup by effective
 uid 0. There is no dedicated system user and no sysusers file. The service limits capabilities,
 system calls, devices and filesystem access; its state directory is root-owned with mode
-`0700`. See [the service sandbox research](research/2026-10-11-hardened-root-tun-service.md)
+`0700`. The only writable system configuration directory is
+`/etc/systemd/system/tailscaled.service.d`; Omihomo writes only its fixed proxy drop-in there. See [the service sandbox research](research/2026-10-11-hardened-root-tun-service.md)
 for its constraints. The release build disables EasyTier because its JIT conflicts with
 `MemoryDenyWriteExecute=yes`.
 
@@ -236,7 +246,7 @@ to stdout. Under a `Type=notify` unit it reports `READY=1` once it serves and `S
 shutdown; `SIGTERM` disconnects every client and stops the core. The daemon runs with umask
 `077`, so everything it writes, the core's selection cache included, is root's alone.
 
-The production package and release setup are described in [releasing.md](releasing.md).
+The production package and release setup are described in [release.md](release.md).
 For development, build with gVisor, which TUN without redirect needs, and without EasyTier's
 JIT so the binary also runs under the packaged service's memory-execution restrictions:
 
@@ -244,24 +254,20 @@ JIT so the binary also runs under the packaged service's memory-execution restri
 CGO_ENABLED=0 go build -tags with_gvisor,no_easytier -trimpath -o /tmp/omihomo ./cmd/omihomo
 ```
 
-For development, against the fake core:
+Use [the manual test checklist](../tests/README.md#manual-cutover-test) for the packaged
+service. An isolated fake daemon can exercise clients without networking; always provide private
+`--state`, `--home`, `--socket` and `--owner-file` paths, track its PID, and stop it afterward.
+The widget itself is tested manually in the installed shell.
 
-```sh
-dir=$(mktemp -d) && id -u > "$dir/owner" && chmod 600 "$dir/owner"
-/tmp/omihomo daemon --core fake --socket "$dir/sock" --owner-file "$dir/owner" &
-OMIHOMO_SOCKET="$dir/sock" /tmp/omihomo start
-```
+## Removal
 
-TUN needs root. A development daemon keeps its state apart from an installed one:
-
-```sh
-sudo install -d -m 711 /run/omihomo-dev
-sudo sh -c "id -u $USER > /run/omihomo-dev/owner && chmod 600 /run/omihomo-dev/owner"
-sudo /tmp/omihomo daemon --home /run/omihomo-dev/core --state /run/omihomo-dev/state \
-  --socket /run/omihomo-dev/sock --owner-file /run/omihomo-dev/owner &
-export OMIHOMO_SOCKET=/run/omihomo-dev/sock
-/tmp/omihomo sub add < ~/subscription-url && /tmp/omihomo start && /tmp/omihomo set tun on
-```
+`sudo pacman -R omihomo-bin` disables and stops the system service and socket, preserving state
+and the ownership drop-in. Reinstall and claim to reuse subscriptions and settings.
+Removing the package also removes Omihomo's Tailscale proxy drop-in and reloads tailscaled.
+For permanent removal, stop/uninstall first, then explicitly delete `/var/lib/omihomo` and
+`/etc/systemd/system/omihomo.socket.d/owner.conf`. This erases subscription credentials and settings.
+Old source data remains separately under the owner's data directory and can be deleted after
+verifying migration.
 
 ## State
 
@@ -395,3 +401,16 @@ mihomo pins `golang.org/x/net` at a release with advisories govulncheck finds re
 requires a newer one. It copies mihomo's `replace` of protobuf, which CI checks against mihomo's
 on every change, and sets `godebug default=go1.20` to match mihomo's runtime defaults.
 Dependabot proposes mihomo bumps.
+
+## Tailscale host integration
+
+Enabling the Tailscale setting opens the fixed loopback proxy on port 7899, then installs only
+`/etc/systemd/system/tailscaled.service.d/omihomo.conf` with fixed HTTP/HTTPS proxy and bypass
+environment values. Disabling removes that drop-in before closing the listener. The daemon asks
+systemd to reload and `try-restart` tailscaled only when the file changes; failures restore the
+previous file and settings. Other drop-ins are preserved. Claim restores this setting on startup;
+an unclaimed package never changes an old installation's Tailscale environment.
+
+The package owns the empty root-owned directory that the service's `ReadWritePaths` permits.
+No client supplies a path, port or environment string. With the integration enabled and the
+proxy stopped, tailscaled cannot use its configured proxy until the proxy starts again.

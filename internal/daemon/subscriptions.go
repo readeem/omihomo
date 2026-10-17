@@ -123,8 +123,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: url, MaxBytes: d.cfg.downloadLimit})
 	if err != nil {
 		derr := &downloadError{err: fail(protocol.CodeFetch, "%v", err)}
-		var serr *fetch.StatusError
-		if errors.As(err, &serr) {
+		if serr, ok := errors.AsType[*fetch.StatusError](err); ok {
 			derr.answered, derr.retryAfter = true, serr.RetryAfter
 		}
 		return nil, derr
@@ -153,8 +152,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 			// Without it the rules it feeds would be left out, and with them
 			// whatever they block: the content is incomplete, not new.
 			derr := &downloadError{err: fail(protocol.CodeFetch, "provider %q: %v", p.Name, err)}
-			var serr *fetch.StatusError
-			if errors.As(err, &serr) {
+			if serr, ok := errors.AsType[*fetch.StatusError](err); ok {
 				derr.answered, derr.retryAfter = true, serr.RetryAfter
 			}
 			return nil, derr

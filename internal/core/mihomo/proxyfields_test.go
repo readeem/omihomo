@@ -85,8 +85,8 @@ func compareFields(t *testing.T, typ, path string, ours, theirs reflect.Type) {
 // them.
 func flatFields(t reflect.Type, tag string) []reflect.StructField {
 	var fields []reflect.StructField
-	for i := range t.NumField() {
-		f := t.Field(i)
+	for f := range t.Fields() {
+		f := f
 		if f.Anonymous && f.Type.Kind() == reflect.Struct && tagKey(f, tag) == "" {
 			fields = append(fields, flatFields(f.Type, tag)...)
 		} else if key := tagKey(f, tag); key != "" && key != "-" {

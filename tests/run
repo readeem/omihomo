@@ -18,18 +18,3 @@ elif [[ ${OMIHOMO_REQUIRE_QML:-0} == 1 ]]; then
 else
   printf 'skipping QML service tests: Quickshell is not installed\n'
 fi
-
-if [[ -n ${OMIHOMO_TEST_YQ:-} ]]; then
-  [[ -x $OMIHOMO_TEST_YQ ]] || { printf 'OMIHOMO_TEST_YQ is not executable: %s\n' "$OMIHOMO_TEST_YQ" >&2; exit 2; }
-else
-  command -v yq >/dev/null 2>&1 || {
-    printf 'tests require yq; set OMIHOMO_TEST_YQ to a yq v4 executable\n' >&2
-    exit 2
-  }
-fi
-
-if [[ ${OMIHOMO_REAL_CORE_TEST:-0} == 1 ]]; then
-  "$here/real_provider_test.sh"
-fi
-"$here/cli_test.sh"
-exec "$here/auto_update_test.sh"

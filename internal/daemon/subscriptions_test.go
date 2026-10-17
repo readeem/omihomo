@@ -490,7 +490,7 @@ func TestSettingsRulesAndTheRunningStateSurviveARestart(t *testing.T) {
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Mode: ptr("global"), TUN: ptr(true), PrimaryGroup: ptr("Proxy")})
+	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Mode: new("global"), TUN: new(true), PrimaryGroup: new("Proxy")})
 	call[protocol.RuleList](t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "domain-suffix", Value: "intranet.example", Target: "DIRECT"})
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	o.Close()
@@ -705,7 +705,7 @@ func TestChangesWhileStoppedAreChecked(t *testing.T) {
 	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "GEOSITE", Value: "nonexistent", Target: "DIRECT"}); err.Code != protocol.CodeCore {
 		t.Fatalf("a rule the core would refuse = %v", err)
 	}
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: ptr(true)}); err.Code != protocol.CodeCore {
+	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: new(true)}); err.Code != protocol.CodeCore {
 		t.Fatalf("a setting the core would refuse = %v", err)
 	}
 	h.core.FailCheck(nil)
