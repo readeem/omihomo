@@ -1857,7 +1857,8 @@ Panel {
     property color color: root.foreground
     property int pixelSize: Style.font.bodySmall
     property bool bold: false
-    readonly property var parts: Model.leadingEmoji(text)
+    readonly property var parts: Model.nameParts(text)
+    readonly property bool tailed: parts.tail.length > 0
 
     spacing: markSlot.advanceWidth / 2
 
@@ -1868,22 +1869,75 @@ Panel {
       text: "MM"
     }
 
-    PanelText {
+    EmojiGlyph {
       visible: name.parts.mark !== ""
       Layout.minimumWidth: markSlot.advanceWidth
       Layout.maximumWidth: markSlot.advanceWidth
-      text: name.parts.mark
+      emoji: name.parts.mark
       color: name.color
-      font.pixelSize: name.pixelSize
+      pixelSize: name.pixelSize
     }
     PanelText {
       id: nameRest
       Layout.fillWidth: true
+      // With emoji after it, the text keeps to its own width so they follow
+      // it, and the spacer below takes the rest of the row.
+      Layout.maximumWidth: name.tailed ? implicitWidth : Number.POSITIVE_INFINITY
       text: name.parts.rest
       color: name.color
       font.pixelSize: name.pixelSize
       font.bold: name.bold
       elide: Text.ElideRight
+    }
+    Repeater {
+      model: name.parts.tail
+      EmojiGlyph {
+        required property string modelData
+        emoji: modelData
+        color: name.color
+        pixelSize: name.pixelSize
+      }
+    }
+    Item {
+      visible: name.tailed
+      Layout.fillWidth: true
+    }
+  }
+
+  // One emoji, drawn from the image the service renders for it. Until that
+  // image exists, the font glyph stands in.
+  component EmojiGlyph: Item {
+    id: glyph
+
+    property string emoji: ""
+    property color color: root.foreground
+    property int pixelSize: Style.font.bodySmall
+    readonly property string source: omihomo.emojiImage(emoji)
+
+    implicitWidth: source !== "" ? image.width : fallback.implicitWidth
+    implicitHeight: fallback.implicitHeight
+
+    onEmojiChanged: if (emoji !== "") omihomo.requestEmoji([emoji])
+    Component.onCompleted: if (emoji !== "") omihomo.requestEmoji([emoji])
+
+    Image {
+      id: image
+      visible: glyph.source !== ""
+      anchors.verticalCenter: parent.verticalCenter
+      height: Math.round(glyph.pixelSize * 1.2)
+      width: implicitHeight > 0 ? Math.round(height * implicitWidth / implicitHeight) : height
+      source: glyph.source
+      fillMode: Image.PreserveAspectFit
+      smooth: true
+      mipmap: true
+      asynchronous: true
+    }
+    PanelText {
+      id: fallback
+      visible: glyph.source === ""
+      text: glyph.emoji
+      color: glyph.color
+      font.pixelSize: glyph.pixelSize
     }
   }
 

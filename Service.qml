@@ -124,6 +124,16 @@ Item {
   property bool traceFailed: false
   property bool _traceQueued: false
 
+  // Emoji in config and group names are drawn from images, not font glyphs.
+  // Qt 6.11 loses colour glyphs once the panel's window has been hidden and
+  // shown again, so a flag drawn as text is there on the first open and blank
+  // on every one after it. Each emoji is rendered once by pango, outside Qt,
+  // into the cache; the panel falls back to the glyph until its image exists.
+  readonly property string emojiDir: (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/omihomo/emoji"
+  property var emojiImages: ({})       // emoji -> image URL, once rendered
+  property var _emojiRequested: ({})
+  property var _emojiQueue: []
+
   // Manual results sit above `/proxies` snapshots. A slow snapshot may have
   // started before the click, so it must not repaint an old latency over the
   // test that the user is watching.
@@ -165,6 +175,52 @@ Item {
     var value = settings ? settings[name] : undefined
     return value === undefined || value === null ? fallback : value
   }
+
+  // ---- emoji images -------------------------------------------------------
+
+  function emojiImage(emoji) {
+    return emojiImages[emoji] || ""
+  }
+
+  // Asks for an image of each emoji, once per emoji for the life of the panel.
+  function requestEmoji(list) {
+    var added = false
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i]
+      if (!e || _emojiRequested[e]) continue
+      _emojiRequested[e] = true
+      _emojiQueue.push(e)
+      added = true
+    }
+    if (added) Qt.callLater(renderEmoji)
+  }
+
+  function renderEmoji() {
+    if (emojiCmd.running || _emojiQueue.length === 0) return
+    var args = ["bash", "-c", emojiScript, "omihomo-emoji", emojiDir]
+    for (var i = 0; i < _emojiQueue.length; i++) args.push(Model.emojiKey(_emojiQueue[i]), _emojiQueue[i])
+    _emojiQueue = []
+    emojiCmd.launch(args)
+  }
+
+  // Arguments: the cache directory, then key and emoji pairs. The image is
+  // written beside its final name and moved into place, so a render cut short
+  // never leaves a truncated file that later opens would trust.
+  readonly property string emojiScript: `
+    dir=$1; shift
+    mkdir -p -- "$dir" || exit 1
+    while (( $# >= 2 )); do
+      file=$dir/$1.png
+      if [[ ! -s $file ]]; then
+        pango-view --no-display --font="emoji 48" --background=transparent --margin=0 \\
+          --text="$2" -o "$file.part.png" >/dev/null 2>&1 && mv -f -- "$file.part.png" "$file"
+        rm -f -- "$file.part.png"
+      fi
+      [[ -s $file ]] && printf "%s\\n" "$1"
+      shift 2
+    done
+    exit 0
+  `
 
   // ---- plumbing -----------------------------------------------------------
 
@@ -756,6 +812,25 @@ Item {
       root.apiAddress = info.address
       root.apiSecret = info.secret
       if (root.panelOpen && root.apiReady) root.refreshLive()
+    }
+  }
+
+  // Renders every queued emoji that has no image yet, then reports the keys
+  // whose images exist. A missing `pango-view` reports none, which leaves the
+  // panel on its font glyphs.
+  Cmd {
+    id: emojiCmd
+    onFinished: function(code, out) {
+      var ready = String(out || "").split("\n")
+      if (ready.length > 0) {
+        var images = Object.assign({}, root.emojiImages)
+        var asked = root._emojiRequested
+        for (var e in asked) {
+          if (ready.indexOf(Model.emojiKey(e)) !== -1) images[e] = "file://" + root.emojiDir + "/" + Model.emojiKey(e) + ".png"
+        }
+        root.emojiImages = images
+      }
+      root.renderEmoji()
     }
   }
 
