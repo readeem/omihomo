@@ -133,8 +133,37 @@ func TestImportReadsRawWrapperAndCachedHTTPProvider(t *testing.T) {
 	}
 }
 
+func TestImportPreservesUnclaimedCoreCacheOnRollback(t *testing.T) {
+	for _, when := range []string{"before preparation", "during shutdown"} {
+		t.Run(when, func(t *testing.T) {
+			source, target := fixture(t)
+			if when == "before preparation" {
+				write(t, target, "core/cache.db", "old cache")
+			}
+			m, err := Prepare(t.Context(), source, target, true, noLinks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			if when == "during shutdown" {
+				write(t, target, "core/cache.db", "old cache")
+			}
+			if err := m.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(filepath.Join(target, "core/cache.db"))
+			if err != nil || string(body) != "old cache" {
+				t.Fatalf("previous cache was not restored: %v", err)
+			}
+		})
+	}
+}
+
 func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
-	for _, kind := range []string{"traversal", "symlink", "fifo", "broken YAML", "invalid active", "invalid rule", "oversized", "existing state"} {
+	for _, kind := range []string{"traversal", "symlink", "fifo", "broken YAML", "invalid active", "invalid rule", "oversized", "existing state", "unknown core file", "symlinked core cache"} {
 		t.Run(kind, func(t *testing.T) {
 			source, target := fixture(t)
 			switch kind {
@@ -156,6 +185,11 @@ func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
 				os.Truncate(filepath.Join(source, "subscriptions.json"), (1<<20)+1)
 			case "existing state":
 				write(t, target, "settings.json", "{}")
+			case "unknown core file":
+				write(t, target, "core/unknown", "keep")
+			case "symlinked core cache":
+				os.MkdirAll(filepath.Join(target, "core"), 0o700)
+				os.Symlink(filepath.Join(source, "subscriptions.json"), filepath.Join(target, "core/cache.db"))
 			}
 			m, err := Prepare(context.Background(), source, target, false, noLinks)
 			if m != nil {

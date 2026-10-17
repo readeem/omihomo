@@ -8,7 +8,51 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/readeem/omihomo/internal/core/mihomo"
 )
+
+func TestCutoverImportsAfterUnclaimedCoreShutdown(t *testing.T) {
+	c, _ := cutoverFixture(t)
+	write := func(name, body string) {
+		t.Helper()
+		path := filepath.Join(c.data, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("subscriptions.json", `[{"name":"Example","url":"https://example.com/sub"}]`)
+	write("active", "Example")
+	write("cache/Example.yaml", "proxies: [{name: Example, type: direct}]\nproxy-groups: [{name: Proxy, type: select, proxies: [Example]}]\nrules: [MATCH,Proxy]\n")
+	engine, err := mihomo.New(filepath.Join(c.state, "core"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemctl := c.systemctl
+	c.systemctl = func(ctx context.Context, args ...string) error {
+		if slices.Equal(args, []string{"stop", serviceUnit, socketUnit}) {
+			if err := engine.Stop(ctx); err != nil {
+				return err
+			}
+			entries, err := os.ReadDir(filepath.Join(c.state, "core"))
+			if err != nil || len(entries) == 0 {
+				t.Fatalf("shutdown did not create a core cache: %v", err)
+			}
+			for _, name := range []string{"settings.json", "subscriptions.json"} {
+				if _, err := os.Lstat(filepath.Join(c.state, name)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("unexpected daemon state %s: %v", name, err)
+				}
+			}
+		}
+		return systemctl(ctx, args...)
+	}
+	if err := c.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func cutoverFixture(t *testing.T) (*cutover, *[]string) {
 	t.Helper()

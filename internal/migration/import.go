@@ -191,7 +191,10 @@ func emptyState(target string) error {
 		}
 		if (entry.Name() == "core" || entry.Name() == "subscriptions") && entry.IsDir() {
 			children, err := os.ReadDir(filepath.Join(target, entry.Name()))
-			if err == nil && len(children) == 0 {
+			if err != nil {
+				return err
+			}
+			if len(children) == 0 || (entry.Name() == "core" && len(children) == 1 && children[0].Name() == "cache.db" && children[0].Type().IsRegular()) {
 				continue
 			}
 		}

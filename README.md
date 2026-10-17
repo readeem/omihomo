@@ -63,20 +63,6 @@ omarchy restart shell
 The widget's **Install core** action runs the package installation and claim in a terminal.
 The daemon embeds mihomo; a separate mihomo package, `yq`, `jq` and `curl` are not required.
 
-### Upgrading an old installation
-
-`claim` imports subscriptions, their cached content and metadata, the active subscription, and
-supported override settings before removing the old service and privileged setup. The proxy keeps
-its previous on/off state. Original files stay in `~/.local/share/omihomo` as recovery data;
-the daemon uses only `/var/lib/omihomo` afterward. A failed cutover restores the old runtime.
-Run this step from a local terminal after finishing any session that depends on the proxy.
-
-Raw YAML overrides are unsupported. Mode, TUN, redirect, primary group, Tailscale settings and
-typed prepend rules migrate; raw append/filter rules require conversion before cutover.
-For custom XDG paths, use the installer script or the flags in [the CLI reference](docs/cli.md).
-After verifying the new daemon, remove the separate `mihomo-bin` or `mihomo` package if nothing
-else needs it. The widget reminds you while its binary remains installed.
-
 ## Usage
 
 | Input | Action |

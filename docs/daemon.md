@@ -32,15 +32,7 @@ restart, including a retry after a failed systemd command. Running `sudo /usr/bi
 from another account transfers access to that account; it does not create shared access.
 Running it again from the same account repairs the setup and restarts the daemon.
 
-On the first claim of an old installation, the importer stages cached subscriptions, usage and
-refresh metadata, the active subscription and typed settings. Cached HTTP providers are read
-locally when available, otherwise fetched with the normal HTTPS/size/time limits. Raw subscription
-wrappers are expanded from their confined local cache. Unusable input aborts before stopping the
-old runtime. Successful setup removes its user units and wants links, privilege hooks and CLI
-launcher (symlink or recognized shell wrapper), and clears setuid, ACLs and capabilities on old mihomo. An old running proxy must start
-successfully in the daemon. Failures roll back and restart the previously active user units.
-Original source data stays untouched as recovery data; it is never read by the daemon afterward.
-See [the CLI reference](cli.md) for custom paths and unsupported raw overrides.
+For the one-time import and cleanup of an old installation, see [upgrading](upgrade.md).
 
 The service runs as root because systemd-resolved authorizes the TUN DNS setup by effective
 uid 0. There is no dedicated system user and no sysusers file. The service limits capabilities,

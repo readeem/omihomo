@@ -39,17 +39,8 @@ omihomo sub add < /path/to/private-subscription-url
 Keep that file owner-only. Subscription lists and logs never reveal URLs.
 
 `claim` records the invoking sudo/pkexec account as the single owner and reconciles systemd.
-On an old installation it first stages a one-time import, then removes the old user units,
-pacman privilege hooks and CLI symlink, strips setuid/capabilities/ACLs from old mihomo, and
-starts the new daemon. An old running proxy must successfully start in the new daemon before
-cutover succeeds. A failed operation restores the old runtime. The old data is kept for recovery.
-
-The defaults are the invoking account's `.local/share/omihomo` and `.config`. For a custom XDG
-layout, run the plugin's `bin/omihomo-install`, which passes both paths, or pass the flags yourself.
-Run cutover in a local terminal after ending any session that depends on the existing proxy.
-Supported override fields and typed prepend rules migrate; arbitrary YAML fields are ignored.
-Raw append/filter rules and prepend rules the old form could not create are rejected before
-changing the old runtime, with a conversion instruction. Existing daemon state is never replaced.
+The legacy path flags default to that account's `.local/share/omihomo` and `.config`.
+See [upgrading an old installation](upgrade.md) for the one-time import and cleanup.
 
 | Exit | Meaning |
 | ---: | --- |
