@@ -1,0 +1,41 @@
+[settings]
+lockfile = true
+
+[tool_config]
+locked = true
+
+[tools]
+go = "1.27.2"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+
+[env]
+# The release build: gVisor for TUN without redirect, and no EasyTier, which JITs.
+GOFLAGS = "-tags=with_gvisor,no_easytier"
+
+[tasks.check]
+description = "The gate: formatting, go fix, vet and tests"
+run = [
+  'test -z "$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }',
+  "go fix -diff ./...",
+  "go vet ./...",
+  "GOFLAGS= go vet ./...",
+  # mihomo races with itself, so its package runs without -race.
+  "go test -race $(go list ./... | grep -v '/internal/core/mihomo$')",
+  "go test ./internal/core/mihomo",
+]
+
+[tasks.widget]
+description = "Installer, widget model and Quickshell service tests against fake daemons"
+run = "./tests/run"
+
+[tasks.vulncheck]
+description = "Scan the release build for reachable vulnerabilities"
+run = "govulncheck -tags with_gvisor,no_easytier ./..."
+
+[tasks.fix]
+description = "Apply go fix and gofmt"
+run = ["go fix ./...", "gofmt -w ."]
+
+[tasks.package]
+description = "Build the Arch package and AUR metadata into dist/"
+run = "./tools/build-package"

@@ -165,7 +165,7 @@ function subscriptionUsage(sub) {
 
 // `rules.list` is the runtime's rules in match order, each tagged with where
 // it came from. The owner's rules carry their 1-based index, which is what
-// `rules.remove` takes.
+// `omihomo rule remove` takes.
 function readRules(data) {
   var list = data && typeof data === "object" ? data.rules : null
   var out = { own: [], injected: [], subscription: [] }

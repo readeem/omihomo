@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 1 by default
+// --protocol  the version its hello announces, 2 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 1, refuse: false, latency: 0, fail: new Set() }
+const options = { protocol: 2, refuse: false, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -129,14 +129,14 @@ const ops = {
     publish()
     return { result: status }
   },
-  "settings.set": (client, a) => {
-    if (a.mode !== undefined && !["rule", "global", "direct"].includes(a.mode))
+  "settings.apply": (client, a) => {
+    if (!["rule", "global", "direct"].includes(a.settings.mode))
       return failure("invalid", "mode must be rule, global or direct")
-    if (a.tailscale === true && !status.tailscale_present)
+    if (a.settings.tailscale === true && !status.tailscale_present)
       return failure("conflict", "tailscaled is not installed")
-    const fields = { mode: "mode", tun: "tun", tun_redirect: "tun_redirect", tailscale: "tailscale",
-      tailnet_proxy: "tailnet_proxy", primary_group: "primary_group" }
-    for (const key of Object.keys(a)) status[fields[key]] = a[key]
+    Object.assign(status, { mode: "rule", tun: false, tun_redirect: false, tailscale: false,
+      tailnet_proxy: false, primary_group: "" }, a.settings)
+    rules = a.rules
     publish()
     return { result: status }
   },
@@ -165,17 +165,6 @@ const ops = {
     ? { result: { ip: "203.0.113.7", latency: 42 } }
     : failure("not_running", "the proxy is not running")),
   "rules.list": () => ({ result: ruleList() }),
-  "rules.add": (client, a) => {
-    rules.push({ type: a.type, value: a.value, target: a.target })
-    push("rules", ruleList())
-    return { result: ruleList() }
-  },
-  "rules.remove": (client, a) => {
-    if (a.index < 1 || a.index > rules.length) return failure("not_found", "no such rule")
-    rules.splice(a.index - 1, 1)
-    push("rules", ruleList())
-    return { result: ruleList() }
-  },
   "subscriptions.list": () => ({ result: { subscriptions } }),
   "subscriptions.add": (client, a) => {
     if (!a.url.startsWith("https://")) return failure("fetch_failed", "only HTTPS is allowed")

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	mlog "github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/log"
 )
 
 // logTap is the one subscriber to mihomo's log, which is how mihomo reports
@@ -29,24 +29,24 @@ type logTap struct {
 // subscribers whatever the log level, and are not printed.
 const markPrefix = "omihomo: log mark "
 
-func startLogTap(log *slog.Logger) *logTap {
+func startLogTap(logger *slog.Logger) *logTap {
 	t := &logTap{}
 	t.changed = sync.NewCond(&t.mu)
-	sub := mlog.Subscribe()
+	sub := log.Subscribe()
 	go func() {
 		for event := range sub {
 			t.mu.Lock()
-			if n, ok := strings.CutPrefix(event.Payload, markPrefix); ok && event.LogLevel == mlog.DEBUG {
+			if n, ok := strings.CutPrefix(event.Payload, markPrefix); ok && event.LogLevel == log.DEBUG {
 				if n, err := strconv.ParseUint(n, 10, 64); err == nil && n > t.seen {
 					t.seen = n
 					t.changed.Broadcast()
 				}
-			} else if event.LogLevel >= mlog.ERROR && t.watching != nil {
+			} else if event.LogLevel >= log.ERROR && t.watching != nil {
 				t.watching = append(t.watching, event.Payload)
 			}
 			t.mu.Unlock()
 		}
-		log.Error("mihomo's log closed")
+		logger.Error("mihomo's log closed")
 	}()
 	return t
 }
@@ -65,7 +65,7 @@ func (t *logTap) watch() (stop func() []string) {
 		t.marks++
 		mark := t.marks
 		t.mu.Unlock()
-		mlog.Debugln("%s%d", markPrefix, mark)
+		log.Debugln("%s%d", markPrefix, mark)
 
 		timedOut := false
 		timer := time.AfterFunc(5*time.Second, func() {

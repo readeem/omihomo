@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply Omihomo settings and rules
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+Environment=XDG_CONFIG_HOME=%E
+ExecStart=/usr/bin/omihomo apply
+UMask=0077
+
+[Install]
+WantedBy=default.target

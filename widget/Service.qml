@@ -3,10 +3,11 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// State for the Omihomo panel. Everything goes through one connection to the
-// daemon's socket (docs/daemon.md): requests carry an id and get one reply
+// State for the Omihomo panel. Reads use one connection to the daemon's socket
+// (docs/daemon.md): requests carry an id and get one reply
 // each, and the daemon pushes every change on the streams this panel
-// subscribed to, whoever made it. Nothing here polls.
+// subscribed to, whoever made it. Settings edits use the CLI to save the
+// owner's files. Nothing here polls.
 //
 // The `status` stream is always on, since the bar icon needs it. The panel's
 // streams — groups, rules, subscriptions, traffic, and connections — run only
@@ -20,7 +21,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 1
+  readonly property int protocolVersion: 2
 
   // ---- the connection -----------------------------------------------------
   // "connecting" until the daemon greets this panel, then "ready". The rest
@@ -528,6 +529,38 @@ Item {
     connectionsUpload = parsed.uploadTotal
   }
 
+  property var _editDone: null
+
+  function edit(args, done) {
+    if (editor.running || _editDone !== null) return 0
+    _editDone = done
+    editor.command = ["/usr/bin/env", "OMIHOMO_SOCKET=" + socketPath, "/usr/bin/omihomo"].concat(args)
+    editor.running = true
+    return 1
+  }
+
+  Process {
+    id: editor
+    stdout: StdioCollector { id: editOutput; waitForEnd: true }
+    stderr: StdioCollector { id: editError; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      var done = root._editDone
+      root._editDone = null
+      if (!done) return
+      if (exitCode !== 0 || exitStatus !== 0) {
+        done(null, { code: "internal", message: editError.text.trim() || "Could not save settings" })
+        return
+      }
+      try {
+        var result = JSON.parse(editOutput.text)
+      } catch (error) {
+        done(null, { code: "internal", message: "The CLI returned an invalid reply" })
+        return
+      }
+      done(result, null)
+    }
+  }
+
   // ---- writes -------------------------------------------------------------
 
   function toggleCore() {
@@ -552,10 +585,13 @@ Item {
   // and `pending` that value; the reply is the daemon's status after the
   // change, and either way the optimistic value goes.
   function changeSetting(args, desired, pending, message, scope) {
-    if (!ready || _settingsCall !== 0) return false
+    if (!ready || _settingsCall !== 0 || _ruleCall !== 0) return false
     if (desired !== "") root[desired] = pending
     reportDone(message || "")
-    _settingsCall = call("settings.set", args, function(result, error) {
+    var key = Object.keys(args)[0]
+    var names = { primary_group: "group", tun_redirect: "tun-redirect", tailnet_proxy: "tailnet-proxy" }
+    var value = typeof args[key] === "boolean" ? (args[key] ? "on" : "off") : args[key]
+    _settingsCall = edit(["set", names[key] || key, "--", value], function(result, error) {
       root._settingsCall = 0
       if (desired !== "") root[desired] = typeof pending === "string" ? "" : -1
       if (error) return root.reportError(error, scope || "settings")
@@ -609,9 +645,9 @@ Item {
 
   // Returns whether the write started; the form waits for `ruleAdded`.
   function addRule(type, value, target) {
-    if (!ready || _ruleCall !== 0) return false
+    if (!ready || _ruleCall !== 0 || _settingsCall !== 0) return false
     reportDone("")
-    _ruleCall = call("rules.add", { type: type, value: value, target: target }, function(result, error) {
+    _ruleCall = edit(["rule", "add", "--", type, value, target], function(result, error) {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")
       root.applyRules(result)
@@ -622,9 +658,9 @@ Item {
   }
 
   function removeRule(index) {
-    if (!ready || _ruleCall !== 0 || index <= 0) return
+    if (!ready || _ruleCall !== 0 || _settingsCall !== 0 || index <= 0) return
     reportDone("")
-    _ruleCall = call("rules.remove", { index: index }, function(result, error) {
+    _ruleCall = edit(["rule", "remove", "--", String(index)], function(result, error) {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")
       root.applyRules(result)

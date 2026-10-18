@@ -24,9 +24,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
-          go-version-file: go.mod
+          cache: false
       # gVisor is what TUN without redirect needs, as in mihomo's own
       # releases. no_easytier drops the one outbound that JITs, which the
       # unit's MemoryDenyWriteExecute= would kill. The tarball is built from
@@ -44,7 +44,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_gvisor,no_easytier -trimpath \
             -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
             -o "$stage/omihomo" ./cmd/omihomo
-          install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles LICENSE "$stage/"
+          install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles packaging/omihomo-apply.path packaging/omihomo-apply.service LICENSE "$stage/"
           go mod vendor -o dist/vendor
           (cd dist && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
             LC_ALL=C sort | while read -r f; do printf '==> %s <==\n' "${f#vendor/}"; cat "$f"; echo; done) > "$stage/THIRD_PARTY_LICENSES"
@@ -107,6 +107,11 @@ jobs:
           omihomo version | grep -q "^omihomo v$VERSION "
           grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo-bin/THIRD_PARTY_LICENSES
           systemctl is-enabled omihomo.socket omihomo.service
+          test -f /usr/lib/systemd/user/omihomo-apply.path
+          test -f /usr/lib/systemd/user/omihomo-apply.service
+          runtime=$(mktemp -d)
+          trap 'rm -r -- "$runtime"' EXIT
+          XDG_RUNTIME_DIR="$runtime" systemd-analyze --user verify /usr/lib/systemd/user/omihomo-apply.path /usr/lib/systemd/user/omihomo-apply.service
           systemd-analyze verify /usr/lib/systemd/system/omihomo.socket /usr/lib/systemd/system/omihomo.service
           systemd-analyze security --offline=yes --threshold=28 /usr/lib/systemd/system/omihomo.service
           pacman -R --noconfirm omihomo-bin

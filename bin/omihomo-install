@@ -5,3 +5,5 @@ yay -S omihomo-bin
 sudo /usr/bin/omihomo claim \
   --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
   --legacy-config "${XDG_CONFIG_HOME:-$HOME/.config}"
+systemctl --user daemon-reload
+systemctl --user enable --now omihomo-apply.path omihomo-apply.service

@@ -14,8 +14,8 @@ import (
 	"github.com/metacubex/mihomo/component/geodata/router"
 	"github.com/metacubex/mihomo/component/mmdb"
 	"github.com/metacubex/mihomo/config"
-	C "github.com/metacubex/mihomo/constant"
-	mlog "github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/log"
 
 	"google.golang.org/protobuf/proto"
 
@@ -28,9 +28,9 @@ import (
 func (c *Core) ParseLinks(data []byte) ([]map[string]any, error) {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
-	level := mlog.Level()
-	mlog.SetLevel(mlog.SILENT)
-	defer mlog.SetLevel(level)
+	level := log.Level()
+	log.SetLevel(log.SILENT)
+	defer log.SetLevel(level)
 	return convert.ConvertsV2Ray(data)
 }
 
@@ -59,13 +59,13 @@ func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
 	urls := config.DefaultRawConfig().GeoXUrl
 	var out []core.GeodataFile
 	if need["GEOIP"] || need["SRC-GEOIP"] {
-		out = append(out, core.GeodataFile{Path: C.Path.MMDB(), URL: urls.Mmdb})
+		out = append(out, core.GeodataFile{Path: constant.Path.MMDB(), URL: urls.Mmdb})
 	}
 	if need["GEOSITE"] {
-		out = append(out, core.GeodataFile{Path: C.Path.GeoSite(), URL: urls.GeoSite})
+		out = append(out, core.GeodataFile{Path: constant.Path.GeoSite(), URL: urls.GeoSite})
 	}
 	if need["IP-ASN"] || need["SRC-IP-ASN"] {
-		out = append(out, core.GeodataFile{Path: C.Path.ASN(), URL: urls.ASN})
+		out = append(out, core.GeodataFile{Path: constant.Path.ASN(), URL: urls.ASN})
 	}
 	return out
 }
@@ -109,11 +109,11 @@ func (c *Core) InstallGeodata(f core.GeodataFile, path string, p core.Profile) e
 		return err
 	}
 	switch filepath.Base(f.Path) {
-	case filepath.Base(C.Path.GeoSite()):
+	case filepath.Base(constant.Path.GeoSite()):
 		geodata.ClearGeoSiteCache()
-	case filepath.Base(C.Path.MMDB()):
+	case filepath.Base(constant.Path.MMDB()):
 		c.reloadIP = true
-	case filepath.Base(C.Path.ASN()):
+	case filepath.Base(constant.Path.ASN()):
 		c.reloadASN = true
 	}
 	return nil
@@ -132,7 +132,7 @@ func (c *Core) reloadDatabases() {
 
 func checkGeodata(f core.GeodataFile, path string, p core.Profile) error {
 	switch filepath.Base(f.Path) {
-	case filepath.Base(C.Path.GeoSite()):
+	case filepath.Base(constant.Path.GeoSite()):
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err

@@ -14,16 +14,16 @@ package protocol
 
 import "encoding/json"
 
-// Version is bumped on any change an older peer would misread. A client
-// that gets a different version from Hello must not send requests; the
-// widget shows "update core" instead.
-const Version = 1
-
-// MaxLine bounds one message in either direction, newline excluded.
-const MaxLine = 1 << 20
-
-// Message types, the "type" field of everything the daemon sends.
 const (
+	// Version is bumped on any change an older peer would misread. A client
+	// that gets a different version from Hello must not send requests; the
+	// widget shows "update core" instead.
+	Version = 2
+
+	// MaxLine bounds one message in either direction, newline excluded.
+	MaxLine = 1 << 20
+
+	// Message types, the "type" field of everything the daemon sends.
 	TypeHello   = "hello"
 	TypeRefused = "refused"
 	TypeReply   = "reply"
@@ -117,7 +117,7 @@ const (
 	OpStart = "start" // nil -> Status
 	OpStop  = "stop"  // nil -> Status
 
-	OpSetSettings = "settings.set" // SettingsArgs -> Status
+	OpApply = "settings.apply" // ApplyArgs -> Status
 
 	OpSubscriptions      = "subscriptions.list"     // nil -> SubscriptionList
 	OpSubscriptionAdd    = "subscriptions.add"      // SubscriptionURLArgs -> Subscription
@@ -125,8 +125,6 @@ const (
 	OpSubscriptionUse    = "subscriptions.activate" // NameArgs -> Status
 	OpSubscriptionRemove = "subscriptions.remove"   // NameArgs -> Empty
 	OpRules              = "rules.list"             // nil -> RuleList
-	OpRuleAdd            = "rules.add"              // RuleArgs -> RuleList
-	OpRuleRemove         = "rules.remove"           // IndexArgs -> RuleList
 	OpGroups             = "groups.list"            // nil -> GroupList
 	OpSelect             = "groups.select"          // SelectArgs -> Group
 	OpDelayTest          = "delay.test"             // DelayArgs -> DelayResult
@@ -200,15 +198,31 @@ type StreamsArgs struct {
 	Streams []string `json:"streams"`
 }
 
-// SettingsArgs changes any subset of the typed settings. Absent fields are
-// left alone.
-type SettingsArgs struct {
-	Mode         *string `json:"mode,omitempty"`
-	TUN          *bool   `json:"tun,omitempty"`
-	TUNRedirect  *bool   `json:"tun_redirect,omitempty"`
-	Tailscale    *bool   `json:"tailscale,omitempty"`
-	TailnetProxy *bool   `json:"tailnet_proxy,omitempty"`
-	PrimaryGroup *string `json:"primary_group,omitempty"`
+// Settings are the owner's typed choices, as their settings.json holds them.
+type Settings struct {
+	Mode         string `json:"mode"`
+	TUN          bool   `json:"tun,omitzero"`
+	TUNRedirect  bool   `json:"tun_redirect,omitzero"`
+	Tailscale    bool   `json:"tailscale,omitzero"`
+	TailnetProxy bool   `json:"tailnet_proxy,omitzero"`
+	// PrimaryGroup may name a group the active subscription lacks; the
+	// first selectable group stands in for it.
+	PrimaryGroup string `json:"primary_group,omitzero"`
+}
+
+// UserRule is one of the owner's rules, as their rules.json holds it. A rule
+// whose target the active subscription lacks is kept but left out of what
+// runs.
+type UserRule struct {
+	Type   string `json:"type"`
+	Value  string `json:"value"`
+	Target string `json:"target"`
+}
+
+// ApplyArgs replaces all of the owner's settings and rules at once.
+type ApplyArgs struct {
+	Settings Settings   `json:"settings"`
+	Rules    []UserRule `json:"rules"`
 }
 
 // Subscription is one remote source of groups, proxies and rules. Its URL
@@ -259,18 +273,6 @@ type Rule struct {
 // RuleList is the runtime's rules in match order.
 type RuleList struct {
 	Rules []Rule `json:"rules"`
-}
-
-// RuleArgs adds one of the owner's rules.
-type RuleArgs struct {
-	Type   string `json:"type"`
-	Value  string `json:"value"`
-	Target string `json:"target"`
-}
-
-// IndexArgs removes the owner's rule at a 1-based index.
-type IndexArgs struct {
-	Index int `json:"index"`
 }
 
 // Proxy is one member of a group: a proxy, or another group.

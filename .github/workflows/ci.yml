@@ -15,21 +15,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # go.mod names the patch release, so builds and govulncheck use at
-      # least the standard library it was checked against.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: gofmt
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - name: go vet
-        run: go vet -tags with_gvisor,no_easytier ./...
-      # mihomo races with itself (its log level, delay history and health
-      # checks share unguarded state), so its package runs without -race.
-      - name: go test
-        run: |
-          go test -race $(go list ./... | grep -v /internal/core/mihomo$)
-          go test -tags with_gvisor,no_easytier ./internal/core/mihomo
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      - run: mise run check
       # A replace only applies in the main module, so ours copies mihomo's;
       # a bump that changes theirs must change ours.
       - name: mihomo replace
@@ -37,8 +24,7 @@ jobs:
           version=$(go list -m -f '{{.Version}}' github.com/metacubex/mihomo)
           upstream=$(go mod download -json "github.com/metacubex/mihomo@$version" | jq -r .GoMod)
           diff <(go mod edit -json "$upstream" | jq -S .Replace) <(go mod edit -json | jq -S .Replace)
-      - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest -tags with_gvisor,no_easytier ./...
+      - run: mise run vulncheck
 
   package:
     uses: ./.github/workflows/package.yml

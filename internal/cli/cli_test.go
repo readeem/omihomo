@@ -24,6 +24,18 @@ import (
 	"github.com/readeem/omihomo/internal/protocol"
 )
 
+// TestMain keeps every test away from the account's own settings files.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "omihomo-cli-config-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 // serve runs a fake-core daemon owned by ownerUID and points the CLI at it.
 func serve(t *testing.T, ownerUID int, opts ...daemon.ConfigOpt) {
 	t.Helper()
@@ -53,6 +65,7 @@ func serve(t *testing.T, ownerUID int, opts ...daemon.ConfigOpt) {
 	go func() { d.Run(ctx, l); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 	t.Setenv("OMIHOMO_SOCKET", socket)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
 }
 
 func run(t *testing.T, stdin string, args ...string) (int, string, string) {
@@ -165,6 +178,74 @@ func TestSubscriptionAndSettingsCommands(t *testing.T) {
 	}
 	if code, _, _ := run(t, "https://127.0.0.1:1/none\n", "sub", "add"); code != cli.ExitFetch {
 		t.Fatalf("an unreachable subscription exit %d", code)
+	}
+}
+
+// Changes land in the owner's settings files once the daemon runs them, and
+// edits to the files run on apply.
+func TestSettingsFilesHoldTheChanges(t *testing.T) {
+	serve(t, os.Getuid())
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "omihomo")
+	file := func(name string) string {
+		t.Helper()
+		b, _ := os.ReadFile(filepath.Join(dir, name))
+		return string(b)
+	}
+	if code, _, errOut := run(t, "", "set", "tun", "on"); code != cli.ExitOK {
+		t.Fatalf("set tun: %d %s", code, errOut)
+	}
+	if code, _, errOut := run(t, "", "rule", "add", "domain-suffix", "example.com", "Elsewhere"); code != cli.ExitOK {
+		t.Fatalf("rule add while stopped: %d %s", code, errOut)
+	}
+	if got := file("settings.json"); got != "{\n  \"mode\": \"rule\",\n  \"tun\": true\n}\n" {
+		t.Errorf("settings.json = %q", got)
+	}
+	if got := file("rules.json"); !strings.Contains(got, `"type": "DOMAIN-SUFFIX"`) {
+		t.Errorf("rules.json = %q", got)
+	}
+
+	// What the daemon refuses is not saved.
+	if code, _, _ := run(t, "", "set", "tailscale", "on"); code != cli.ExitState {
+		t.Fatalf("tailscale without tailscaled exit %d", code)
+	}
+	if code, _, _ := run(t, "", "rule", "remove", "2"); code != cli.ExitNotFound {
+		t.Fatalf("removing a rule that is not there exit %d", code)
+	}
+	if strings.Contains(file("settings.json"), "tailscale") {
+		t.Errorf("a refused change was saved: %s", file("settings.json"))
+	}
+
+	// While the proxy runs, a name it lacks is refused.
+	if code, _, _ := run(t, "", "start"); code != cli.ExitOK {
+		t.Fatalf("start exit %d", code)
+	}
+	if code, _, _ := run(t, "", "rule", "add", "DOMAIN", "a.example", "Elsewhere"); code != cli.ExitNotFound {
+		t.Errorf("rule add for a missing target exit %d", code)
+	}
+	if code, _, _ := run(t, "", "rule", "add", "DOMAIN", "a.example", "Tokyo"); code != cli.ExitOK {
+		t.Errorf("rule add for a proxy exit %d", code)
+	}
+	if code, out, errOut := run(t, "", "rule", "list"); code != cli.ExitOK || !strings.Contains(out, `"target":"Elsewhere"`) {
+		t.Fatalf("the unavailable target must keep its rule index: %d %s %s", code, out, errOut)
+	}
+	if code, out, errOut := run(t, "", "rule", "remove", "1"); code != cli.ExitOK || strings.Contains(out, `"target":"Elsewhere"`) || !strings.Contains(out, `"target":"Tokyo"`) {
+		t.Fatalf("remove the first saved rule: %d %s %s", code, out, errOut)
+	}
+	if code, _, _ := run(t, "", "set", "group", "Auto"); code != cli.ExitNotFound {
+		t.Errorf("a group that cannot be selected became primary, exit %d", code)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"mode":"global"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, _ := run(t, "", "apply"); code != cli.ExitOK || !strings.Contains(out, `"mode":"global"`) || !strings.Contains(out, `"tun":false`) {
+		t.Fatalf("apply: %d %q", code, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rules.json"), []byte(`[{"type":"DOMAIN"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := run(t, "", "apply"); code != cli.ExitUsage || !strings.Contains(errOut, "rule 1") {
+		t.Fatalf("apply an incomplete rule: %d %s", code, errOut)
 	}
 }
 

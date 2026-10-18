@@ -1,7 +1,8 @@
 // Package state keeps what the daemon remembers across restarts: the owner's
-// settings, the subscriptions with what was last downloaded for each, and
-// whether the proxy was on. It all lives in one directory only the daemon's
-// account can read, because subscription URLs carry access tokens.
+// settings as last applied, the subscriptions with what was last downloaded
+// for each, and whether the proxy was on. It all lives in one directory only
+// the daemon's account can read, because subscription URLs carry access
+// tokens.
 //
 // Every write replaces a whole file atomically, so a crash leaves either the
 // old or the new version, never a mix.
@@ -22,39 +23,29 @@ import (
 	"github.com/readeem/omihomo/internal/protocol"
 )
 
-// DefaultDir is the daemon's state directory.
-const DefaultDir = "/var/lib/omihomo"
-
 const (
+	// DefaultDir is the daemon's state directory.
+	DefaultDir = "/var/lib/omihomo"
+
 	settingsFile      = "settings.json"
 	subscriptionsFile = "subscriptions.json"
 	snapshotDir       = "subscriptions"
 )
 
-// Settings are the owner's choices, the typed replacement for hand-edited
-// configuration.
+// Settings are what the daemon runs: the owner's settings and rules as last
+// applied, so the proxy can start before the owner logs in, and whether it
+// was on.
 type Settings struct {
-	Mode         string `json:"mode"`
-	TUN          bool   `json:"tun"`
-	TUNRedirect  bool   `json:"tun_redirect"`
-	Tailscale    bool   `json:"tailscale"`
-	TailnetProxy bool   `json:"tailnet_proxy"`
-	PrimaryGroup string `json:"primary_group"`
-	// Rules are the owner's own, matched before everything else.
-	Rules []Rule `json:"rules"`
+	protocol.Settings
+	Rules []protocol.UserRule `json:"rules"`
 	// Running is whether the proxy was on, restored when the daemon starts.
 	Running bool `json:"running"`
 }
 
-// Rule is one of the owner's rules.
-type Rule struct {
-	Type   string `json:"type"`
-	Value  string `json:"value"`
-	Target string `json:"target"`
-}
-
 // DefaultSettings are the settings of a fresh install.
-func DefaultSettings() Settings { return Settings{Mode: protocol.ModeRule, Rules: []Rule{}} }
+func DefaultSettings() Settings {
+	return Settings{Mode: protocol.ModeRule, Rules: []protocol.UserRule{}}
+}
 
 // Subscription is one subscription's record. Times are unix milliseconds.
 type Subscription struct {
@@ -144,7 +135,7 @@ func (s *Store) Settings() (Settings, error) {
 		return Settings{}, err
 	}
 	if out.Rules == nil {
-		out.Rules = []Rule{}
+		out.Rules = []protocol.UserRule{}
 	}
 	return out, nil
 }

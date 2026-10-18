@@ -4,7 +4,7 @@ import (
 	goruntime "runtime"
 	"runtime/debug"
 
-	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/trusttunnel"
 )
 
@@ -26,12 +26,12 @@ func embeddedVersion() string {
 			}
 		}
 	}
-	return C.Version
+	return constant.Version
 }
 
 func init() {
 	// DefaultRawConfig and adapters use this in their client identities too.
-	C.Version = Version
+	constant.Version = Version
 	// TrustTunnel snapshots the upstream version during dependency init.
 	trusttunnel.Version = Version
 	trusttunnel.TCPUserAgent = goruntime.GOOS + " " + trusttunnel.AppName + "/" + Version

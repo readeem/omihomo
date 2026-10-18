@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/constant"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -37,12 +37,12 @@ func TestTUNShape(t *testing.T) {
 	bypass := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	for _, tc := range []struct {
 		redirect, tailnet bool
-		stack             C.TUNStack
+		stack             constant.TUNStack
 		ruleIndex         int
 	}{
-		{false, false, C.TunGvisor, 0},
-		{true, false, C.TunMixed, 0},
-		{false, true, C.TunGvisor, tailnetTUNRuleIndex},
+		{false, false, constant.TunGvisor, 0},
+		{true, false, constant.TunMixed, 0},
+		{false, true, constant.TunGvisor, tailnetTUNRuleIndex},
 	} {
 		cfg := testConfig()
 		cfg.TUN, cfg.TUNRedirect, cfg.TailnetProxy, cfg.TUNBypass = true, tc.redirect, tc.tailnet, bypass

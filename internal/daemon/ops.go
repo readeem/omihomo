@@ -98,12 +98,12 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return nil, err
 		}
 		return d.stop(ctx)
-	case protocol.OpSetSettings:
-		var args protocol.SettingsArgs
+	case protocol.OpApply:
+		var args protocol.ApplyArgs
 		if err := decode(req.Args, &args); err != nil {
 			return nil, err
 		}
-		return d.setSettings(ctx, args)
+		return d.apply(ctx, args)
 	case protocol.OpGroups:
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
@@ -173,18 +173,6 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return d.activateSubscription(ctx, args.Name)
 		}
 		return d.removeSubscription(ctx, args.Name)
-	case protocol.OpRuleAdd:
-		var args protocol.RuleArgs
-		if err := decode(req.Args, &args); err != nil {
-			return nil, err
-		}
-		return d.addRule(ctx, args)
-	case protocol.OpRuleRemove:
-		var args protocol.IndexArgs
-		if err := decode(req.Args, &args); err != nil {
-			return nil, err
-		}
-		return d.removeRule(ctx, args.Index)
 	default:
 		return nil, fail(protocol.CodeUnknownOp, "unknown op %q", req.Op)
 	}
@@ -217,9 +205,11 @@ func (d *server) status() protocol.Status {
 	}
 }
 
-var stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions}
+var (
+	stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions}
 
-var allStreams = append(slices.Clone(stateStreams), protocol.StreamTraffic, protocol.StreamConnections)
+	allStreams = append(slices.Clone(stateStreams), protocol.StreamTraffic, protocol.StreamConnections)
+)
 
 func (d *server) snapshot(ctx context.Context, stream string) any {
 	switch stream {
@@ -517,62 +507,50 @@ func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Pro
 	return nil
 }
 
-func (d *server) setSettings(ctx context.Context, args protocol.SettingsArgs) (any, *protocol.Error) {
+// apply runs and stores the owner's settings and rules in place of the
+// current ones. Applying what is already stored changes nothing.
+func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *protocol.Error) {
+	if err := checkSettings(args.Settings); err != nil {
+		return nil, err
+	}
+	if err := checkRules(args.Rules); err != nil {
+		return nil, err
+	}
+
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
 	next, p := d.settings, d.profile
 	d.mu.Unlock()
 
-	if args.Mode != nil {
-		switch *args.Mode {
-		case protocol.ModeRule, protocol.ModeGlobal, protocol.ModeDirect:
-			next.Mode = *args.Mode
-		default:
-			return nil, fail(protocol.CodeInvalid, "mode must be rule, global or direct")
-		}
-	}
-	if args.TUN != nil {
-		next.TUN = *args.TUN
-	}
-	if args.TUNRedirect != nil {
-		next.TUNRedirect = *args.TUNRedirect
-	}
-	if args.Tailscale != nil {
-		next.Tailscale = *args.Tailscale
-	}
-	if args.TailnetProxy != nil {
-		next.TailnetProxy = *args.TailnetProxy
-	}
-	if (args.Tailscale != nil && *args.Tailscale || args.TailnetProxy != nil && *args.TailnetProxy) &&
-		!d.cfg.tailscalePresent() {
+	// Only turning Tailscale on needs tailscaled, so settings that keep it on
+	// still apply after tailscaled is gone.
+	in := args.Settings
+	if (in.Tailscale && !next.Tailscale || in.TailnetProxy && !next.TailnetProxy) && !d.cfg.tailscalePresent() {
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
 	}
-	if args.PrimaryGroup != nil {
-		name := *args.PrimaryGroup
-		if name != "" {
-			if err := validName("group", name); err != nil {
-				return nil, err
-			}
-			if d.running() {
-				groups, err := d.core.Groups(ctx)
-				if err != nil {
-					return nil, coreError(err)
-				}
-				if !slices.ContainsFunc(groups, func(g protocol.Group) bool { return g.Name == name && g.Selectable }) {
-					return nil, fail(protocol.CodeNotFound, "no selectable group %q", name)
-				}
-			}
-		}
-		next.PrimaryGroup = name
+	rules := append([]protocol.UserRule{}, args.Rules...)
+	if in == next.Settings && slices.Equal(rules, next.Rules) {
+		return d.status(), nil
 	}
-
+	next.Settings, next.Rules = in, rules
 	if err := d.commitSettings(ctx, next, p); err != nil {
 		return nil, err
 	}
-
 	d.publish(ctx)
 	return d.status(), nil
+}
+
+func checkSettings(s protocol.Settings) *protocol.Error {
+	switch s.Mode {
+	case protocol.ModeRule, protocol.ModeGlobal, protocol.ModeDirect:
+	default:
+		return fail(protocol.CodeInvalid, "mode must be rule, global or direct")
+	}
+	if s.PrimaryGroup != "" {
+		return validName("primary group", s.PrimaryGroup)
+	}
+	return nil
 }
 
 func (d *server) selectProxy(ctx context.Context, args protocol.SelectArgs) (any, *protocol.Error) {
@@ -613,23 +591,24 @@ func (d *server) testDelay(ctx context.Context, args protocol.DelayArgs) (any, *
 	return protocol.DelayResult{Delays: delays}, nil
 }
 
-// rules are the runtime's rules, or the owner's own while the proxy is
-// stopped.
 func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error) {
-	rules, err := d.core.Rules(ctx)
-	if errors.Is(err, core.ErrNotRunning) {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		out := []protocol.Rule{}
-		for _, r := range d.settings.Rules {
-			out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: protocol.SourceUser})
-		}
-		return protocol.RuleList{Rules: out}, nil
-	}
-	if err != nil {
+	runtime, err := d.core.Rules(ctx)
+	if err != nil && !errors.Is(err, core.ErrNotRunning) {
 		return protocol.RuleList{}, coreError(err)
 	}
-	return protocol.RuleList{Rules: rules}, nil
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []protocol.Rule{}
+	// Retain unavailable targets so the displayed indices match rules.json.
+	for _, r := range d.settings.Rules {
+		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: protocol.SourceUser})
+	}
+	for _, r := range runtime {
+		if r.Source != protocol.SourceUser {
+			out = append(out, r)
+		}
+	}
+	return protocol.RuleList{Rules: out}, nil
 }
 
 func (d *server) closeConnections(ctx context.Context, args protocol.CloseArgs) (any, *protocol.Error) {

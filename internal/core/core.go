@@ -79,16 +79,18 @@ type RuleSet struct {
 	Payload  []string
 }
 
-// ErrNotRunning is returned by calls that need a running core.
-var ErrNotRunning = errors.New("the proxy is not running")
+var (
+	// ErrNotRunning is returned by calls that need a running core.
+	ErrNotRunning = errors.New("the proxy is not running")
 
-// ErrNotFound is returned when a named group, proxy or connection does not
-// exist in the running config.
-var ErrNotFound = errors.New("not found")
+	// ErrNotFound is returned when a named group, proxy or connection does not
+	// exist in the running config.
+	ErrNotFound = errors.New("not found")
 
-// ErrStopped is wrapped by a failed Apply that could not put the previous
-// config back either, and left the engine stopped.
-var ErrStopped = errors.New("the proxy stopped")
+	// ErrStopped is wrapped by a failed Apply that could not put the previous
+	// config back either, and left the engine stopped.
+	ErrStopped = errors.New("the proxy stopped")
+)
 
 // MaxConnections bounds the connections one snapshot lists, so a busy
 // machine's list still fits in one protocol message.

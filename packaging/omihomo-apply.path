@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Omihomo settings and rules
+
+[Path]
+PathChanged=%E/omihomo
+PathChanged=%E/omihomo/settings.json
+PathChanged=%E/omihomo/rules.json
+
+[Install]
+WantedBy=default.target

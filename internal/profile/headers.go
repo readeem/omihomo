@@ -11,12 +11,14 @@ import (
 	"unicode"
 )
 
-// maxTitle bounds a subscription's name, which comes from its server.
-const maxTitle = 64
+const (
+	// maxTitle bounds a subscription's name, which comes from its server.
+	maxTitle = 64
 
-// DefaultInterval is how often a subscription refreshes when its server
-// does not say.
-const DefaultInterval = 12 * time.Hour
+	// DefaultInterval is how often a subscription refreshes when its server
+	// does not say.
+	DefaultInterval = 12 * time.Hour
+)
 
 // Name is what a subscription calls itself: the profile-title header,
 // base64 when it says so, else the filename in content-disposition, else

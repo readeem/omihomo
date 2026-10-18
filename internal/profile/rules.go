@@ -49,7 +49,9 @@ var ruleTypes = []string{
 // is a regex rule.
 func hasRegex(line string) bool { return regexRule.MatchString(line) }
 
-var regexRule = regexp.MustCompile(`(?i)(?:^|[(,])\s*[A-Z-]*-REGEX\s*,`)
+var (
+	regexRule = regexp.MustCompile(`(?i)(?:^|[(,])\s*[A-Z-]*-REGEX\s*,`)
 
-// ruleParams are the trailing flags a rule may carry.
-var ruleParams = []string{"no-resolve", "src"}
+	// ruleParams are the trailing flags a rule may carry.
+	ruleParams = []string{"no-resolve", "src"}
+)

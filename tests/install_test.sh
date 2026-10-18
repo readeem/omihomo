@@ -22,6 +22,13 @@ printf ' <%s>' "$@" >> "$INSTALL_TEST_LOG"
 printf '\n' >> "$INSTALL_TEST_LOG"
 exit "${INSTALL_TEST_CLAIM_EXIT:-0}"
 MOCK
+cat > "$test_root/bin/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+printf 'systemctl' >> "$INSTALL_TEST_LOG"
+printf ' <%s>' "$@" >> "$INSTALL_TEST_LOG"
+printf '\n' >> "$INSTALL_TEST_LOG"
+MOCK
+chmod +x "$test_root/bin/systemctl"
 chmod +x "$test_root/bin/yay" "$test_root/bin/sudo"
 export PATH="$test_root/bin:$PATH"
 
@@ -43,7 +50,8 @@ check_install() {
 
 export XDG_DATA_HOME="$test_root/data" XDG_CONFIG_HOME="$test_root/config"
 commands=$(printf 'yay <-S> <omihomo-bin>\nsudo </usr/bin/omihomo> <claim> <--legacy-data> <%s/omihomo> <--legacy-config> <%s>' "$XDG_DATA_HOME" "$XDG_CONFIG_HOME")
-check_install 0 0 0 "$commands"
+success_commands="$commands"$'\nsystemctl <--user> <daemon-reload>\nsystemctl <--user> <enable> <--now> <omihomo-apply.path> <omihomo-apply.service>'
+check_install 0 0 0 "$success_commands"
 check_install 42 0 42 'yay <-S> <omihomo-bin>'
 check_install 0 43 43 "$commands"
 printf 'PASS installer installs before claiming and propagates failures\n'

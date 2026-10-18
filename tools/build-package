@@ -17,7 +17,7 @@ mkdir -p "$work/$name" "$work/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_gvisor,no_easytier -trimpath \
   -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
   -o "$work/$name/omihomo" ./cmd/omihomo
-install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles LICENSE "$work/$name/"
+install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles packaging/omihomo-apply.path packaging/omihomo-apply.service LICENSE "$work/$name/"
 go mod vendor -o "$work/vendor"
 (cd "$work" && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
   LC_ALL=C sort | while read -r file; do printf '==> %s <==\n' "${file#vendor/}"; cat "$file"; echo; done) > "$work/$name/THIRD_PARTY_LICENSES"

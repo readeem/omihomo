@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"context"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/readeem/omihomo/internal/protocol"
-	"github.com/readeem/omihomo/internal/state"
 )
 
 // userRuleTypes are the rule types the owner can add. Each value is checked
@@ -60,57 +59,31 @@ func checkRuleValue(typ, value string) *protocol.Error {
 	return nil
 }
 
-func (d *server) addRule(ctx context.Context, args protocol.RuleArgs) (any, *protocol.Error) {
-	typ := strings.ToUpper(strings.TrimSpace(args.Type))
-	if !slices.Contains(userRuleTypes, typ) {
-		return nil, fail(protocol.CodeInvalid, "rule type must be one of %s", strings.Join(userRuleTypes, ", "))
+func checkRules(rules []protocol.UserRule) *protocol.Error {
+	if len(rules) > maxUserRules {
+		return fail(protocol.CodeInvalid, "at most %d rules", maxUserRules)
 	}
-	if err := checkRuleValue(typ, args.Value); err != nil {
-		return nil, err
+	for i, r := range rules {
+		if err := checkRule(r); err != nil {
+			err.Message = fmt.Sprintf("rule %d: %s", i+1, err.Message)
+			return err
+		}
 	}
-	if err := validName("target", args.Target); err != nil {
-		return nil, err
-	}
-	if strings.Contains(args.Target, ",") {
-		return nil, fail(protocol.CodeInvalid, "a rule target cannot contain a comma")
-	}
-
-	d.opMu.Lock()
-	defer d.opMu.Unlock()
-	d.mu.Lock()
-	next, p := d.settings, d.profile
-	d.mu.Unlock()
-	if !hasTarget(p, args.Target) {
-		return nil, fail(protocol.CodeNotFound, "the active subscription has no group or proxy %q", args.Target)
-	}
-	if len(next.Rules) >= maxUserRules {
-		return nil, fail(protocol.CodeInvalid, "at most %d rules", maxUserRules)
-	}
-	next.Rules = append(slices.Clone(next.Rules), state.Rule{Type: typ, Value: args.Value, Target: args.Target})
-	return d.commitRules(ctx, next)
+	return nil
 }
 
-func (d *server) removeRule(ctx context.Context, index int) (any, *protocol.Error) {
-	d.opMu.Lock()
-	defer d.opMu.Unlock()
-	d.mu.Lock()
-	next := d.settings
-	d.mu.Unlock()
-	if index < 1 || index > len(next.Rules) {
-		return nil, fail(protocol.CodeNotFound, "there is no rule %d of yours", index)
+func checkRule(r protocol.UserRule) *protocol.Error {
+	if !slices.Contains(userRuleTypes, r.Type) {
+		return fail(protocol.CodeInvalid, "the type must be one of %s", strings.Join(userRuleTypes, ", "))
 	}
-	next.Rules = slices.Delete(slices.Clone(next.Rules), index-1, index)
-	return d.commitRules(ctx, next)
-}
-
-// commitRules runs and stores next. The caller holds opMu.
-func (d *server) commitRules(ctx context.Context, next state.Settings) (any, *protocol.Error) {
-	d.mu.Lock()
-	p := d.profile
-	d.mu.Unlock()
-	if err := d.commitSettings(ctx, next, p); err != nil {
-		return nil, err
+	if err := checkRuleValue(r.Type, r.Value); err != nil {
+		return err
 	}
-	d.publish(ctx)
-	return d.rules(ctx)
+	if err := validName("target", r.Target); err != nil {
+		return err
+	}
+	if strings.Contains(r.Target, ",") {
+		return fail(protocol.CodeInvalid, "a rule target cannot contain a comma")
+	}
+	return nil
 }

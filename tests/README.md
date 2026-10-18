@@ -1,16 +1,8 @@
 # Tests
 
-Run the Go tests and static checks with the release build tags:
-
-```sh
-go test -race $(go list ./... | rg -v '/internal/core/mihomo$')
-go test -tags with_gvisor,no_easytier ./internal/core/mihomo
-go vet -tags with_gvisor,no_easytier ./...
-go run golang.org/x/vuln/cmd/govulncheck@latest -tags with_gvisor,no_easytier ./...
-./tests/run
-```
-
-The embedded core has upstream data races, so its tests run separately without `-race`.
+`mise run check` runs the Go tests and static checks with the release build tags, and
+`mise run widget` runs `tests/run`. The embedded core has upstream data races, so its tests run
+separately without `-race`.
 Migration tests use private fixtures and injected systemd operations: normal and raw caches,
 provider caches, typed settings, path traversal, symlinks, FIFOs, invalid input, refusal to
 overwrite daemon state, and rollback after cleanup or startup failure. No real service is changed.
@@ -25,12 +17,12 @@ Quickshell rather than skip its service tests. CI does this.
 Use a local terminal. Switching the proxy can briefly interrupt connections, so finish sessions
 that depend on it first. The following commands change the system; the package build does not.
 
-1. Build from the checkout with `./tools/build-package`. The result is
+1. Build from the checkout with `mise run package`. The result is
    `dist/omihomo-bin-2.0.0-1-x86_64.pkg.tar.zst`, with release archive/checksum and rendered AUR
    metadata beside it. Never publish a locally modified test build as a release.
 2. Note the old subscription names, active subscription, mode, TUN and primary group. Keep the
    original `~/.local/share/omihomo` for recovery; do not delete it during testing.
-3. Run `./tools/test-cutover` from a local terminal after this agent session. It installs the
+3. Run `./tools/test-cutover` yourself from a local terminal. It installs the
    prepared package, claims and migrates your account (including custom XDG paths), preserves the
    installed plugin as a backup, links this checkout into Omarchy, and restarts the shell.
    Pacman asks for confirmation before installation. A failed claim leaves the installed plugin

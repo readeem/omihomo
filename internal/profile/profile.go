@@ -418,11 +418,13 @@ func (f filter) keep(px core.Proxy) (bool, error) {
 	return !excluded, err
 }
 
-// groupTypes are the group types modelled. relay is deprecated in mihomo
-// and left out.
-var groupTypes = []string{"select", "url-test", "fallback", "load-balance"}
+var (
+	// groupTypes are the group types modelled. relay is deprecated in mihomo
+	// and left out.
+	groupTypes = []string{"select", "url-test", "fallback", "load-balance"}
 
-var strategies = []string{"consistent-hashing", "round-robin", "sticky-sessions"}
+	strategies = []string{"consistent-hashing", "round-robin", "sticky-sessions"}
+)
 
 // groups reads the groups, expands what they take from providers, and drops
 // members that do not exist. A group left without members fails the whole
@@ -614,8 +616,10 @@ func (b *builder) ruleSets() ([]core.RuleSet, error) {
 			b.drop("rule provider %q: behavior %q is not supported", name, behavior)
 			continue
 		}
-		var payload []string
-		var err error
+		var (
+			payload []string
+			err     error
+		)
 		switch def["type"] {
 		case "inline":
 			payload, err = lines(def["payload"])

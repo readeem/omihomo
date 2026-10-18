@@ -1,5 +1,6 @@
 // Package cli is the omihomo command: the daemon itself, and the owner's
-// subcommands, each one call over the daemon's socket.
+// subcommands, which talk to the daemon's socket and keep the owner's
+// settings files.
 package cli
 
 import (
@@ -10,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,6 +19,7 @@ import (
 
 	"github.com/readeem/omihomo/internal/client"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/settings"
 )
 
 // Version is set at build time with -ldflags "-X ...cli.Version=v2.0.0".
@@ -83,10 +86,12 @@ func exitCode(env Env, err error) int {
 		return ExitOK
 	}
 	fmt.Fprintf(env.Stderr, "omihomo: %v\n", err)
-	var uerr *usageError
-	var xerr *exitError
-	var verr *client.VersionError
-	var perr *protocol.Error
+	var (
+		uerr *usageError
+		xerr *exitError
+		verr *client.VersionError
+		perr *protocol.Error
+	)
 	switch {
 	case errors.As(err, &uerr):
 		fmt.Fprintln(env.Stderr)
@@ -179,6 +184,7 @@ func (a *app) root() *ffcli.Command {
 		a.call("start", "omihomo start [--pretty]", "start the proxy", nargs(0, protocol.OpStart, nil)),
 		a.call("stop", "omihomo stop [--pretty]", "stop the proxy", nargs(0, protocol.OpStop, nil)),
 		a.setCommand(),
+		a.applyCommand(),
 		a.subCommand(),
 		a.ruleCommand(),
 		a.groupCommand(),
@@ -190,9 +196,11 @@ func (a *app) root() *ffcli.Command {
 		a.claimCommand(),
 		a.daemonCommand(),
 	)
-	root.LongHelp = "Every command but claim and daemon is one call to the daemon's socket, printed as\n" +
-		"one JSON line. Flags go before arguments; -- ends the flags. OMIHOMO_SOCKET points at\n" +
-		"another socket. Run omihomo <command> -h for more."
+	root.LongHelp = "Every command but claim and daemon talks to the daemon's socket and prints one JSON\n" +
+		"line. set, rule add and rule remove also save your settings files, settings.json and\n" +
+		"rules.json in $XDG_CONFIG_HOME/omihomo, and apply runs what they hold. Flags go before\n" +
+		"arguments; -- ends the flags. OMIHOMO_SOCKET points at another socket. Run\n" +
+		"omihomo <command> -h for more."
 	exec := root.Exec
 	root.Exec = func(ctx context.Context, args []string) error {
 		if len(args) == 1 && args[0] == "help" {
@@ -203,46 +211,158 @@ func (a *app) root() *ffcli.Command {
 	return root
 }
 
+// edit is a command that changes the owner's settings files. Its arguments
+// are checked before anything is read; the change is applied to the daemon,
+// and saved only once the daemon runs it. show is the op whose result it
+// prints, or "" for the daemon's status.
+func (a *app) edit(name, shortUsage, help, show string, parse func(cmd *ffcli.Command, args []string) (change, error)) *ffcli.Command {
+	fs := a.flags(name)
+	pretty := fs.Bool("pretty", false, "indent the JSON result")
+	cmd := &ffcli.Command{Name: name, ShortUsage: shortUsage, ShortHelp: help, FlagSet: fs}
+	cmd.Exec = func(ctx context.Context, args []string) error {
+		ch, err := parse(cmd, args)
+		if err != nil {
+			return err
+		}
+		dir, err := settings.Dir()
+		if err != nil {
+			return err
+		}
+		lock, err := settings.Lock(dir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		v, err := settings.Load(dir)
+		if err != nil {
+			return err
+		}
+		c, err := dial(ctx)
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		if err := ch(ctx, c, &v); err != nil {
+			return err
+		}
+		var result json.RawMessage
+		if err := c.Call(ctx, protocol.OpApply, v, &result); err != nil {
+			return err
+		}
+		if err := settings.Save(dir, v); err != nil {
+			return fmt.Errorf("the daemon runs the change, but it was not saved: %w", err)
+		}
+		if show != "" {
+			if err := c.Call(ctx, show, nil, &result); err != nil {
+				return err
+			}
+		}
+		return a.print(result, *pretty)
+	}
+	return cmd
+}
+
+// change makes one edit to the owner's settings, asking c what it needs to
+// check it.
+type change func(ctx context.Context, c *client.Client, v *protocol.ApplyArgs) error
+
 func (a *app) setCommand() *ffcli.Command {
-	setting := func(name, value, help string, args func(string) (protocol.SettingsArgs, error)) *ffcli.Command {
-		return a.call(name, fmt.Sprintf("omihomo set %s [--pretty] %s", name, value), help,
-			func(cmd *ffcli.Command, rest []string) (string, any, error) {
+	setting := func(name, value, help string, parse func(string) (change, error)) *ffcli.Command {
+		return a.edit(name, fmt.Sprintf("omihomo set %s [--pretty] %s", name, value), help, "",
+			func(cmd *ffcli.Command, rest []string) (change, error) {
 				if len(rest) != 1 {
-					return "", nil, usage(cmd, "set %s takes one value", name)
+					return nil, usage(cmd, "set %s takes one value", name)
 				}
-				s, err := args(rest[0])
+				ch, err := parse(rest[0])
 				if err != nil {
-					return "", nil, usage(cmd, "%v", err)
+					return nil, usage(cmd, "%v", err)
 				}
-				return protocol.OpSetSettings, s, nil
+				return ch, nil
 			})
 	}
-	toggle := func(name, help string, field func(*protocol.SettingsArgs) **bool) *ffcli.Command {
-		return setting(name, "<on|off>", help, func(v string) (protocol.SettingsArgs, error) {
-			var s protocol.SettingsArgs
-			switch v {
-			case "on", "off":
-				on := v == "on"
-				*field(&s) = &on
-				return s, nil
+	toggle := func(name, help string, field func(*protocol.Settings) *bool) *ffcli.Command {
+		return setting(name, "<on|off>", help, func(v string) (change, error) {
+			if v != "on" && v != "off" {
+				return nil, fmt.Errorf("set %s takes on or off", name)
 			}
-			return s, fmt.Errorf("set %s takes on or off", name)
+			return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
+				*field(&s.Settings) = v == "on"
+				return nil
+			}, nil
 		})
 	}
 	return a.group("set", "omihomo set <setting> [--pretty] <value>", "change a setting",
 		setting("mode", "<rule|global|direct>", "route by rules, everything through the proxy, or nothing",
-			func(v string) (protocol.SettingsArgs, error) { return protocol.SettingsArgs{Mode: &v}, nil }),
+			func(v string) (change, error) {
+				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
+					s.Settings.Mode = v
+					return nil
+				}, nil
+			}),
 		setting("group", "<name>", `the primary group; "" for the first selectable one`,
-			func(v string) (protocol.SettingsArgs, error) { return protocol.SettingsArgs{PrimaryGroup: &v}, nil }),
+			func(v string) (change, error) {
+				return func(ctx context.Context, c *client.Client, s *protocol.ApplyArgs) error {
+					if v != "" {
+						if err := checkName(ctx, c, v, true); err != nil {
+							return err
+						}
+					}
+					s.Settings.PrimaryGroup = v
+					return nil
+				}, nil
+			}),
 		toggle("tun", "route all of the machine's traffic through the proxy",
-			func(s *protocol.SettingsArgs) **bool { return &s.TUN }),
+			func(s *protocol.Settings) *bool { return &s.TUN }),
 		toggle("tun-redirect", "accelerate TUN with auto-redirect",
-			func(s *protocol.SettingsArgs) **bool { return &s.TUNRedirect }),
+			func(s *protocol.Settings) *bool { return &s.TUNRedirect }),
 		toggle("tailscale", "let tailscaled reach its servers through the proxy",
-			func(s *protocol.SettingsArgs) **bool { return &s.Tailscale }),
+			func(s *protocol.Settings) *bool { return &s.Tailscale }),
 		toggle("tailnet-proxy", "send the tailnet to the proxy server",
-			func(s *protocol.SettingsArgs) **bool { return &s.TailnetProxy }),
+			func(s *protocol.Settings) *bool { return &s.TailnetProxy }),
 	)
+}
+
+// builtinTargets are the targets every subscription has.
+var builtinTargets = []string{"DIRECT", "REJECT", "REJECT-DROP"}
+
+// checkName refuses a group, or with groupOnly false a proxy or a built-in
+// target, that the running proxy lacks. A stopped proxy has nothing to check
+// against, and anything well formed is kept.
+func checkName(ctx context.Context, c *client.Client, name string, groupOnly bool) error {
+	if !groupOnly && slices.Contains(builtinTargets, name) {
+		return nil
+	}
+	var list protocol.GroupList
+	err := c.Call(ctx, protocol.OpGroups, nil, &list)
+	var perr *protocol.Error
+	if errors.As(err, &perr) && perr.Code == protocol.CodeNotRunning {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, g := range list.Groups {
+		if g.Name == name && (g.Selectable || !groupOnly) {
+			return nil
+		}
+		if !groupOnly && slices.ContainsFunc(g.Members, func(p protocol.Proxy) bool { return p.Name == name }) {
+			return nil
+		}
+	}
+	if groupOnly {
+		return &exitError{ExitNotFound, fmt.Errorf("no selectable group %q", name)}
+	}
+	return &exitError{ExitNotFound, fmt.Errorf("the active subscription has no group or proxy %q", name)}
+}
+
+func (a *app) applyCommand() *ffcli.Command {
+	return a.edit("apply", "omihomo apply [--pretty]", "run what your settings files hold", "",
+		func(cmd *ffcli.Command, rest []string) (change, error) {
+			if len(rest) != 0 {
+				return nil, usage(cmd, "apply takes no arguments")
+			}
+			return func(context.Context, *client.Client, *protocol.ApplyArgs) error { return nil }, nil
+		})
 }
 
 func (a *app) subCommand() *ffcli.Command {
@@ -273,20 +393,36 @@ func (a *app) ruleCommand() *ffcli.Command {
 	return a.group("rule", "omihomo rule <command>", "list and change your rules",
 		a.call("list", "omihomo rule list [--pretty]", "list the runtime's rules in match order",
 			nargs(0, protocol.OpRules, nil)),
-		a.call("add", "omihomo rule add [--pretty] <type> <value> <target>", "add one of your rules",
-			nargs(3, protocol.OpRuleAdd, func(rest []string) any {
-				return protocol.RuleArgs{Type: rest[0], Value: rest[1], Target: rest[2]}
-			})),
-		a.call("remove", "omihomo rule remove [--pretty] <index>", "remove your rule at a 1-based index",
-			func(cmd *ffcli.Command, rest []string) (string, any, error) {
+		a.edit("add", "omihomo rule add [--pretty] <type> <value> <target>", "add one of your rules", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
+				if len(rest) != 3 {
+					return nil, usage(cmd, "rule add takes a type, a value and a target")
+				}
+				r := protocol.UserRule{Type: strings.ToUpper(strings.TrimSpace(rest[0])), Value: rest[1], Target: rest[2]}
+				return func(ctx context.Context, c *client.Client, v *protocol.ApplyArgs) error {
+					if err := checkName(ctx, c, r.Target, false); err != nil {
+						return err
+					}
+					v.Rules = append(v.Rules, r)
+					return nil
+				}, nil
+			}),
+		a.edit("remove", "omihomo rule remove [--pretty] <index>", "remove your rule at a 1-based index", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
 				if len(rest) != 1 {
-					return "", nil, usage(cmd, "rule remove takes one index")
+					return nil, usage(cmd, "rule remove takes one index")
 				}
 				n, err := strconv.Atoi(rest[0])
 				if err != nil || n < 1 {
-					return "", nil, usage(cmd, "a rule index is a positive number")
+					return nil, usage(cmd, "a rule index is a positive number")
 				}
-				return protocol.OpRuleRemove, protocol.IndexArgs{Index: n}, nil
+				return func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs) error {
+					if n > len(v.Rules) {
+						return &exitError{ExitNotFound, fmt.Errorf("there is no rule %d of yours", n)}
+					}
+					v.Rules = slices.Delete(v.Rules, n-1, n)
+					return nil
+				}, nil
 			}),
 	)
 }
@@ -399,8 +535,10 @@ func readURL(stdin io.Reader) (string, error) {
 func dial(ctx context.Context) (*client.Client, error) {
 	c, err := client.Dial(ctx, client.SocketPath())
 	if err != nil {
-		var perr *protocol.Error
-		var verr *client.VersionError
+		var (
+			perr *protocol.Error
+			verr *client.VersionError
+		)
 		if errors.As(err, &perr) || errors.As(err, &verr) {
 			return nil, err
 		}
@@ -414,8 +552,10 @@ func (a *app) print(result json.RawMessage, pretty bool) error {
 	if len(result) == 0 || string(result) == "{}" {
 		return nil
 	}
-	var buf bytes.Buffer
-	var err error
+	var (
+		buf bytes.Buffer
+		err error
+	)
 	if pretty {
 		err = json.Indent(&buf, result, "", "  ")
 	} else {

@@ -12,10 +12,22 @@ import (
 	"github.com/readeem/omihomo/internal/core/mihomo"
 )
 
-func TestCutoverImportsAfterUnclaimedCoreShutdown(t *testing.T) {
-	c, _ := cutoverFixture(t)
-	write := func(name, body string) {
-		t.Helper()
+// oldData writes an old install's data directory with one subscription and
+// override, if any.
+func oldData(t *testing.T, c *cutover, override string) {
+	t.Helper()
+	files := map[string]string{
+		"subscriptions.json": `[{"name":"Example","url":"https://example.com/sub"}]`,
+		"active":             "Example",
+		"cache/Example.yaml": "proxies: [{name: Example, type: direct}]\nproxy-groups: [{name: Proxy, type: select, proxies: [Example]}]\nrules: [MATCH,Proxy]\n",
+	}
+	if override != "" {
+		files["override.yaml"] = override
+	}
+	if err := os.MkdirAll(c.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
 		path := filepath.Join(c.data, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -24,9 +36,11 @@ func TestCutoverImportsAfterUnclaimedCoreShutdown(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("subscriptions.json", `[{"name":"Example","url":"https://example.com/sub"}]`)
-	write("active", "Example")
-	write("cache/Example.yaml", "proxies: [{name: Example, type: direct}]\nproxy-groups: [{name: Proxy, type: select, proxies: [Example]}]\nrules: [MATCH,Proxy]\n")
+}
+
+func TestCutoverImportsAfterUnclaimedCoreShutdown(t *testing.T) {
+	c, _ := cutoverFixture(t)
+	oldData(t, c, "")
 	engine, err := mihomo.New(filepath.Join(c.state, "core"), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +104,7 @@ func cutoverFixture(t *testing.T) (*cutover, *[]string) {
 	t.Cleanup(func() { root.Close(); h.Close(); cfg.Close() })
 	calls := []string{}
 	c := &cutover{root: root, home: h, config: cfg, data: filepath.Join(home, ".local/share/omihomo"), state: filepath.Join(machineRoot, "var/lib/omihomo"),
+		uid: os.Getuid(), gid: os.Getgid(),
 		userctl: func(_ context.Context, args ...string) (bool, error) {
 			calls = append(calls, "user "+strings.Join(args, " "))
 			return true, nil
@@ -99,6 +114,7 @@ func cutoverFixture(t *testing.T) (*cutover, *[]string) {
 			return nil
 		},
 		claim: func(context.Context) error { calls = append(calls, "claim"); return nil },
+		apply: func(context.Context) error { calls = append(calls, "apply"); return nil },
 		check: func(_ context.Context, running bool) error {
 			if !running {
 				t.Error("old running state lost")
@@ -222,5 +238,64 @@ func TestCutoverRemovesOldWrapperAndRefusesUnknownLauncher(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCutoverGivesTheOwnerTheImportedSettingsFiles(t *testing.T) {
+	c, calls := cutoverFixture(t)
+	oldData(t, c, "config: {mode: global, tun: {enable: true}}\nrules: {prepend: [\"DOMAIN-SUFFIX,example.com,DIRECT\"]}\n")
+	if err := c.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"omihomo/settings.json": "{\n  \"mode\": \"global\",\n  \"tun\": true\n}\n",
+		"omihomo/rules.json": "[\n  {\n    \"type\": \"DOMAIN-SUFFIX\",\n    \"value\": \"example.com\",\n" +
+			"    \"target\": \"DIRECT\"\n  }\n]\n",
+	}
+	for name, content := range want {
+		b, err := c.config.ReadFile(name)
+		if err != nil || string(b) != content {
+			t.Errorf("%s = %q, %v", name, b, err)
+		}
+	}
+	if !slices.Equal((*calls)[len(*calls)-3:], []string{"claim", "apply", "check"}) {
+		t.Errorf("calls end %v, want the files applied before the check", *calls)
+	}
+}
+
+// A dotfile manager may have placed them before the claim.
+func TestCutoverKeepsSettingsFilesTheOwnerHas(t *testing.T) {
+	c, calls := cutoverFixture(t)
+	oldData(t, c, "config: {mode: global}\n")
+	if err := c.config.Mkdir("omihomo", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.config.WriteFile("omihomo/settings.json", []byte(`{"mode":"direct"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := c.config.ReadFile("omihomo/settings.json"); string(b) != `{"mode":"direct"}` {
+		t.Errorf("settings.json = %q", b)
+	}
+	if _, err := c.config.Lstat("omihomo/rules.json"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("rules.json was written beside the owner's settings: %v", err)
+	}
+	if !slices.Contains(*calls, "apply") {
+		t.Errorf("calls %v, want the owner's files applied", *calls)
+	}
+}
+
+func TestAFailedCutoverRemovesTheSettingsFilesItWrote(t *testing.T) {
+	c, _ := cutoverFixture(t)
+	oldData(t, c, "")
+	fail := errors.New("injected failure")
+	c.check = func(context.Context, bool) error { return fail }
+	if err := c.run(t.Context()); !errors.Is(err, fail) {
+		t.Fatalf("cutover: %v", err)
+	}
+	if _, err := c.config.Lstat("omihomo"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the settings directory outlived the rollback: %v", err)
 	}
 }

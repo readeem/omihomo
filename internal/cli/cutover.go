@@ -21,6 +21,8 @@ import (
 	"github.com/readeem/omihomo/internal/core/mihomo"
 	"github.com/readeem/omihomo/internal/migration"
 	"github.com/readeem/omihomo/internal/owner"
+	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/settings"
 )
 
 var oldUnits = []string{"omihomo-subscription-update.timer", "omihomo-subscription-update.service", "omihomo-subscription-startup.service", "omihomo.service"}
@@ -31,12 +33,15 @@ type cutover struct {
 	config    *os.Root
 	data      string
 	state     string
+	uid, gid  int
 	userctl   func(context.Context, ...string) (bool, error)
 	systemctl func(context.Context, ...string) error
 	claim     func(context.Context) error
-	check     func(context.Context, bool) error
-	undo      []func() error
-	discard   []func() error
+	// apply runs the owner's settings files, as the owner.
+	apply   func(context.Context) error
+	check   func(context.Context, bool) error
+	undo    []func() error
+	discard []func() error
 }
 
 func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string) error {
@@ -84,7 +89,17 @@ func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	machine := cutover{root: root, home: home, config: config, data: legacyData, state: filepath.Dir(owner.DefaultPath),
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return errors.New("the invoking account has no numeric group")
+	}
+	asOwner := func(ctx context.Context, args ...string) error {
+		cmd := exec.CommandContext(ctx, "/usr/bin/runuser", append([]string{"-u", account.Username, "--", "/usr/bin/omihomo"}, args...)...)
+		cmd.Env = []string{"PATH=/usr/bin", "LANG=C", "OMIHOMO_SOCKET=" + client.DefaultSocket, "XDG_CONFIG_HOME=" + legacyConfig}
+		cmd.Stderr = a.env.Stderr
+		return cmd.Run()
+	}
+	machine := cutover{root: root, home: home, config: config, data: legacyData, state: filepath.Dir(owner.DefaultPath), uid: uid, gid: gid,
 		systemctl: func(ctx context.Context, args ...string) error { return runSystemctl(ctx, a.env.Stderr, args...) },
 		userctl: func(ctx context.Context, args ...string) (bool, error) {
 			cmd := exec.CommandContext(ctx, "/usr/bin/runuser", "-u", account.Username, "--", "/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/"+strconv.Itoa(uid), "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+strconv.Itoa(uid)+"/bus", "/usr/bin/systemctl", "--user")
@@ -105,22 +120,21 @@ func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string)
 				systemctl: func(ctx context.Context, args ...string) error { return runSystemctl(ctx, a.env.Stderr, args...) }}.claim(ctx)
 		},
 	}
+	machine.apply = func(ctx context.Context) error { return asOwner(ctx, "apply") }
 	machine.check = func(ctx context.Context, running bool) error {
-		op := "status"
 		if running {
-			op = "start"
+			return asOwner(ctx, "start")
 		}
-		cmd := exec.CommandContext(ctx, "/usr/bin/runuser", "-u", account.Username, "--", "/usr/bin/omihomo", op)
-		cmd.Env = []string{"PATH=/usr/bin", "LANG=C", "OMIHOMO_SOCKET=" + client.DefaultSocket}
-		cmd.Stderr = a.env.Stderr
-		return cmd.Run()
+		return asOwner(ctx, "status")
 	}
 	return machine.run(ctx)
 }
 
 func (c *cutover) run(ctx context.Context) (err error) {
-	var active []string
-	var units []string
+	var (
+		active []string
+		units  []string
+	)
 	if c.config != nil {
 		for _, unit := range oldUnits {
 			if _, e := c.config.Lstat("systemd/user/" + unit); e == nil {
@@ -224,6 +238,11 @@ func (c *cutover) run(ctx context.Context) (err error) {
 		if err = staged.Commit(); err != nil {
 			return err
 		}
+		if c.config != nil {
+			if err = c.writeSettings(protocol.ApplyArgs{Settings: staged.Settings.Settings, Rules: staged.Settings.Rules}); err != nil {
+				return fmt.Errorf("write the settings files: %w", err)
+			}
+		}
 	}
 	for _, unit := range units {
 		if err = c.move(c.config, "systemd/user/"+unit); err != nil {
@@ -275,8 +294,55 @@ func (c *cutover) run(ctx context.Context) (err error) {
 	if err = c.claim(ctx); err != nil {
 		return err
 	}
+	// Settings files the owner already had are what runs, not the import.
+	if staged != nil && c.config != nil && c.apply != nil {
+		if err = c.apply(ctx); err != nil {
+			return err
+		}
+	}
 	if c.check != nil {
 		return c.check(ctx, running)
+	}
+	return nil
+}
+
+// writeSettings gives the owner the imported settings as their settings
+// files, unless they already have either, as a dotfile manager may have
+// placed them before the claim.
+func (c *cutover) writeSettings(v protocol.ApplyArgs) error {
+	files := settings.Encode(v)
+	for _, f := range files {
+		if _, err := c.config.Lstat("omihomo/" + f.Name); err == nil {
+			return nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	if err := c.config.Mkdir("omihomo", 0o700); err == nil {
+		c.undo = append(c.undo, func() error { return c.config.Remove("omihomo") })
+		if err := c.config.Lchown("omihomo", c.uid, c.gid); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	for _, f := range files {
+		name := "omihomo/" + f.Name
+		file, err := c.config.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return err
+		}
+		c.undo = append(c.undo, func() error { return c.config.Remove(name) })
+		err = file.Chown(c.uid, c.gid)
+		if err == nil {
+			_, err = file.Write(f.Data)
+		}
+		if cerr := file.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

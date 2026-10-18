@@ -28,7 +28,7 @@ import (
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/config"
-	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/constant/features"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/listener"
@@ -72,9 +72,11 @@ type Core struct {
 	procs  map[string]string
 }
 
-var _ core.Core = (*Core)(nil)
+var (
+	_ core.Core = (*Core)(nil)
 
-var hosted atomic.Bool
+	hosted atomic.Bool
+)
 
 // New hosts mihomo with home as its directory for state and geodata. home
 // must be an absolute path to a directory only this process's account can
@@ -92,7 +94,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	C.SetHomeDir(home)
+	constant.SetHomeDir(home)
 	return &Core{log: log, tap: startLogTap(log), current: &runtime{}}, nil
 }
 
@@ -329,7 +331,7 @@ func (c *Core) stop() {
 // while the core stays stopped, whatever lands is closed. What it sends
 // within one tick of landing still gets out.
 func (c *Core) drain(generation uint64) {
-	deadline := time.Now().Add(C.DefaultTCPTimeout + time.Second)
+	deadline := time.Now().Add(constant.DefaultTCPTimeout + time.Second)
 	tick := time.NewTicker(drainTick)
 	defer tick.Stop()
 	for now := range tick.C {
@@ -419,7 +421,7 @@ func (c *Core) Groups(ctx context.Context) ([]protocol.Group, error) {
 	return out, nil
 }
 
-func member(p C.Proxy, types map[string]string) protocol.Proxy {
+func member(p constant.Proxy, types map[string]string) protocol.Proxy {
 	typ, ok := types[p.Name()]
 	if !ok {
 		typ = strings.ToLower(p.Type().String())
@@ -445,7 +447,7 @@ func (c *Core) Select(ctx context.Context, group, proxy string) error {
 	if !ok {
 		return fmt.Errorf("selectable group %q: %w", group, core.ErrNotFound)
 	}
-	if !slices.ContainsFunc(g.Proxies(), func(p C.Proxy) bool { return p.Name() == proxy }) {
+	if !slices.ContainsFunc(g.Proxies(), func(p constant.Proxy) bool { return p.Name() == proxy }) {
 		return fmt.Errorf("proxy %q in group %q: %w", proxy, group, core.ErrNotFound)
 	}
 	if err := selector.Set(proxy); err != nil {
@@ -460,11 +462,11 @@ func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (m
 	if err != nil {
 		return nil, err
 	}
-	members := map[string]C.Proxy{}
+	members := map[string]constant.Proxy{}
 	for _, p := range g.Proxies() {
 		members[p.Name()] = p
 	}
-	var tested []C.Proxy
+	var tested []constant.Proxy
 	if len(proxies) == 0 {
 		tested = g.Proxies()
 	}
@@ -543,8 +545,8 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 	return out, nil
 }
 
-func dualStackProcess(m *C.Metadata) string {
-	if m.NetWork != C.UDP || !m.SrcIP.Is4() {
+func dualStackProcess(m *constant.Metadata) string {
+	if m.NetWork != constant.UDP || !m.SrcIP.Is4() {
 		return ""
 	}
 	_, path, err := process.FindProcessName(process.UDP, netip.AddrFrom16(m.SrcIP.As16()), int(m.SrcPort))

@@ -9,36 +9,36 @@ import (
 	"github.com/readeem/omihomo/internal/state"
 )
 
-// tunBypass is the address space that never leaves through TUN: loopback,
-// the private, CGNAT and link-local ranges, the documentation and multicast
-// blocks, and their IPv6 equivalents. Without it auto-route swallows the
-// LAN, and the router, printers and local DNS stop answering once TUN is up.
-//
-// The multicast and reserved space stops just short of the last address:
-// sing-tun cannot put a range that runs to it in an nftables interval set,
-// and TUN redirect then never starts.
-var tunBypass = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	tailnetRange,
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("224.0.0.0/4"),
-	netip.MustParsePrefix("240.0.0.0/5"),
-	netip.MustParsePrefix("::/127"),
-	netip.MustParsePrefix("fc00::/7"),
-	netip.MustParsePrefix("fe80::/10"),
-	netip.MustParsePrefix("ff00::/9"),
-}
-
 var (
+	// tunBypass is the address space that never leaves through TUN: loopback,
+	// the private, CGNAT and link-local ranges, the documentation and multicast
+	// blocks, and their IPv6 equivalents. Without it auto-route swallows the
+	// LAN, and the router, printers and local DNS stop answering once TUN is up.
+	//
+	// The multicast and reserved space stops just short of the last address:
+	// sing-tun cannot put a range that runs to it in an nftables interval set,
+	// and TUN redirect then never starts.
+	tunBypass = []netip.Prefix{
+		netip.MustParsePrefix("0.0.0.0/8"),
+		netip.MustParsePrefix("10.0.0.0/8"),
+		tailnetRange,
+		netip.MustParsePrefix("127.0.0.0/8"),
+		netip.MustParsePrefix("169.254.0.0/16"),
+		netip.MustParsePrefix("172.16.0.0/12"),
+		netip.MustParsePrefix("192.0.0.0/24"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+		netip.MustParsePrefix("192.88.99.0/24"),
+		netip.MustParsePrefix("192.168.0.0/16"),
+		netip.MustParsePrefix("198.51.100.0/24"),
+		netip.MustParsePrefix("203.0.113.0/24"),
+		netip.MustParsePrefix("224.0.0.0/4"),
+		netip.MustParsePrefix("240.0.0.0/5"),
+		netip.MustParsePrefix("::/127"),
+		netip.MustParsePrefix("fc00::/7"),
+		netip.MustParsePrefix("fe80::/10"),
+		netip.MustParsePrefix("ff00::/9"),
+	}
+
 	tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
 	// Tailscale's MagicDNS resolver sits inside the tailnet range but must
 	// still be answered by Tailscale when the rest of the tailnet is proxied.

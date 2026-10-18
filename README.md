@@ -95,7 +95,9 @@ See [daemon behavior](docs/daemon.md#subscriptions) for limits and retry rules.
 | Change | Location |
 | --- | --- |
 | Daemon binary and package-owned system units | `/usr/bin/omihomo`, `/usr/lib/systemd/system/omihomo.{service,socket}` |
-| Private subscriptions, settings, core cache and geodata | `/var/lib/omihomo`, root-owned `0700`, files `0600` |
+| Editable settings and rules | `$XDG_CONFIG_HOME/omihomo/{settings,rules}.json` (defaults to `~/.config`) |
+| User settings sync units | `/usr/lib/systemd/user/omihomo-apply.{path,service}` |
+| Private subscriptions, cached settings, core cache and geodata | `/var/lib/omihomo`, root-owned `0700`, files `0600` |
 | Recorded owner and socket ownership | `/var/lib/omihomo/owner`, `/etc/systemd/system/omihomo.socket.d/owner.conf` |
 | Tailscale proxy drop-in, while its integration is enabled | `/etc/systemd/system/tailscaled.service.d/omihomo.conf` |
 | Owner-only control socket | `/run/omihomo/omihomo.sock`, `0600` |
@@ -106,7 +108,8 @@ upgrade hook grants privileges. Only the recorded owner controls it, through the
 socket. The daemon allowlists subscription content and accepts typed settings only. The remaining
 trust is the privileged daemon and its embedded dependencies, including process-inspection access.
 
-The widget has no settings of its own. It shares the daemon's state with the CLI and receives
+Settings and rules can be tracked with a dotfile manager; see [settings files](docs/daemon.md#settings-files).
+The widget has no separate settings. It shares the daemon's state with the CLI and receives
 live traffic and connections while open. Omihomo never edits Hyprland or terminal settings.
 
 ## Remove
@@ -122,12 +125,12 @@ For permanent state removal, see
 
 ## Development
 
+[`mise`](https://mise.jdx.dev) pins the toolchain and runs the tasks; `mise tasks` lists them.
+
 ```sh
-go test -race $(go list ./... | rg -v '/internal/core/mihomo$')
-go test -tags with_gvisor,no_easytier ./internal/core/mihomo
-go vet -tags with_gvisor,no_easytier ./...
-./tests/run
-./tools/build-package
+mise run check      # gofmt, go fix, go vet and the Go tests
+mise run widget     # installer, widget model and Quickshell service tests
+mise run package    # local Arch package and AUR metadata
 ```
 
 The package build writes a local Arch package and AUR metadata under ignored `dist/`; it does

@@ -14,9 +14,11 @@ import (
 	"time"
 )
 
-const dropInDir = "/etc/systemd/system/tailscaled.service.d"
-const filename = "omihomo.conf"
-const content = "[Service]\nEnvironment=HTTP_PROXY=http://127.0.0.1:7899\nEnvironment=HTTPS_PROXY=http://127.0.0.1:7899\nEnvironment=NO_PROXY=localhost,127.0.0.1,::1,100.64.0.0/10,fd7a:115c:a1e0::/48\n"
+const (
+	dropInDir = "/etc/systemd/system/tailscaled.service.d"
+	filename  = "omihomo.conf"
+	content   = "[Service]\nEnvironment=HTTP_PROXY=http://127.0.0.1:7899\nEnvironment=HTTPS_PROXY=http://127.0.0.1:7899\nEnvironment=NO_PROXY=localhost,127.0.0.1,::1,100.64.0.0/10,fd7a:115c:a1e0::/48\n"
+)
 
 // Sync installs or removes only Omihomo's proxy drop-in and reloads tailscaled.
 func Sync(ctx context.Context, enabled bool) error {

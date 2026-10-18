@@ -9,9 +9,9 @@ import (
 	"github.com/metacubex/mihomo/common/orderedmap"
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/config"
-	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
-	T "github.com/metacubex/mihomo/tunnel"
+	"github.com/metacubex/mihomo/tunnel"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -37,8 +37,8 @@ const (
 	// auto-redirect hands TCP to the kernel through nftables, and only then
 	// may the stack be mixed: mixed without the redirect carries no TCP at
 	// all. Without it, gVisor tunnels everything in userspace.
-	tunRedirectStack   = C.TunMixed
-	tunCompatibleStack = C.TunGvisor
+	tunRedirectStack   = constant.TunMixed
+	tunCompatibleStack = constant.TunGvisor
 	// The global group, which global mode and Omihomo's own rules use.
 	globalGroup = "GLOBAL"
 )
@@ -50,16 +50,16 @@ var (
 	// on. It is Omihomo's own listener, so tailscaled's drop-in never depends
 	// on the subscription.
 	tailscalePort = 7899
-)
 
-var defaultNameservers = []string{"https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"}
+	defaultNameservers = []string{"https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"}
+)
 
 // rawConfig translates cfg into what mihomo parses. It never reads a file.
 func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
-	mode, ok := map[string]T.TunnelMode{
-		protocol.ModeRule:   T.Rule,
-		protocol.ModeGlobal: T.Global,
-		protocol.ModeDirect: T.Direct,
+	mode, ok := map[string]tunnel.TunnelMode{
+		protocol.ModeRule:   tunnel.Rule,
+		protocol.ModeGlobal: tunnel.Global,
+		protocol.ModeDirect: tunnel.Direct,
 	}[cfg.Mode]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown mode %q", cfg.Mode)
@@ -80,7 +80,7 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 	raw.ExternalUIURL = ""
 
 	raw.DNS.Enable = true
-	raw.DNS.EnhancedMode = C.DNSMapping
+	raw.DNS.EnhancedMode = constant.DNSMapping
 	raw.DNS.Fallback = []string{}
 	raw.DNS.DefaultNameserver = slices.Clone(defaultNameservers)
 	raw.DNS.ProxyServerNameserver = slices.Clone(defaultNameservers)
@@ -261,12 +261,14 @@ func withOmihomoRules(rules []core.Rule, cfg core.Config, primary string) []core
 	return slices.Concat(rules[:lead], own, rules[lead:])
 }
 
-// commaValues are the rule types whose value may hold commas: mihomo reads
-// their target from the last field and gives them no params.
-var commaValues = []string{"NOT", "OR", "AND", "SUB-RULE", "DOMAIN-REGEX", "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX"}
+var (
+	// commaValues are the rule types whose value may hold commas: mihomo reads
+	// their target from the last field and gives them no params.
+	commaValues = []string{"NOT", "OR", "AND", "SUB-RULE", "DOMAIN-REGEX", "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX"}
 
-// ruleParams are the trailing flags mihomo knows.
-var ruleParams = []string{"no-resolve", "src"}
+	// ruleParams are the trailing flags mihomo knows.
+	ruleParams = []string{"no-resolve", "src"}
+)
 
 // ruleLine writes r the way mihomo splits a rule, refusing any rule whose
 // fields mihomo would read differently, such as a value whose commas move
@@ -309,7 +311,7 @@ func ruleLine(r core.Rule) (string, error) {
 // no DNS, so nothing reaches the engine.
 func stoppedConfig() *config.RawConfig {
 	raw := config.DefaultRawConfig()
-	raw.Mode = T.Direct
+	raw.Mode = tunnel.Direct
 	raw.LogLevel = log.WARNING
 	raw.FindProcessMode = process.FindProcessAlways
 	raw.GeoXUrl = config.RawGeoXUrl{}

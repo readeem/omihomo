@@ -2,7 +2,35 @@
 
 This project is an Omarchy 4 plugin for managing mihomo proxy client, with subscriptions, configs and traffic rules.
 
-## Development workflow
+A root-owned daemon embeds mihomo and serves an owner-only socket; the `omihomo` CLI and the QML
+widget are its clients. Vocabulary is in `GLOSSARY.md`, decisions in `docs/adr/`.
 
-Never try to render or smoke test the widget directly. Ask the user to try it out instead.
-For a user to see your changes, you need to run `omarchy restart shell`.
+## What we never compromise on
+
+1. **Owner-only control.** Only the recorded owner reaches the socket, and client input is typed
+   and allowlisted: never a path, unit or environment value (ADR-0001, ADR-0006).
+2. **Downloads cannot change listeners, paths or privileges.** The running config is built from
+   typed settings plus an allowlisted subscription (ADR-0005).
+3. **mihomo stays behind `core.Core`.** Nothing outside `internal/core/mihomo` imports it;
+   `TestOnlyTheCoreImportsMihomo` enforces this.
+
+## The ways to hurt yourself
+
+1. **The installed daemon is the machine's live proxy.** Never run `omihomo claim`, `pacman -U`,
+   `tools/test-cutover` or a restart of `omihomo.service`; hand those steps to us, with
+   `tests/README.md#manual-cutover-test`.
+2. **The widget cannot be checked by you.** Never render or smoke-test it. `omarchy restart shell`
+   shows QML changes; Go changes need a rebuilt package.
+3. **mihomo races with itself.** Its package runs without `-race`, and only the release build tags
+   (`with_gvisor,no_easytier`) give it the gVisor stack its tests need.
+
+## Hit every surface
+
+- **Protocol and settings.** A change reaches the daemon, the CLI, the widget and `docs/daemon.md`.
+- **Packaging.** A new file the daemon needs is installed by `tools/build-package` and
+  `.github/workflows/package.yml`.
+
+## Verifying
+
+`mise tasks` lists the tasks. Run `mise run check` before handoff, and `mise run widget` when the
+widget or installer changes. `mise run package` writes only to `dist/`.

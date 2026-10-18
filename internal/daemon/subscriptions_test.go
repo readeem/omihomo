@@ -490,8 +490,8 @@ func TestSettingsRulesAndTheRunningStateSurviveARestart(t *testing.T) {
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Mode: new("global"), TUN: new(true), PrimaryGroup: new("Proxy")})
-	call[protocol.RuleList](t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "domain-suffix", Value: "intranet.example", Target: "DIRECT"})
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Mode: "global", TUN: true, PrimaryGroup: "Proxy"},
+		protocol.UserRule{Type: "DOMAIN-SUFFIX", Value: "intranet.example", Target: "DIRECT"}))
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	o.Close()
 
@@ -522,49 +522,44 @@ func TestOwnRules(t *testing.T) {
 	o.set("/work", page{body: workYAML})
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
-	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "DOMAIN", Value: "a.example", Target: "Proxy"}); err.Code != protocol.CodeNotFound {
-		t.Fatalf("a target no subscription has = %v", err)
-	}
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	for _, r := range []protocol.RuleArgs{
+	steam := protocol.UserRule{Type: "PROCESS-NAME", Value: "steam", Target: "Proxy"}
+	lan := protocol.UserRule{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT"}
+	for _, r := range []protocol.UserRule{
 		{Type: "IP-CIDR", Value: "not-a-cidr", Target: "DIRECT"},
 		{Type: "PROCESS-NAME", Value: "Firefox,REJECT", Target: "Proxy"},
 		{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT,no-resolve"},
 		{Type: "DST-PORT", Value: "70000", Target: "DIRECT"},
 		{Type: "MATCH", Value: "x", Target: "DIRECT"},
+		{Type: "domain", Value: "a.example", Target: "DIRECT"},
 		{Type: "DOMAIN", Value: " a.example", Target: "DIRECT"},
+		{Type: "DOMAIN", Value: "a.example", Target: ""},
 	} {
-		if err := callErr(t, c, protocol.OpRuleAdd, r); err.Code != protocol.CodeInvalid {
+		err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{}, steam, r))
+		if err.Code != protocol.CodeInvalid || !strings.HasPrefix(err.Message, "rule 2: ") {
 			t.Errorf("%+v = %v", r, err)
 		}
 	}
-	list := call[protocol.RuleList](t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "PROCESS-NAME", Value: "steam", Target: "Proxy"})
-	list = call[protocol.RuleList](t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT"})
-	if len(list.Rules) != 2 || list.Rules[0].Value != "steam" || list.Rules[0].Source != protocol.SourceUser {
+	elsewhere := protocol.UserRule{Type: "DOMAIN", Value: "a.example", Target: "Elsewhere"}
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{}, steam, elsewhere, lan))
+	list := call[protocol.RuleList](t, c, protocol.OpRules, nil)
+	if len(list.Rules) != 3 || list.Rules[0].Value != "steam" || list.Rules[0].Source != protocol.SourceUser {
 		t.Fatalf("rules while stopped = %+v", list)
 	}
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	cfg, _ := h.core.Config()
 	if len(cfg.Profile.Rules) < 2 || cfg.Profile.Rules[1].Value != "10.0.0.0/8" || cfg.Profile.Rules[1].Source != protocol.SourceUser {
-		t.Fatalf("core rules %+v", cfg.Profile.Rules)
-	}
-	list = call[protocol.RuleList](t, c, protocol.OpRuleRemove, protocol.IndexArgs{Index: 1})
-	cfg, _ = h.core.Config()
-	if cfg.Profile.Rules[0].Value != "10.0.0.0/8" || list.Rules[0].Value != "10.0.0.0/8" {
-		t.Fatalf("after removing rule 1: %+v", cfg.Profile.Rules)
-	}
-	if err := callErr(t, c, protocol.OpRuleRemove, protocol.IndexArgs{Index: 2}); err.Code != protocol.CodeNotFound {
-		t.Fatalf("removing a rule that is not there = %v", err)
+		t.Fatalf("core rules %+v, want the rule for a target this subscription lacks left out", cfg.Profile.Rules)
 	}
 
 	// A change the core refuses is not kept.
 	h.core.FailApply(fmt.Errorf("refused"))
-	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "DOMAIN", Value: "b.example", Target: "DIRECT"}); err.Code != protocol.CodeCore {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{}, lan)); err.Code != protocol.CodeCore {
 		t.Fatalf("a refused rule = %v", err)
 	}
 	h.core.FailApply(nil)
-	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); slices.ContainsFunc(list.Rules, func(r protocol.Rule) bool { return r.Value == "b.example" }) {
-		t.Fatalf("the refused rule was kept: %+v", list)
+	if cfg, _ := h.core.Config(); cfg.Profile.Rules[0].Value != "steam" {
+		t.Fatalf("the refused change runs: %+v", cfg.Profile.Rules)
 	}
 }
 
@@ -702,10 +697,11 @@ func TestChangesWhileStoppedAreChecked(t *testing.T) {
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	h.core.FailCheck(fmt.Errorf("refused"))
-	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "GEOSITE", Value: "nonexistent", Target: "DIRECT"}); err.Code != protocol.CodeCore {
+	geosite := protocol.UserRule{Type: "GEOSITE", Value: "nonexistent", Target: "DIRECT"}
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{}, geosite)); err.Code != protocol.CodeCore {
 		t.Fatalf("a rule the core would refuse = %v", err)
 	}
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: new(true)}); err.Code != protocol.CodeCore {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{TUN: true})); err.Code != protocol.CodeCore {
 		t.Fatalf("a setting the core would refuse = %v", err)
 	}
 	h.core.FailCheck(nil)
@@ -731,7 +727,8 @@ func TestAChangeNeedingGeodataThatDoesNotComeIsRefused(t *testing.T) {
 	h := serveCore(t, os.Getuid(), c0, o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	if err := callErr(t, c, protocol.OpRuleAdd, protocol.RuleArgs{Type: "GEOSITE", Value: "cn", Target: "DIRECT"}); err.Code != protocol.CodeFetch {
+	geosite := protocol.UserRule{Type: "GEOSITE", Value: "cn", Target: "DIRECT"}
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{}, geosite)); err.Code != protocol.CodeFetch {
 		t.Fatalf("a rule whose geodata does not come = %v", err)
 	}
 	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Rules) != 0 {

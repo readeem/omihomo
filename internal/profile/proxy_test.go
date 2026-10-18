@@ -15,81 +15,83 @@ import (
 	"time"
 )
 
-// testPEM and testKey are a client certificate and its key, which keep each
-// other: mihomo reads a pair that does not load as file paths.
-var testPEM, testKey = func() (string, string) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		panic(err)
-	}
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		panic(err)
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		panic(err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
-}()
+var (
+	// testPEM and testKey are a client certificate and its key, which keep each
+	// other: mihomo reads a pair that does not load as file paths.
+	testPEM, testKey = func() (string, string) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			panic(err)
+		}
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		if err != nil {
+			panic(err)
+		}
+		keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			panic(err)
+		}
+		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+			string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	}()
 
-// commonProxies are proxies of every modelled type, written with the fields
-// subscriptions commonly carry. Each keeps all of them.
-var commonProxies = []map[string]any{
-	{"name": "ss", "type": "ss", "server": "a.example", "port": 8388, "cipher": "aes-128-gcm", "password": "pw",
-		"udp": true, "udp-over-tcp": false, "ip-version": "ipv4", "tfo": false, "mptcp": true,
-		"plugin": "obfs", "plugin-opts": map[string]any{"mode": "tls", "host": "b.example"},
-		"smux": map[string]any{"enabled": true, "protocol": "h2mux", "max-streams": 0,
-			"brutal-opts": map[string]any{"enabled": false, "up": "50", "down": "100"}}},
-	{"name": "ssr", "type": "ssr", "server": "a.example", "port": 443, "cipher": "chacha20-ietf", "password": "pw",
-		"obfs": "tls1.2_ticket_auth", "obfs-param": "b.example", "protocol": "auth_sha1_v4", "protocol-param": "", "udp": true},
-	{"name": "vmess", "type": "vmess", "server": "a.example", "port": 443, "uuid": "u", "alterId": 0, "cipher": "auto",
-		"udp": true, "tls": true, "servername": "b.example", "skip-cert-verify": false, "alpn": []any{"h2", "http/1.1"},
-		"client-fingerprint": "chrome", "network": "ws",
-		"ws-opts": map[string]any{"path": "/ws", "headers": map[string]any{"Host": "b.example"}, "max-early-data": 2048,
-			"early-data-header-name": "Sec-WebSocket-Protocol"},
-		"http-opts": map[string]any{"method": "GET", "path": []any{"/"}, "headers": map[string]any{"Host": []any{"b.example"}}},
-		"h2-opts":   map[string]any{"host": []any{"b.example"}, "path": "/"}},
-	{"name": "vless", "type": "vless", "server": "a.example", "port": 443, "uuid": "u", "flow": "xtls-rprx-vision",
-		"udp": true, "tls": true, "servername": "b.example", "client-fingerprint": "chrome", "network": "tcp",
-		"reality-opts": map[string]any{"public-key": "k", "short-id": "0123"}, "packet-encoding": "xudp",
-		"encryption": "none", "grpc-opts": map[string]any{"grpc-service-name": "svc"},
-		"xhttp-opts": map[string]any{"path": "/x", "mode": "auto"}},
-	{"name": "trojan", "type": "trojan", "server": "a.example", "port": 443, "password": "pw", "sni": "b.example",
-		"udp": true, "skip-cert-verify": true, "fingerprint": "ab", "network": "grpc",
-		"grpc-opts": map[string]any{"grpc-service-name": "svc"}, "ech-opts": map[string]any{"enable": true, "config": "AA=="},
-		"ss-opts": map[string]any{"enabled": false, "method": "aes-128-gcm", "password": "pw"}},
-	{"name": "hysteria", "type": "hysteria", "server": "a.example", "port": 443, "ports": "1000-2000",
-		"protocol": "udp", "up": "30 Mbps", "down": "200 Mbps", "auth-str": "pw", "obfs": "o", "sni": "b.example",
-		"alpn": []any{"h3"}, "recv-window-conn": 12582912, "disable-mtu-discovery": false, "fast-open": true},
-	{"name": "hysteria2", "type": "hysteria2", "server": "a.example", "port": 443, "ports": "1000-2000",
-		"hop-interval": "30", "password": "pw", "obfs": "salamander", "obfs-password": "o", "sni": "b.example",
-		"up": "30", "down": "200", "skip-cert-verify": false, "alpn": []any{"h3"}},
-	{"name": "tuic", "type": "tuic", "server": "a.example", "port": 443, "uuid": "u", "password": "pw",
-		"congestion-controller": "bbr", "udp-relay-mode": "native", "reduce-rtt": true, "alpn": []any{"h3"},
-		"sni": "b.example", "disable-sni": false, "heartbeat-interval": 10000, "request-timeout": 8000},
-	{"name": "wireguard", "type": "wireguard", "server": "a.example", "port": 51820, "ip": "172.16.0.2",
-		"ipv6": "fd01::2", "private-key": "priv", "public-key": "pub", "pre-shared-key": "psk",
-		"reserved": []any{1, 2, 3}, "allowed-ips": []any{"0.0.0.0/0"}, "mtu": 1280, "udp": true,
-		"remote-dns-resolve": true, "dns": []any{"1.1.1.1"},
-		"amnezia-wg-option": map[string]any{"jc": 4, "jmin": 40, "jmax": 70, "s1": 0, "h1": "1"}},
-	{"name": "snell", "type": "snell", "server": "a.example", "port": 443, "psk": "pw", "version": 3, "udp": true,
-		"obfs-opts": map[string]any{"mode": "http", "host": "b.example"}},
-	{"name": "socks5", "type": "socks5", "server": "a.example", "port": 1080, "username": "u", "password": "pw",
-		"tls": true, "udp": true, "skip-cert-verify": true, "certificate": testPEM, "private-key": testKey},
-	{"name": "http", "type": "http", "server": "a.example", "port": 8080, "username": "u", "password": "pw",
-		"tls": true, "sni": "b.example", "headers": map[string]any{"X-Id": "1"}},
-	{"name": "ssh", "type": "ssh", "server": "a.example", "port": 22, "username": "u", "password": "pw",
-		"private-key": "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n",
-		"host-key":    []any{"ssh-ed25519 AAAA"}},
-	{"name": "anytls", "type": "anytls", "server": "a.example", "port": 443, "password": "pw", "sni": "b.example",
-		"client-fingerprint": "chrome", "udp": true, "alpn": []any{"h2"}, "idle-session-timeout": 30},
-	{"name": "mieru", "type": "mieru", "server": "a.example", "port-range": "2090-2099", "transport": "TCP",
-		"username": "u", "password": "pw", "multiplexing": "MULTIPLEXING_LOW", "udp": true},
-	{"name": "direct", "type": "direct", "ip-version": "ipv4-prefer", "tfo": true},
-}
+	// commonProxies are proxies of every modelled type, written with the fields
+	// subscriptions commonly carry. Each keeps all of them.
+	commonProxies = []map[string]any{
+		{"name": "ss", "type": "ss", "server": "a.example", "port": 8388, "cipher": "aes-128-gcm", "password": "pw",
+			"udp": true, "udp-over-tcp": false, "ip-version": "ipv4", "tfo": false, "mptcp": true,
+			"plugin": "obfs", "plugin-opts": map[string]any{"mode": "tls", "host": "b.example"},
+			"smux": map[string]any{"enabled": true, "protocol": "h2mux", "max-streams": 0,
+				"brutal-opts": map[string]any{"enabled": false, "up": "50", "down": "100"}}},
+		{"name": "ssr", "type": "ssr", "server": "a.example", "port": 443, "cipher": "chacha20-ietf", "password": "pw",
+			"obfs": "tls1.2_ticket_auth", "obfs-param": "b.example", "protocol": "auth_sha1_v4", "protocol-param": "", "udp": true},
+		{"name": "vmess", "type": "vmess", "server": "a.example", "port": 443, "uuid": "u", "alterId": 0, "cipher": "auto",
+			"udp": true, "tls": true, "servername": "b.example", "skip-cert-verify": false, "alpn": []any{"h2", "http/1.1"},
+			"client-fingerprint": "chrome", "network": "ws",
+			"ws-opts": map[string]any{"path": "/ws", "headers": map[string]any{"Host": "b.example"}, "max-early-data": 2048,
+				"early-data-header-name": "Sec-WebSocket-Protocol"},
+			"http-opts": map[string]any{"method": "GET", "path": []any{"/"}, "headers": map[string]any{"Host": []any{"b.example"}}},
+			"h2-opts":   map[string]any{"host": []any{"b.example"}, "path": "/"}},
+		{"name": "vless", "type": "vless", "server": "a.example", "port": 443, "uuid": "u", "flow": "xtls-rprx-vision",
+			"udp": true, "tls": true, "servername": "b.example", "client-fingerprint": "chrome", "network": "tcp",
+			"reality-opts": map[string]any{"public-key": "k", "short-id": "0123"}, "packet-encoding": "xudp",
+			"encryption": "none", "grpc-opts": map[string]any{"grpc-service-name": "svc"},
+			"xhttp-opts": map[string]any{"path": "/x", "mode": "auto"}},
+		{"name": "trojan", "type": "trojan", "server": "a.example", "port": 443, "password": "pw", "sni": "b.example",
+			"udp": true, "skip-cert-verify": true, "fingerprint": "ab", "network": "grpc",
+			"grpc-opts": map[string]any{"grpc-service-name": "svc"}, "ech-opts": map[string]any{"enable": true, "config": "AA=="},
+			"ss-opts": map[string]any{"enabled": false, "method": "aes-128-gcm", "password": "pw"}},
+		{"name": "hysteria", "type": "hysteria", "server": "a.example", "port": 443, "ports": "1000-2000",
+			"protocol": "udp", "up": "30 Mbps", "down": "200 Mbps", "auth-str": "pw", "obfs": "o", "sni": "b.example",
+			"alpn": []any{"h3"}, "recv-window-conn": 12582912, "disable-mtu-discovery": false, "fast-open": true},
+		{"name": "hysteria2", "type": "hysteria2", "server": "a.example", "port": 443, "ports": "1000-2000",
+			"hop-interval": "30", "password": "pw", "obfs": "salamander", "obfs-password": "o", "sni": "b.example",
+			"up": "30", "down": "200", "skip-cert-verify": false, "alpn": []any{"h3"}},
+		{"name": "tuic", "type": "tuic", "server": "a.example", "port": 443, "uuid": "u", "password": "pw",
+			"congestion-controller": "bbr", "udp-relay-mode": "native", "reduce-rtt": true, "alpn": []any{"h3"},
+			"sni": "b.example", "disable-sni": false, "heartbeat-interval": 10000, "request-timeout": 8000},
+		{"name": "wireguard", "type": "wireguard", "server": "a.example", "port": 51820, "ip": "172.16.0.2",
+			"ipv6": "fd01::2", "private-key": "priv", "public-key": "pub", "pre-shared-key": "psk",
+			"reserved": []any{1, 2, 3}, "allowed-ips": []any{"0.0.0.0/0"}, "mtu": 1280, "udp": true,
+			"remote-dns-resolve": true, "dns": []any{"1.1.1.1"},
+			"amnezia-wg-option": map[string]any{"jc": 4, "jmin": 40, "jmax": 70, "s1": 0, "h1": "1"}},
+		{"name": "snell", "type": "snell", "server": "a.example", "port": 443, "psk": "pw", "version": 3, "udp": true,
+			"obfs-opts": map[string]any{"mode": "http", "host": "b.example"}},
+		{"name": "socks5", "type": "socks5", "server": "a.example", "port": 1080, "username": "u", "password": "pw",
+			"tls": true, "udp": true, "skip-cert-verify": true, "certificate": testPEM, "private-key": testKey},
+		{"name": "http", "type": "http", "server": "a.example", "port": 8080, "username": "u", "password": "pw",
+			"tls": true, "sni": "b.example", "headers": map[string]any{"X-Id": "1"}},
+		{"name": "ssh", "type": "ssh", "server": "a.example", "port": 22, "username": "u", "password": "pw",
+			"private-key": "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n",
+			"host-key":    []any{"ssh-ed25519 AAAA"}},
+		{"name": "anytls", "type": "anytls", "server": "a.example", "port": 443, "password": "pw", "sni": "b.example",
+			"client-fingerprint": "chrome", "udp": true, "alpn": []any{"h2"}, "idle-session-timeout": 30},
+		{"name": "mieru", "type": "mieru", "server": "a.example", "port-range": "2090-2099", "transport": "TCP",
+			"username": "u", "password": "pw", "multiplexing": "MULTIPLEXING_LOW", "udp": true},
+		{"name": "direct", "type": "direct", "ip-version": "ipv4-prefer", "tfo": true},
+	}
+)
 
 func TestEveryModelledTypeKeepsItsCommonFields(t *testing.T) {
 	seen := map[string]bool{}

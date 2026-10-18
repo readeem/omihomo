@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/readeem/omihomo/internal/protocol"
 )
 
 func TestFreshStateHasDefaults(t *testing.T) {
@@ -33,7 +35,7 @@ func TestStateRoundTripsAndStaysPrivate(t *testing.T) {
 	}
 	settings := DefaultSettings()
 	settings.TUN = true
-	settings.Rules = append(settings.Rules, Rule{Type: "DOMAIN-SUFFIX", Value: "example.com", Target: "DIRECT"})
+	settings.Rules = append(settings.Rules, protocol.UserRule{Type: "DOMAIN-SUFFIX", Value: "example.com", Target: "DIRECT"})
 	if err := s.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -92,5 +94,23 @@ func TestSnapshotIDsCannotEscape(t *testing.T) {
 		if err := s.SaveSnapshot(id, Snapshot{}); err == nil {
 			t.Errorf("saved a snapshot as %q", id)
 		}
+	}
+}
+
+func TestSettingsSavedWithEveryFieldStillRead(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := `{"mode":"global","tun":true,"tun_redirect":false,"tailscale":false,"tailnet_proxy":false,` +
+		`"primary_group":"","rules":[{"type":"DOMAIN","value":"a.example","target":"DIRECT"}],"running":true}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := Settings{Mode: "global", TUN: true,
+		Rules: []protocol.UserRule{{Type: "DOMAIN", Value: "a.example", Target: "DIRECT"}}, Running: true}
+	if got, err := s.Settings(); err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("settings = %+v, %v", got, err)
 	}
 }

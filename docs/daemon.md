@@ -20,7 +20,13 @@ The plugin checkout provides `bin/omihomo-install` to run the first two commands
 that script without `sudo`; it requests privileges only for claiming the daemon (and when yay
 installs the package). If installation fails it does not claim; if claiming fails the script
 returns an error. Custom XDG directories are passed to `claim` by the installer.
-The widget and command line both use the daemon socket.
+The widget reads the daemon socket and saves edits through the CLI. The installer also enables
+the user settings sync units. For a manual install, run:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now omihomo-apply.path omihomo-apply.service
+```
 
 The package installs `/usr/bin/omihomo`, `omihomo.service`, `omihomo.socket`, and a tmpfiles rule
 for `/var/lib/omihomo`. It enables both units and starts them when systemd is running. Before
@@ -47,6 +53,39 @@ units but preserves `/var/lib/omihomo` and the ownership drop-in, so reinstallin
 state. Logs are available with `journalctl -u omihomo.service`.
 
 Package publication and maintainer setup are described in [Release workflow](release.md).
+
+## Settings files
+
+`$XDG_CONFIG_HOME/omihomo/settings.json` and `rules.json` are the owner's editable settings.
+When `XDG_CONFIG_HOME` is unset or relative, the CLI uses `~/.config/omihomo`.
+Subscriptions, credentials, active subscription, group selections and the proxy's on/off state
+stay in the daemon's private state; they do not go in these files.
+
+`settings.json` holds `mode` (`rule`, `global` or `direct`), `tun`, `tun_redirect`, `tailscale`,
+`tailnet_proxy` and `primary_group`. Missing mode defaults to `rule`, booleans to false and
+primary group to the first selectable group. Saves omit false booleans and an empty primary
+group. `rules.json` is an ordered array of `{ "type", "value", "target" }` objects, or `[]`.
+Missing files mean defaults, so deleting a file resets that part on the next apply.
+
+`omihomo apply` reads and validates both files through `settings.apply`. `set`, `rule add`,
+`rule remove` and widget edits apply the change first, then save it; refused changes are never
+saved. CLI edits serialize with one another and automatic applies by locking the config directory itself.
+An error saving a file after the daemon accepted a change is reported explicitly. Each file is
+replaced atomically; a crash between the two saves may leave a partial pair. File symlinks are
+preserved and their targets updated. Directories are `0700`, files `0600`, including existing files.
+
+The user `omihomo-apply.path` watches both files and their directory, so hand and dotfile-manager
+edits apply automatically. `omihomo-apply.service` also applies them at login. These units use the
+user manager's config directory (`%E`); with custom XDG paths, ensure the manager uses the same
+`XDG_CONFIG_HOME` as the CLI, or call `omihomo apply` from the dotfile manager instead. Inspect
+errors with `journalctl --user -u omihomo-apply.service`. Invalid edits remain available to fix;
+the daemon continues using its last accepted settings. Reapplying unchanged settings leaves the
+core running untouched.
+
+The daemon never reads or writes the owner's home. It validates typed input and keeps the last
+applied settings in private state so boot and offline operation do not depend on login or an
+unlocked home. Rules targeting a group or proxy absent from the active subscription are kept
+but skipped at runtime. An unavailable primary group falls back to the first selectable one.
 
 ## Socket and owner
 
@@ -78,7 +117,7 @@ The vocabulary is proxies, groups, rules and connections; it never names the cor
 The daemon speaks first:
 
 ```json
-{"type":"hello","protocol":1,"version":"v2.0.0"}
+{"type":"hello","protocol":2,"version":"v2.0.0"}
 {"type":"refused","error":{"code":"forbidden","message":"this account does not own omihomo"}}
 ```
 
@@ -105,11 +144,11 @@ or `{}`.
 | `status` | | Status |
 | `subscribe`, `unsubscribe` | `{"streams":[...]}` | `{}` |
 | `start`, `stop` | | Status |
-| `settings.set` | any of `mode`, `tun`, `tun_redirect`, `tailscale`, `tailnet_proxy`, `primary_group` | Status |
+| `settings.apply` | `{"settings":{...},"rules":[{"type","value","target"}]}`; replaces both in full | Status |
 | `groups.list` | | `{"groups":[Group]}` |
 | `groups.select` | `{"group","proxy"}` | Group |
 | `delay.test` | `{"group","proxies"?}`, every member when `proxies` is absent | `{"delays":{name: ms}}`, `0` is a failure |
-| `rules.list` | | `{"rules":[Rule]}` in match order, each with its `source`: `user`, `omihomo` or `subscription` |
+| `rules.list` | | `{"rules":[Rule]}` user rules followed by runtime rules, each with its `source`: `user`, `omihomo` or `subscription` |
 | `connections.list` | | Connections |
 | `connections.close` | `{"ids":[...]}` or `{"all":true}` | `{}` |
 | `egress.check` | | `{"ip","latency"}`, measured through the proxy |
@@ -118,8 +157,6 @@ or `{}`.
 | `subscriptions.update` | `{"name"}` | Subscription |
 | `subscriptions.activate` | `{"name"}` | Status |
 | `subscriptions.remove` | `{"name"}` | `{}` |
-| `rules.add` | `{"type","value","target"}` | `{"rules":[Rule]}` |
-| `rules.remove` | `{"index"}`, 1-based among the owner's rules | `{"rules":[Rule]}` |
 
 Autostart and repair are gone by design: the service starts at boot and restores the last
 on/off state, and as a root service it has no permissions to repair. The field-level shapes are
@@ -132,9 +169,10 @@ the Go types in `internal/protocol`. Status is:
 ```
 
 `state` is `stopped`, `starting`, `on` or `degraded`; `detail` says why a start failed. A new
-`started_at` is a new runtime, and anything read from the previous one is stale. `settings.set`
+`started_at` is a new runtime, and anything read from the previous one is stale. `settings.apply`
 on a running proxy applies the change to the core first; if the core refuses it, nothing changes.
-While the proxy is stopped, `rules.list` returns the owner's rules only.
+`rules.list` always includes every saved user rule, even when its target is unavailable, so
+indices remain stable for removal. While stopped it returns only those user rules.
 `tun_bypass` is the address space TUN routes around: loopback, private, CGNAT, link-local,
 documentation and multicast ranges. With `tailnet_proxy` the tailnet leaves it, all but
 Tailscale's MagicDNS address.
@@ -198,6 +236,7 @@ omihomo start | stop
 omihomo set mode <rule|global|direct>
 omihomo set tun|tun-redirect|tailscale|tailnet-proxy <on|off>
 omihomo set group <name>
+omihomo apply
 omihomo sub list | add | update <name> | activate <name> | remove <name>
 omihomo rule list | add <type> <value> <target> | remove <index>
 omihomo group list | select <group> <proxy> | test <group> [proxy...]
@@ -209,7 +248,7 @@ sudo /usr/bin/omihomo claim
 omihomo daemon [--core mihomo|fake] [--home DIR] [--state DIR] [--socket PATH] [--owner-file PATH]
 ```
 
-Each command is one call. The result is one JSON line on stdout, indented with `--pretty`; a call
+Commands print their result as one JSON line on stdout, indented with `--pretty`; a call
 with nothing to say prints nothing. Flags go before a command's arguments (`omihomo set tun
 --pretty on`), and `--` ends them, so a name that starts with a dash can still be passed. `-h` on
 any command prints its usage and exits 0. `sub add` reads the URL from stdin so its token never appears

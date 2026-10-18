@@ -148,6 +148,15 @@ func callErr(t *testing.T, c *client.Client, op string, args any) *protocol.Erro
 	return perr
 }
 
+// owned is settings.apply's args for s, in rule mode unless s names one, and
+// rules.
+func owned(s protocol.Settings, rules ...protocol.UserRule) protocol.ApplyArgs {
+	if s.Mode == "" {
+		s.Mode = protocol.ModeRule
+	}
+	return protocol.ApplyArgs{Settings: s, Rules: rules}
+}
+
 func next(t *testing.T, c *client.Client, stream string) json.RawMessage {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
@@ -165,9 +174,6 @@ func next(t *testing.T, c *client.Client, stream string) json.RawMessage {
 		}
 	}
 }
-
-//go:fix inline
-func ptr[T any](v T) *T { return new(v) }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
@@ -268,7 +274,7 @@ func TestSettings(t *testing.T) {
 	h := serve(t, os.Getuid())
 	c := h.dial(t)
 
-	st := call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Mode: new("global"), TUN: new(true)})
+	st := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Mode: "global", TUN: true}))
 	if st.Mode != "global" || !st.TUN {
 		t.Fatalf("stopped settings: %+v", st)
 	}
@@ -277,31 +283,36 @@ func TestSettings(t *testing.T) {
 		t.Fatalf("core started on %+v", cfg)
 	}
 
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUNRedirect: new(true), PrimaryGroup: new("Proxy")})
-	if cfg, _ := h.core.Config(); !cfg.TUNRedirect || cfg.Mode != "global" {
+	live := owned(protocol.Settings{Mode: "global", TUN: true, TUNRedirect: true, PrimaryGroup: "Proxy"})
+	call[protocol.Status](t, c, protocol.OpApply, live)
+	if cfg, _ := h.core.Config(); !cfg.TUNRedirect || cfg.Mode != "global" || cfg.PrimaryGroup != "Proxy" {
 		t.Fatalf("live change applied %+v", cfg)
 	}
 
-	for name, args := range map[string]protocol.SettingsArgs{
-		"mode":  {Mode: new("tunnel")},
-		"group": {PrimaryGroup: new("bad\nname")},
+	for name, args := range map[string]protocol.ApplyArgs{
+		"no mode": {},
+		"mode":    owned(protocol.Settings{Mode: "tunnel"}),
+		"group":   owned(protocol.Settings{PrimaryGroup: "bad\nname"}),
 	} {
-		if err := callErr(t, c, protocol.OpSetSettings, args); err.Code != protocol.CodeInvalid {
+		if err := callErr(t, c, protocol.OpApply, args); err.Code != protocol.CodeInvalid {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{PrimaryGroup: new("Auto")}); err.Code != protocol.CodeNotFound {
-		t.Errorf("a group that cannot be selected became primary: %v", err)
+	if err := callErr(t, c, protocol.OpApply, json.RawMessage(`{"settings":{"mode":"rule","autostart":true}}`)); err.Code != protocol.CodeBadRequest {
+		t.Errorf("an unknown setting = %v", err)
 	}
 
 	// A change the core refuses changes nothing.
 	h.core.FailApply(errors.New("bad config"))
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{Mode: new("direct")}); err.Code != protocol.CodeCore {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{Mode: "direct"})); err.Code != protocol.CodeCore {
 		t.Fatalf("refused apply = %v", err)
 	}
 	if st := call[protocol.Status](t, c, protocol.OpStatus, nil); st.Mode != "global" {
 		t.Fatalf("mode after a refused change = %q", st.Mode)
 	}
+
+	// Applying what already runs leaves the core alone, refusing or not.
+	call[protocol.Status](t, c, protocol.OpApply, live)
 }
 
 func TestAChangeThatCannotBeSavedDoesNotRun(t *testing.T) {
@@ -316,7 +327,7 @@ func TestAChangeThatCannotBeSavedDoesNotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(h.stateDir, 0o700) })
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: new(true)}); err.Code != protocol.CodeInternal {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{TUN: true})); err.Code != protocol.CodeInternal {
 		t.Fatalf("unsaved change = %v", err)
 	}
 	if cfg, running := h.core.Config(); !running || cfg.TUN {
@@ -324,13 +335,20 @@ func TestAChangeThatCannotBeSavedDoesNotRun(t *testing.T) {
 	}
 }
 
-func TestTailscaleNeedsTailscaled(t *testing.T) {
-	h := serve(t, os.Getuid(), daemon.WithTailscaleProbe(func() bool { return false }))
+func TestTailscaleNeedsTailscaledToTurnOn(t *testing.T) {
+	var present atomic.Bool
+	h := serve(t, os.Getuid(), daemon.WithTailscaleProbe(present.Load))
 	c := h.dial(t)
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(true)}); err.Code != protocol.CodeConflict {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true})); err.Code != protocol.CodeConflict {
 		t.Fatalf("tailscale on = %v", err)
 	}
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(false)})
+	present.Store(true)
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true}))
+
+	// Settings that keep it on still apply once tailscaled is gone.
+	present.Store(false)
+	rule := protocol.UserRule{Type: "DOMAIN", Value: "a.example", Target: "DIRECT"}
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true}, rule))
 }
 
 func TestGroups(t *testing.T) {
@@ -502,8 +520,8 @@ func TestMalformedRequests(t *testing.T) {
 		{`{"id":73,"op":"status","extra":true}`, 73},
 		{`{"extra":true,"id":74,"op":"status"}`, 74},
 		{`{"id":75,"op":5}`, 75},
-		{`{"id":2,"op":"settings.set","args":{"x":1}}`, 2},
-		{`{"id":3,"op":"settings.set","args":[]}`, 3},
+		{`{"id":2,"op":"settings.apply","args":{"x":1}}`, 2},
+		{`{"id":3,"op":"settings.apply","args":[]}`, 3},
 		{`{"id":4,"op":"status","args":{"verbose":1}}`, 4},
 	} {
 		fmt.Fprintln(conn, tc.line)
@@ -649,7 +667,7 @@ func TestTheCoreRunsTheProfileAndSettings(t *testing.T) {
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{PrimaryGroup: new("Proxy")})
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{PrimaryGroup: "Proxy"}))
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	cfg, _ := h.core.Config()
 	if len(cfg.Profile.Proxies) != 2 || cfg.Profile.Proxies[0].Name != "Tokyo" || cfg.PrimaryGroup != "Proxy" {
@@ -674,7 +692,7 @@ func TestStatusShowsWhatTUNBypasses(t *testing.T) {
 	}
 
 	// Proxying the tailnet sends it into TUN, all but MagicDNS.
-	st = call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{TailnetProxy: new(true)})
+	st = call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{TailnetProxy: true}))
 	if slices.Contains(st.TUNBypass, "100.64.0.0/10") || !slices.Contains(st.TUNBypass, "100.100.100.100/32") {
 		t.Fatalf("bypass with the tailnet proxied = %v", st.TUNBypass)
 	}
@@ -709,7 +727,7 @@ func TestACoreThatStopsOnAFailedChangeIsShownStopped(t *testing.T) {
 	c := h.dial(t)
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	h.core.FailApply(fmt.Errorf("TUN did not start; the previous config did not come back either: %w", core.ErrStopped))
-	if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{TUN: new(true)}); err.Code != protocol.CodeCore {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{TUN: true})); err.Code != protocol.CodeCore {
 		t.Fatalf("failed change = %v", err)
 	}
 	st := call[protocol.Status](t, c, protocol.OpStatus, nil)
@@ -719,9 +737,11 @@ func TestACoreThatStopsOnAFailedChangeIsShownStopped(t *testing.T) {
 }
 
 func TestTailscaleSettingAppliesHostIntegrationAndRejectsFailure(t *testing.T) {
-	var enabled []bool
-	var reject atomic.Bool
-	var mu sync.Mutex
+	var (
+		enabled []bool
+		reject  atomic.Bool
+		mu      sync.Mutex
+	)
 	h := serve(t, os.Getuid(), daemon.WithTailscaleSync(func(_ context.Context, on bool) error {
 		mu.Lock()
 		enabled = append(enabled, on)
@@ -734,7 +754,7 @@ func TestTailscaleSettingAppliesHostIntegrationAndRejectsFailure(t *testing.T) {
 	c := h.dial(t)
 	defer c.Close()
 	reject.Store(true)
-	err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(true)})
+	err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true}))
 	if err.Code != protocol.CodeCore {
 		t.Fatalf("error: %v", err)
 	}
@@ -743,8 +763,8 @@ func TestTailscaleSettingAppliesHostIntegrationAndRejectsFailure(t *testing.T) {
 		t.Fatal("failed host change persisted")
 	}
 	reject.Store(false)
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(true)})
-	call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(false)})
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true}))
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{}))
 	mu.Lock()
 	defer mu.Unlock()
 	if !slices.Equal(enabled[len(enabled)-2:], []bool{true, false}) {
@@ -764,14 +784,14 @@ func TestUnsavedTailscaleChangeKeepsHostAndCoreTogether(t *testing.T) {
 			c := h.dial(t)
 			call[protocol.Status](t, c, protocol.OpStart, nil)
 			if tc.initial {
-				call[protocol.Status](t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(true)})
+				call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true}))
 			}
 			if err := os.Chmod(h.stateDir, 0o500); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { os.Chmod(h.stateDir, 0o700) })
 			engine.refuse.Store(tc.refuseRollback)
-			if err := callErr(t, c, protocol.OpSetSettings, protocol.SettingsArgs{Tailscale: new(!tc.initial)}); err.Code != protocol.CodeInternal {
+			if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: !tc.initial})); err.Code != protocol.CodeInternal {
 				t.Fatalf("unsaved change: %v", err)
 			}
 			expected := tc.initial

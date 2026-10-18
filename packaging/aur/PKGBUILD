@@ -25,6 +25,8 @@ package() {
   install -Dm755 omihomo "$pkgdir/usr/bin/omihomo"
   install -Dm644 omihomo.service "$pkgdir/usr/lib/systemd/system/omihomo.service"
   install -Dm644 omihomo.socket "$pkgdir/usr/lib/systemd/system/omihomo.socket"
+  install -Dm644 omihomo-apply.path "$pkgdir/usr/lib/systemd/user/omihomo-apply.path"
+  install -Dm644 omihomo-apply.service "$pkgdir/usr/lib/systemd/user/omihomo-apply.service"
   install -Dm644 omihomo.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/omihomo.conf"
   install -Dm644 THIRD_PARTY_LICENSES "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_LICENSES"
 }

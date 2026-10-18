@@ -20,6 +20,7 @@ import (
 
 	"github.com/readeem/omihomo/internal/fetch"
 	"github.com/readeem/omihomo/internal/profile"
+	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/state"
 )
 
@@ -33,7 +34,9 @@ type record struct {
 
 // Import is a validated replacement of an empty daemon state directory.
 type Import struct {
-	Dir       string
+	Dir string
+	// Settings are what was imported, as the daemon will run them.
+	Settings  state.Settings
 	target    string
 	backup    string
 	installed bool
@@ -172,6 +175,7 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 			return nil, err
 		}
 	}
+	staged.Settings = settings
 	ok = true
 	keepLock = true
 	return staged, nil
@@ -336,8 +340,10 @@ func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, link
 		if p.Kind == profile.RuleProvider {
 			def = doc.Rules[p.Name]
 		}
-		var data []byte
-		var readErr error
+		var (
+			data    []byte
+			readErr error
+		)
 		if def.Path != "" && filepath.IsLocal(def.Path) {
 			data, readErr = read(root, def.Path, *left)
 		} else {
@@ -427,7 +433,7 @@ func readSettings(root *os.Root) (state.Settings, error) {
 		if (r.Type == "DOMAIN-SUFFIX" || r.Type == "DOMAIN-KEYWORD") && strings.ContainsAny(r.Value, " /\\") {
 			return s, errors.New("old rule has an invalid domain value")
 		}
-		s.Rules = append(s.Rules, state.Rule{Type: r.Type, Value: r.Value, Target: r.Target})
+		s.Rules = append(s.Rules, protocol.UserRule{Type: r.Type, Value: r.Value, Target: r.Target})
 	}
 	if len(s.Rules) > 1000 {
 		return s, errors.New("old override has too many user rules")

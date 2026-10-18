@@ -14,8 +14,10 @@ func UID(conn *net.UnixConn) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var cred *syscall.Ucred
-	var credErr error
+	var (
+		cred    *syscall.Ucred
+		credErr error
+	)
 	if err := raw.Control(func(fd uintptr) {
 		cred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
 	}); err != nil {

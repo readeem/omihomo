@@ -19,7 +19,16 @@ fields are ignored. It then removes the old user services, privilege hooks and C
 and clears privileges on the old mihomo binary. A failed cutover attempts to restore the old runtime.
 
 Original data stays in the old data directory for recovery; the daemon uses `/var/lib/omihomo`.
-Existing daemon settings and subscriptions are never overwritten. After checking connectivity
+Imported settings and rules are also written to the owner's `settings.json` and `rules.json`.
+If either file already exists, both are preserved and applied instead of the imported settings.
+Existing daemon settings and subscriptions are never overwritten by the import.
+Enable automatic applies after the claim:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now omihomo-apply.path omihomo-apply.service
+```
+ After checking connectivity
 and imported settings, remove `mihomo-bin` or `mihomo` if nothing else needs it. A successful
 cutover has no automatic undo; returning to the old version requires reinstalling its integration.
 

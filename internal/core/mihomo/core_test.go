@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	C "github.com/metacubex/mihomo/constant"
-	T "github.com/metacubex/mihomo/tunnel"
+	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core"
@@ -369,7 +369,7 @@ func TestARejectedConfigNeverRoutes(t *testing.T) {
 				return
 			default:
 			}
-			if m := T.Mode(); m != T.Rule {
+			if m := tunnel.Mode(); m != tunnel.Rule {
 				leaked <- m.String()
 				return
 			}
@@ -385,7 +385,7 @@ func TestARejectedConfigNeverRoutes(t *testing.T) {
 		t.Fatalf("the engine ran in %s mode while a rejected config parsed", m)
 	default:
 	}
-	if m := T.Mode(); m != T.Rule {
+	if m := tunnel.Mode(); m != tunnel.Rule {
 		t.Errorf("mode after the failure = %s", m)
 	}
 }
@@ -408,8 +408,10 @@ func TestATakenPortFailsTheApply(t *testing.T) {
 			c := running(t, testConfig())
 			c.Stop(t.Context())
 			addr := fmt.Sprintf("127.0.0.1:%d", mixedPort)
-			var taken io.Closer
-			var err error
+			var (
+				taken io.Closer
+				err   error
+			)
 			if network == "tcp" {
 				taken, err = net.Listen("tcp", addr)
 			} else {
@@ -623,8 +625,8 @@ func TestAnIPv4FlowFindsItsDualStackUDPSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &C.Metadata{
-		NetWork: C.UDP,
+	m := &constant.Metadata{
+		NetWork: constant.UDP,
 		SrcIP:   netip.MustParseAddr("198.18.0.1"),
 		SrcPort: uint16(sock.LocalAddr().(*net.UDPAddr).Port),
 	}
