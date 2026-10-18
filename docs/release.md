@@ -141,6 +141,9 @@ security review. CI signs metadata, uploads all assets to a draft, publishes onl
 succeeds, then fast-forwards `release` to the tag. Installed widgets find the release at their
 next check. AUR runs afterward only when enabled.
 
+If CI fails before you approve, nothing is published: fix it on `next`, delete the tag with
+`git push origin :refs/tags/v1.2.3` and `git tag -d v1.2.3`, and run the helper again.
+
 Published assets are immutable in this workflow: reruns compare bytes and fail on differences.
 Arch's rolling build environment can change package build metadata; prefer rerunning only
 failed jobs. Never replace a published package or signature with different bytes. Release

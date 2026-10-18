@@ -87,7 +87,7 @@ The **configs view** is the browsed group as chips, the primary one marked with 
 configs in one list with a latency pill and a test button each. A leading flag or emoji is drawn in a slot
 of its own two cells wide, because Qt sometimes lays a colour emoji out narrower once the popup has
 reopened, which glued it to the name. Emoji trailing a name follow it. Every emoji in a name is an
-image pango renders once into `~/.cache/omihomo/emoji`, not a font glyph: Qt 6.11 draws colour glyphs
+image `pango-view` renders once into `$XDG_CACHE_HOME/omihomo/emoji`, not a font glyph: Qt 6.11 draws colour glyphs
 on the popup's first open and blank on every reopen after it. Until an emoji's image exists, its glyph
 stands in. The chosen config's row fades
 from the accent colour, and a choice still waiting for the core fades more faintly. A pill takes

@@ -46,8 +46,8 @@ QtObject {
       file=$dir/$1.png
       if [[ ! -s $file ]]; then
         pango-view --no-display --font="emoji 48" --background=transparent --margin=0 \\
-          --text="$2" -o "$file.part.png" >/dev/null 2>&1 && mv -f -- "$file.part.png" "$file"
-        rm -f -- "$file.part.png"
+          --text="$2" -o "$file.$$.png" >/dev/null 2>&1 && mv -f -- "$file.$$.png" "$file"
+        rm -f -- "$file.$$.png"
       fi
       [[ -s $file ]] && printf "%s\\n" "$1"
       shift 2

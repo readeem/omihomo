@@ -63,6 +63,10 @@ git merge-base --is-ancestor origin/release HEAD || fail "next does not descend 
 [[ -z $(git ls-remote --tags origin "refs/tags/$tag") ]] || fail "$tag already exists"
 current=$(jq -r .version manifest.json)
 (( $(vercmp "$version" "$current") >= 0 )) || fail "$version is older than manifest.json's $current"
+# A failed push leaves next and the tags as they were, so a rerun starts clean.
+start=$(git rev-parse HEAD)
+pushed=false
+trap '$pushed || { git tag -d "$tag" >/dev/null 2>&1; git reset --quiet --hard "$start"; }' EXIT
 if [[ $version != "$current" ]]; then
   jq --arg version "$version" '.version = $version' manifest.json > manifest.json.new
   mv manifest.json.new manifest.json
@@ -70,5 +74,6 @@ if [[ $version != "$current" ]]; then
 fi
 git tag -a "$tag" -m "$tag"
 git push --atomic origin HEAD:refs/heads/next "refs/tags/$tag"
+pushed=true
 printf 'Pushed %s. Approve the deployment once CI passes: gh run watch\n' "$tag"
 '''
