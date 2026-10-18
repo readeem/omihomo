@@ -59,9 +59,10 @@ omarchy restart shell
 ```
 
 Use the widget's **Install core** action to install the signed GitHub release and claim it
-in a terminal. Settings checks for new releases and offers an **update** action; installation
-and updates require normal authentication and pacman confirmation. The daemon embeds mihomo.
-The widget itself updates through Omarchy. AUR publication is an optional second channel.
+in a terminal. Settings checks for new releases and offers an **update** action, which updates
+the widget through Omarchy and then the core package; installation and updates require normal
+authentication and pacman confirmation. The daemon embeds mihomo, so updating the core updates
+mihomo. AUR publication is an optional second channel.
 
 ## Usage
 

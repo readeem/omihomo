@@ -20,6 +20,7 @@ jobs:
     outputs:
       version: ${{ steps.build.outputs.version }}
       sha256: ${{ steps.build.outputs.sha256 }}
+      epoch: ${{ steps.build.outputs.epoch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,12 +52,14 @@ jobs:
           go mod vendor -o dist/vendor
           (cd dist && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
             LC_ALL=C sort | while read -r f; do printf '==> %s <==\n' "${f#vendor/}"; cat "$f"; echo; done) > "$stage/THIRD_PARTY_LICENSES"
-          pack() { tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --numeric-owner -C dist -cf - "$1" | gzip -n > "dist/$2"; }
+          epoch=$(git log -1 --format=%ct)
+          pack() { tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner -C dist -cf - "$1" | gzip -n > "dist/$2"; }
           pack "$name" "$name-x86_64.tar.gz"
           pack vendor "$name-vendor.tar.gz"
           rm -r "$stage" dist/vendor
           (cd dist && for f in "$name-x86_64.tar.gz" "$name-vendor.tar.gz" "omihomo-update-$version-x86_64"; do sha256sum "$f" > "$f.sha256"; done)
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "epoch=$epoch" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cut -d' ' -f1 "dist/$name-x86_64.tar.gz.sha256")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -72,6 +75,7 @@ jobs:
     env:
       VERSION: ${{ needs.build.outputs.version }}
       SHA256: ${{ needs.build.outputs.sha256 }}
+      SOURCE_DATE_EPOCH: ${{ needs.build.outputs.epoch }}
     steps:
       - name: install tools
         run: pacman -Syu --noconfirm --needed base-devel namcap
@@ -99,9 +103,7 @@ jobs:
           runuser -u builder -- sh -c 'cd aur && makepkg --printsrcinfo > .SRCINFO'
       - name: build the package
         run: |
-          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          export SOURCE_DATE_EPOCH
-          runuser -u builder -- sh -c 'cd build && makepkg --nodeps'
+          runuser -u builder -- env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" sh -c 'cd build && makepkg --nodeps'
           namcap aur/PKGBUILD build/omihomo-bin-*.pkg.tar.zst
           package="omihomo-bin-$VERSION-1-x86_64.pkg.tar.zst"
           cp "build/$package" dist/

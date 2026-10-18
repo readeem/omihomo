@@ -18,9 +18,12 @@ ShellRoot {
     { command: "url", error: "Invalid update check response", retain: true },
     { command: "type", error: "Invalid update check response", retain: true },
     { command: "downgrade", error: "Invalid update check response", retain: true },
+    { command: "stale", error: "Invalid update check response", retain: true },
+    { command: "plugin", error: "Invalid update check response", retain: true },
     { command: "nonzero", error: "Update check failed", retain: true },
     { command: "oversized", error: "Update check response is too large", retain: true },
     { command: "revision", installed: "1.0.1-1", available: "1.0.1-2", update: true },
+    { command: "widget", installed: "1.0.1-1", available: "1.0.1-1", update: true },
     { command: "equal", installed: "1.0.1-2", available: "1.0.1-2", update: false },
     { command: "absent", installed: "", available: "1.0.1-1", update: false },
     { command: "hang", error: "Update check timed out" }

@@ -38,8 +38,8 @@ why, and the command that fixes it, run in a terminal since it asks for a passwo
 | Situation | Card | Command |
 | --- | --- | --- |
 | No daemon answers on the socket | Install core | `bin/omihomo-install install` |
-| The daemon speaks an older protocol | Update core | `bin/omihomo-install update` |
-| The daemon speaks a newer protocol | Update the Omarchy plugin | No daemon update action |
+| The daemon speaks an older protocol | Update | `bin/omihomo-install update` |
+| The daemon speaks a newer protocol | Update widget | `bin/omihomo-install update` |
 | The daemon refuses this account, or the socket is not this account's | Claim core | `sudo /usr/bin/omihomo claim` |
 
 The panel tries again with a backoff, every 5 seconds while no daemon answers, and at once when
@@ -151,8 +151,12 @@ hands `sudo pacman -R omihomo-bin` to `omarchy-launch-floating-terminal-with-pre
 arms on the first activation and only runs on the second; Esc or moving the cursor off the button
 cancels. Subscriptions and settings stay in `/var/lib/omihomo`.
 
-Settings shows the installed package and latest release, with check, update, and release notes
-controls. Update is offered only after a successful check confirms a newer package. Checks run
+Settings shows the installed package, the widget's version and the latest release, with check,
+update, and release notes controls. Update is offered only after a successful check confirms a
+newer package or a widget older than the release. Update moves the widget first, through
+`omarchy plugin update`, then runs the updated checkout's installer for the package, so the
+widget and the core move together. A checkout Omarchy does not manage, such as a linked
+development checkout, is left alone. Checks run
 as the normal user through `bin/omihomo-install check`; install and update run in the existing
 floating terminal so authentication remains interactive. Only a locally validated HTTPS release
 URL under the fixed project repository can open externally. Remote text never becomes a command.
@@ -281,7 +285,7 @@ layer-shell popup as the screenshots do.
 
 The fake installer, `tools/screenshots/omihomo-install`, keeps its package version in a file.
 With `--no-core`, Install core installs 1.0.0-1 and starts the fake daemon; release 1.1.0-1 then
-appears, and Update in Settings moves to it. Nothing is downloaded. Of the commands the panel hands
+appears, and Update in Settings moves the package and the widget's version to it. Nothing is downloaded. Of the commands the panel hands
 to the terminal, only those two run, without a shell; the rest, such as uninstall's `sudo`, are only
 logged, so `drive log` shows what would have run.
 

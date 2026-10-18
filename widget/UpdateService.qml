@@ -7,6 +7,7 @@ Item {
   property string commandPath: decodeURIComponent(String(Qt.resolvedUrl("../bin/omihomo-install")).replace(/^file:\/\//, ""))
   readonly property string installedVersion: _result.installed || ""
   readonly property string availableVersion: _result.available || ""
+  readonly property string pluginVersion: _result.plugin || ""
   readonly property bool updateAvailable: _result.update_available === true
   readonly property string releaseUrl: _result.release_url || ""
   readonly property bool checking: _checking
@@ -44,8 +45,15 @@ Item {
   }
 
   function versionParts(version) {
-    if (typeof version !== "string" || !/^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})-([1-9][0-9]{0,8})$/.test(version)) return null
+    if (typeof version !== "string" || !/^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(-[1-9][0-9]{0,8})?$/.test(version)) return null
     return version.split(/[.-]/).map(Number)
+  }
+
+  function newer(available, installed) {
+    for (var i = 0; i < available.length; i++) {
+      if (available[i] !== installed[i]) return available[i] > installed[i]
+    }
+    return false
   }
 
   function receive(text, exitCode, exitStatus) {
@@ -59,18 +67,15 @@ Item {
     if (exitCode !== 0 || exitStatus !== 0) return finish("Update check failed")
     var available = versionParts(result.available)
     var installed = result.installed === "" ? [] : versionParts(result.installed)
-    if (!available || !installed || typeof result.update_available !== "boolean"
+    var plugin = versionParts(result.plugin)
+    if (!available || available.length !== 4 || !installed || (installed.length !== 0 && installed.length !== 4)
+        || !plugin || plugin.length !== 3 || typeof result.update_available !== "boolean"
         || result.release_url !== "https://github.com/readeem/omihomo/releases/tag/v" + result.available.split("-")[0])
       return finish("Invalid update check response")
-    var newer = false
-    for (var i = 0; installed.length > 0 && i < available.length; i++) {
-      if (available[i] === installed[i]) continue
-      newer = available[i] > installed[i]
-      break
-    }
-    if (result.update_available && installed.length > 0 && !newer) return finish("Invalid update check response")
-    _result = { installed: result.installed, available: result.available,
-      update_available: result.update_available && newer, release_url: result.release_url }
+    var stale = installed.length > 0 && (newer(available, installed) || newer(available.slice(0, 3), plugin))
+    if (result.update_available !== stale) return finish("Invalid update check response")
+    _result = { installed: result.installed, available: result.available, plugin: result.plugin,
+      update_available: stale, release_url: result.release_url }
     finish("")
   }
 

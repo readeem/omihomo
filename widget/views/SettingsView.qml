@@ -196,8 +196,9 @@ Flickable {
           title: "Check for updates"
           keyHint: "u"
           subtitle: view.updater.error !== "" ? "▲ " + view.updater.error
-            : (view.checked ? (view.updater.installedVersion !== "" ? "installed " + view.updater.installedVersion : "core not installed")
-              + " · latest " + view.updater.availableVersion
+            : (view.checked ? (view.updater.installedVersion !== "" ? "core " + view.updater.installedVersion : "core not installed")
+              + (view.updater.pluginVersion !== view.updater.availableVersion.split("-")[0]
+                ? " · widget " + view.updater.pluginVersion : "") + " · latest " + view.updater.availableVersion
               : (view.updater.checking ? "asking GitHub for the latest release" : "not checked yet"))
           urgentSubtitle: view.updater.error !== ""
           tag: view.updater.checking ? "checking…"
@@ -214,11 +215,11 @@ Flickable {
           section: "update"
           title: "Update to " + view.updater.availableVersion
           keyHint: "U"
-          subtitle: "asks for your password in a terminal"
+          subtitle: "widget and core, in a terminal"
           tag: "update…"
           tagTint: view.theme.accent
           tagFilled: true
-          onActivated: view.panel.updateCore()
+          onActivated: view.panel.updateOmihomo()
         }
 
         SettingRow {

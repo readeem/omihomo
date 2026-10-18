@@ -55,13 +55,16 @@ Panel {
       button: "Install core", tag: "install…", hint: "asks for your password in a terminal",
       command: Util.shellQuote(installerPath) + " install" }
     case "outdated": return { section: "UPDATE REQUIRED", title: "Core is older than this widget",
-      text: "The installed core speaks an older protocol, so this panel cannot use it until it is updated. Updating it:",
-      steps: ["verifies the latest signed release on GitHub", "updates the omihomo-bin package"],
-      button: "Update core", tag: "update…", hint: "asks for your password in a terminal",
+      text: "The installed core speaks an older protocol, so this panel cannot use it until it is updated. Updating:",
+      steps: ["updates this widget through Omarchy", "verifies the latest signed release on GitHub",
+        "updates the omihomo-bin package"],
+      button: "Update", tag: "update…", hint: "asks for your password in a terminal",
       command: Util.shellQuote(installerPath) + " update" }
     case "newer": return { section: "UPDATE REQUIRED", title: "Widget is older than the core",
-      text: "The installed core speaks a newer protocol. Update the Omihomo plugin to use it.",
-      steps: [], button: "", tag: "", hint: "", command: "" }
+      text: "The installed core speaks a newer protocol, so this widget cannot use it until it is updated. Updating:",
+      steps: ["updates this widget through Omarchy", "updates the core too if a newer release is out"],
+      button: "Update widget", tag: "update…", hint: "runs in a terminal",
+      command: Util.shellQuote(installerPath) + " update" }
     case "refused": return { section: "OWNERSHIP", title: "Core owned by another account",
       text: "Only the account that claimed the core can control it. Claiming it moves control to this account.",
       steps: [], button: "Claim core", tag: "claim…", hint: "runs sudo /usr/bin/omihomo claim in a terminal",
@@ -303,7 +306,7 @@ Panel {
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
     case "checkUpdates": checkUpdates(); break
-    case "update": updateCore(); break
+    case "update": updateOmihomo(); break
     case "releaseNotes": openReleaseNotes(); break
     case "uninstall": uninstallCore(); break
     }
@@ -361,7 +364,7 @@ Panel {
       else if (key === "T") omihomo.toggleTailscale()
       else if (key === "P") omihomo.toggleTailnetProxy()
       else if (key === "u") checkUpdates()
-      else if (key === "U") updateCore()
+      else if (key === "U") updateOmihomo()
     }
   }
 
@@ -541,7 +544,7 @@ Panel {
     updater.check()
   }
 
-  function updateCore() {
+  function updateOmihomo() {
     if (!bar || !updater.updateAvailable) return
     bar.run("omarchy-launch-floating-terminal-with-presentation "
       + Util.shellQuote(Util.shellQuote(installerPath) + " update"))

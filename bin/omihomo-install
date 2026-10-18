@@ -77,20 +77,23 @@ bootstrap() (
     return 1
   fi
   if [[ $mode == check ]]; then
-    local newer=true
-    if [[ -n $installed && $(vercmp "$version-$pkgrel" "$installed") -le 0 ]]; then newer=false; fi
-    printf '{"installed":"%s","available":"%s-%s","update_available":%s,"release_url":"%s/releases/tag/v%s"}\n' \
-      "$installed" "$version" "$pkgrel" "$newer" "$repository" "$version"
+    local newer=false
+    if [[ -n $installed && ( $(vercmp "$version-$pkgrel" "$installed") -gt 0 || $(vercmp "$version" "$minimum") -gt 0 ) ]]; then
+      newer=true
+    fi
+    printf '{"installed":"%s","available":"%s-%s","plugin":"%s","update_available":%s,"release_url":"%s/releases/tag/v%s"}\n' \
+      "$installed" "$version" "$pkgrel" "$minimum" "$newer" "$repository" "$version"
     return 0
   fi
   [[ $(vercmp "$version" "$minimum") -ge 0 ]] || { printf 'Release is older than this plugin.\n' >&2; return 1; }
   if [[ $mode == update ]]; then
-    [[ -n $installed && $(vercmp "$version-$pkgrel" "$installed") -gt 0 ]] || {
-      printf 'Refusing an absent package, reinstall, or downgrade.\n' >&2
-      return 1
-    }
+    [[ -n $installed ]] || { printf 'Core is not installed. Choose Install core.\n' >&2; return 1; }
+    if [[ $(vercmp "$version-$pkgrel" "$installed") -le 0 ]]; then
+      printf 'Core %s is up to date.\n' "$installed"
+      return 0
+    fi
   else
-    [[ -z $installed ]] || { printf 'Package already installed. Choose Update core.\n' >&2; return 1; }
+    [[ -z $installed ]] || { printf 'Package already installed. Choose Update.\n' >&2; return 1; }
   fi
   fetch "$repository/releases/download/v$version/omihomo-update-$version-x86_64" "$work/installer" "$installer_size" || return 1
   [[ $(stat -c %s "$work/installer") == "$installer_size" \
@@ -103,22 +106,50 @@ bootstrap() (
 )
 
 mode=${1:-install}
-[[ $# -le 1 && ( $mode == check || $mode == install || $mode == update ) ]] || {
+[[ $# -le 1 && ( $mode == check || $mode == install || $mode == update || $mode == update-core ) ]] || {
   printf 'Usage: omihomo-install [check|install|update]\n' >&2
   exit 2
 }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { printf 'GitHub packages require Linux x86_64.\n' >&2; exit 1; }
-project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+project_root=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# The widget goes first, through Omarchy, so the core is then verified with the
+# updated checkout's key and installer. A linked development checkout is left alone.
+if [[ $mode == update ]]; then
+  plugins=$(cd -P "$HOME/.config/omarchy/plugins" 2>/dev/null && pwd) || plugins=''
+  if [[ -n $plugins && $project_root == "$plugins/dev.readeem.omihomo" ]]; then
+    omarchy plugin update dev.readeem.omihomo
+    # Omarchy reports a declined update as success; a new core would then strand the old widget.
+    [[ $(git -C "$project_root" rev-parse HEAD) == "$(git -C "$project_root" rev-parse FETCH_HEAD)" ]] || {
+      printf 'The widget was not updated, so the core is left alone.\n' >&2
+      exit 1
+    }
+  else
+    printf 'Skipping the widget: Omarchy does not manage this checkout.\n'
+  fi
+  exec "$project_root/bin/omihomo-install" update-core
+fi
+
 public_key=$(cat "$project_root/internal/update/release.pub")
 minimum=$(sed -n 's/^  "version": "\([0-9.]*\)",$/\1/p' "$project_root/manifest.json")
 [[ $minimum =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
 
-if [[ $mode == check ]]; then
-  if ! bootstrap check "$public_key" "$minimum"; then
-    printf '{"error":"Could not verify the latest release. Check connectivity and try again."}\n'
+if [[ $mode == check || $mode == update-core ]]; then
+  status=$(bootstrap check "$public_key" "$minimum") || {
+    [[ $mode == update-core ]] || printf '{"error":"Could not verify the latest release. Check connectivity and try again."}\n'
     exit 1
+  }
+  if [[ $mode == check ]]; then
+    printf '%s\n' "$status"
+    exit 0
   fi
-  exit 0
+  # Ask for a password only when the core has something to install.
+  [[ $status =~ ^\{\"installed\":\"([^\"]*)\",\"available\":\"([^\"]*)\" ]] || exit 1
+  if [[ -n ${BASH_REMATCH[1]} && $(vercmp "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}") -le 0 ]]; then
+    printf 'Core %s is up to date.\n' "${BASH_REMATCH[1]}"
+    exit 0
+  fi
+  mode=update
 fi
 
 # The authenticated shell receives code and a public key, never user-writable

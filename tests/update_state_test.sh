@@ -18,6 +18,7 @@ set -euo pipefail
 [[ $# == 1 && $1 == check ]] || exit 99
 installed=1.0.0-1
 available=1.0.1-1
+plugin=1.0.0
 update=true
 url=https://github.com/readeem/omihomo/releases/tag/v1.0.1
 case ${0##*/} in
@@ -27,19 +28,22 @@ case ${0##*/} in
   multiple) printf '%s\n' '{}' '{}'; exit ;;
   url) url=https://example.com/releases/tag/v1.0.1 ;;
   type) update='"true"' ;;
-  downgrade) installed=2.0.0-1 ;;
-  revision) installed=1.0.1-1; available=1.0.1-2 ;;
-  equal) installed=1.0.1-2; available=1.0.1-2; update=false ;;
-  absent) installed= ;;
+  downgrade) installed=2.0.0-1; plugin=1.0.1 ;;
+  stale) update=false ;;
+  plugin) plugin=1.0.0-1 ;;
+  revision) installed=1.0.1-1; available=1.0.1-2; plugin=1.0.1 ;;
+  widget) installed=1.0.1-1; available=1.0.1-1 ;;
+  equal) installed=1.0.1-2; available=1.0.1-2; plugin=1.0.1; update=false ;;
+  absent) installed=; update=false ;;
   oversized) printf '%9000s' x; exit ;;
   hang) read -r line < "${0%/*}/block"; exit ;;
 esac
-printf '{"installed":"%s","available":"%s","update_available":%s,"release_url":"%s"}\n' "$installed" "$available" "$update" "$url"
+printf '{"installed":"%s","available":"%s","plugin":"%s","update_available":%s,"release_url":"%s"}\n' "$installed" "$available" "$plugin" "$update" "$url"
 [[ ${0##*/} != nonzero ]]
 SCRIPT
 chmod +x "$test_root/fixtures/command"
 mkfifo "$test_root/fixtures/block"
-for fixture in 'good command' error malformed array multiple url type downgrade nonzero oversized revision equal absent hang; do
+for fixture in 'good command' error malformed array multiple url type downgrade stale plugin nonzero oversized revision widget equal absent hang; do
   ln -s command "$test_root/fixtures/$fixture"
 done
 

@@ -19,7 +19,8 @@ Run the script without `sudo`; it requests privileges for verified package insta
 then claims the daemon. If installation fails it does not claim; if claiming fails the script
 returns an error. Custom XDG directories are passed to `claim` by the installer.
 `bin/omihomo-install check` checks signed release metadata without privileges;
-`bin/omihomo-install update` installs a newer package without changing the recorded owner.
+`bin/omihomo-install update` updates the plugin through Omarchy when Omarchy manages this
+checkout, then installs a newer package without changing the recorded owner.
 The widget reads the daemon socket and saves edits through the CLI. The installer also enables
 the user settings sync units. For a manual install, run:
 
@@ -122,7 +123,7 @@ The daemon speaks first:
 ```
 
 `protocol` is bumped on any change an older peer would misread. A client that sees another value
-must not send requests; the widget shows "update core".
+must not send requests; the widget offers its update, which moves both.
 
 After the greeting the client sends requests. `id` is any positive integer the client picks and is
 echoed by the one reply each request gets. Replies can arrive out of request order, so a slow delay

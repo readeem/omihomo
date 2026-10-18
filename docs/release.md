@@ -1,8 +1,10 @@
 # Release workflow
 
 GitHub Releases distributes the `omihomo-bin` Arch package for Linux x86_64. The widget is
-an Omarchy plugin installed from git. Pacman owns the daemon and updater binaries, systemd
-units, installation hooks and removal. AUR publication is optional.
+an Omarchy plugin installed from git, from the `release` branch, which only ever points at a
+published tag ([ADR-0007](adr/0007-release-branch.md)). Development lands on `next`. Pacman owns
+the daemon and updater binaries, systemd units, installation hooks and removal. AUR publication
+is optional.
 
 ## What CI publishes
 
@@ -50,6 +52,10 @@ before installation. Pacman keeps its interactive confirmation, and network time
 kill a running package transaction. Another package manager can still change installed state
 concurrently; review pacman's transaction summary before accepting.
 
+Update first runs `omarchy plugin update` for a checkout Omarchy manages. It fetches `release`
+over HTTPS without a signature, shows the diff and asks before fast-forwarding; the new checkout
+is trusted as the original one was. Its installer, key and minimum version then verify the package.
+
 The root proxy daemon has no update operation and keeps its existing sandbox. The remaining
 trust is the plugin checkout, release signing key, reviewed CI code, and signed package content:
 a valid signed package can execute installation hooks as root. Signatures authenticate content;
@@ -84,7 +90,24 @@ GitHub can still withhold releases, so they do not prove that a newer release do
    The secret belongs only to `release`. Never put its contents in command arguments,
    workflow files, logs, issues or repository variables. No personal access token is needed:
    the publication job requests `contents: write` for `GITHUB_TOKEN`.
-5. Keep `AUR_PUBLISH` unset unless the optional AUR setup below is complete.
+5. Generate a dedicated deploy key at an unused private filename. The workflow uses it to move
+   `release`, so it needs write access, and only the `release` environment holds it:
+
+   ```sh
+   umask 077
+   ssh-keygen -t ed25519 -N '' -C 'Omihomo release branch' -f "$DEPLOY_KEY"
+   gh repo deploy-key add "$DEPLOY_KEY.pub" --allow-write --title 'release branch'
+   gh secret set OMIHOMO_RELEASE_DEPLOY_KEY --env release < "$DEPLOY_KEY"
+   ```
+
+   Delete the private file afterwards; a lost key is replaced, not recovered.
+6. Rename `main` to `release` under **Settings → Branches**; GitHub makes it the default branch,
+   retargets open pull requests and redirects the old name. Existing plugin checkouts follow,
+   since `omarchy plugin update` fetches the remote's default branch.
+7. Under **Settings → Rules → Rulesets**, give `release` a ruleset that restricts updates,
+   creations and deletions and blocks force pushes, with **Deploy keys** as the only bypass.
+   Pull requests target `next`; nobody pushes to `release` by hand.
+8. Keep `AUR_PUBLISH` unset unless the optional AUR setup below is complete.
 
 Environment reviewers and restrictions depend on the GitHub plan for private repositories;
 they are available for public repositories on current plans. See
@@ -104,16 +127,20 @@ scan, and the new authenticated installer and signing-key exposure. The release 
 binaries, dependency source, checksums and signed metadata. It adds no network listener or
 new Go dependency; bootstrap uses Arch's curl and OpenSSL tools.
 
-Merge the version and intended changes, then tag the exact commit:
+Bump `version` in `manifest.json` in a pull request to `next`, merge it once CI passes, then
+tag that commit on `next`:
 
 ```sh
+git switch next && git pull --ff-only
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-After CI passes, open the run's **Review deployments**, select `release`, and choose
-**Approve and deploy** following the security review. CI signs metadata, uploads all assets to
-a draft, and publishes only after upload succeeds. AUR runs afterward only when enabled.
+The tag must descend from `release`; CI refuses one that does not. After CI passes, open the
+run's **Review deployments**, select `release`, and choose **Approve and deploy** following the
+security review. CI signs metadata, uploads all assets to a draft, publishes only after upload
+succeeds, then fast-forwards `release` to the tag. Installed widgets find the release at their
+next check. AUR runs afterward only when enabled.
 
 Published assets are immutable in this workflow: reruns compare bytes and fail on differences.
 Arch's rolling build environment can change package build metadata; prefer rerunning only

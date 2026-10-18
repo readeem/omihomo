@@ -21,6 +21,8 @@ widget are its clients. Vocabulary is in `GLOSSARY.md`, decisions in `docs/adr/`
    `tests/README.md#manual-cutover-test`.
 2. **mihomo races with itself.** Its package runs without `-race`, and only the release build tags
    (`with_gvisor,no_easytier`) give it the gVisor stack its tests need.
+3. **`release` is what users install.** It is the default branch, but pull requests target `next`;
+   only the release workflow moves `release` (ADR-0007).
 
 ## Hit every surface
 
