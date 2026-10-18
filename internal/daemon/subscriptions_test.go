@@ -12,8 +12,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/core/fakecore"
@@ -314,6 +316,128 @@ func TestARefreshThatCannotBeSavedDoesNotRun(t *testing.T) {
 	}
 }
 
+func TestUnsavedActivationKeepsSelectionAndRuntimeTogether(t *testing.T) {
+	for _, refuseRollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rollback-refused=%t", refuseRollback), func(t *testing.T) {
+			o := newOrigin(t)
+			o.set("/a", page{header: titled("A"), body: workYAML})
+			o.set("/b", page{header: titled("B"), body: strings.ReplaceAll(workYAML, "Tokyo", "Paris")})
+			engine := &subscriptionRollbackCore{Core: fakecore.New()}
+			h := serveCore(t, os.Getuid(), engine, o.opts()...)
+			c := h.dial(t)
+			for _, path := range []string{"/a", "/b"} {
+				call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url(path)})
+			}
+			call[protocol.Status](t, c, protocol.OpStart, nil)
+			path := filepath.Join(h.stateDir, "subscriptions.json")
+			if err := os.Rename(path, path+".saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			engine.refuse.Store(refuseRollback)
+			if err := callErr(t, c, protocol.OpSubscriptionUse, protocol.NameArgs{Name: "B"}); err.Code != protocol.CodeInternal {
+				t.Fatalf("unsaved activation: %v", err)
+			}
+			wantSub, wantProxy := "A", "Tokyo"
+			if refuseRollback {
+				wantSub, wantProxy = "B", "Paris"
+			}
+			st := call[protocol.Status](t, c, protocol.OpStatus, nil)
+			cfg, running := engine.Config()
+			if !running || st.ActiveSubscription != wantSub || cfg.Profile.Proxies[0].Name != wantProxy {
+				t.Fatalf("after unsaved activation: %+v runs %+v", st, cfg.Profile)
+			}
+			engine.refuse.Store(false)
+			call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Mode: "global"}))
+			if cfg, _ := engine.Config(); cfg.Profile.Proxies[0].Name != wantProxy {
+				t.Fatalf("settings switched the runtime: %+v", cfg.Profile)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(path+".saved", path); err != nil {
+				t.Fatal(err)
+			}
+			h.restart(t)
+			c = h.dial(t)
+			call[protocol.Status](t, c, protocol.OpStart, nil)
+			if st := call[protocol.Status](t, c, protocol.OpStatus, nil); st.ActiveSubscription != "A" {
+				t.Fatalf("stored selection changed: %+v", st)
+			}
+		})
+	}
+}
+
+type subscriptionRollbackCore struct {
+	*fakecore.Core
+	refuse atomic.Bool
+}
+
+func (c *subscriptionRollbackCore) Apply(ctx context.Context, cfg core.Config) error {
+	if c.refuse.Load() && cfg.Profile.Proxies[0].Name == "Tokyo" {
+		return fmt.Errorf("cannot restore the previous subscription")
+	}
+	return c.Core.Apply(ctx, cfg)
+}
+
+func TestDuplicateLongTitlesRemainManageable(t *testing.T) {
+	for _, title := range []string{strings.Repeat("x", 64), strings.Repeat("😀", 64)} {
+		t.Run(string([]rune(title)[:1]), func(t *testing.T) {
+			o := newOrigin(t)
+			h := serve(t, os.Getuid(), o.opts()...)
+			c := h.dial(t)
+			seen := map[string]bool{}
+			for i := range 12 {
+				path := fmt.Sprintf("/%d", i)
+				o.set(path, page{header: titled(title), body: workYAML})
+				sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url(path)})
+				if seen[sub.Name] || utf8.RuneCountInString(sub.Name) > 64 || len(sub.Name) > 256 {
+					t.Errorf("unusable unique name %q", sub.Name)
+				}
+				seen[sub.Name] = true
+				call[protocol.Status](t, c, protocol.OpSubscriptionUse, protocol.NameArgs{Name: sub.Name})
+			}
+			call[protocol.Status](t, c, protocol.OpStart, nil)
+			call[protocol.Status](t, c, protocol.OpStop, nil)
+			h.clock.advance(time.Minute)
+			for name := range seen {
+				call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: name})
+				call[protocol.Empty](t, c, protocol.OpSubscriptionRemove, protocol.NameArgs{Name: name})
+			}
+		})
+	}
+}
+
+func TestRejectedRunningRefreshHoldsEveryRequest(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	h.clock.advance(time.Minute)
+	h.core.FailApply(fmt.Errorf("invalid downloaded config: %w", core.ErrInvalid))
+	name := protocol.NameArgs{Name: "127.0.0.1"}
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeRejected {
+		t.Errorf("invalid running refresh: %v", err)
+	}
+	h.core.FailApply(nil)
+	h.restart(t)
+	c = h.dial(t)
+	h.clock.advance(time.Minute)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeConflict {
+		t.Fatalf("manual refresh bypassed hold: %v", err)
+	}
+	list := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil)
+	if got := list.Subscriptions[0].NextUpdate; got != h.clock.Now().Add(12*time.Hour-time.Minute).UnixMilli() {
+		t.Fatalf("retry deadline = %d", got)
+	}
+	h.clock.advance(12*time.Hour - time.Minute)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
+}
+
 func TestAFailedRefreshKeepsWhatWorks(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{body: workYAML})
@@ -550,6 +674,10 @@ func TestOwnRules(t *testing.T) {
 	cfg, _ := h.core.Config()
 	if len(cfg.Profile.Rules) < 2 || cfg.Profile.Rules[1].Value != "10.0.0.0/8" || cfg.Profile.Rules[1].Source != protocol.SourceUser {
 		t.Fatalf("core rules %+v, want the rule for a target this subscription lacks left out", cfg.Profile.Rules)
+	}
+	list = call[protocol.RuleList](t, c, protocol.OpRules, nil)
+	if !list.Rules[1].Inactive || list.Rules[0].Inactive || list.Rules[2].Inactive {
+		t.Fatalf("unavailable targets are not marked: %+v", list.Rules)
 	}
 
 	// A change the core refuses is not kept.

@@ -120,8 +120,19 @@ func TestCommandsRunOverTheSocket(t *testing.T) {
 	}
 }
 
-// The subscription and settings commands, end to end: the daemon downloads
-// over HTTPS, keeps state, and the CLI prints what it says.
+func TestAutomaticGroupsCanBePrimary(t *testing.T) {
+	serve(t, os.Getuid())
+	if code, _, errOut := run(t, "", "start"); code != cli.ExitOK {
+		t.Fatalf("start: %d %s", code, errOut)
+	}
+	if code, out, errOut := run(t, "", "set", "group", "Auto"); code != cli.ExitOK || !strings.Contains(out, `"primary_group":"Auto"`) {
+		t.Fatalf("make automatic group primary: %d %s %s", code, out, errOut)
+	}
+	if code, _, _ := run(t, "", "group", "select", "Auto", "Tokyo"); code != cli.ExitNotFound {
+		t.Fatalf("select member of automatic group: %d", code)
+	}
+}
+
 func TestSubscriptionAndSettingsCommands(t *testing.T) {
 	var body atomic.Value
 	body.Store("proxies:\n  - {name: Tokyo, type: trojan, server: tokyo.example, port: 443, password: p}\n" +
@@ -231,8 +242,8 @@ func TestSettingsFilesHoldTheChanges(t *testing.T) {
 	if code, out, errOut := run(t, "", "rule", "remove", "1"); code != cli.ExitOK || strings.Contains(out, `"target":"Elsewhere"`) || !strings.Contains(out, `"target":"Tokyo"`) {
 		t.Fatalf("remove the first saved rule: %d %s %s", code, out, errOut)
 	}
-	if code, _, _ := run(t, "", "set", "group", "Auto"); code != cli.ExitNotFound {
-		t.Errorf("a group that cannot be selected became primary, exit %d", code)
+	if code, _, _ := run(t, "", "set", "group", "Missing"); code != cli.ExitNotFound {
+		t.Errorf("a missing group became primary, exit %d", code)
 	}
 
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"mode":"global"}`), 0o600); err != nil {

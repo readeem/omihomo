@@ -121,7 +121,7 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 	}
 	next, err := prepare(cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", core.ErrInvalid, err)
 	}
 	c.mu.Lock()
 	wasRunning, previous := c.running, c.current.cfg

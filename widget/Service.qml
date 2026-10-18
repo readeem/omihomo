@@ -24,18 +24,17 @@ Item {
   // never sent a request.
   readonly property int protocolVersion: 2
 
-  // ---- the connection -----------------------------------------------------
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
   //   "absent"    no daemon answers on the socket: the core is not installed
   //   "refused"   the daemon serves another account
+  //   "busy"      the daemon has reached its client limit; reconnect later
   //   "outdated"  the daemon speaks an older protocol than this widget
   //   "newer"     the daemon speaks a newer protocol than this widget
   property string link: "connecting"
   property string daemonVersion: ""
   readonly property bool ready: link === "ready"
 
-  // ---- status, from the `status` stream -----------------------------------
   property string coreState: "unknown"
   property string coreDetail: ""
   property string activeSubscription: ""
@@ -87,11 +86,11 @@ Item {
   // runtime it was read from, and is dropped when this changes.
   readonly property string runtimeKey: activeSubscription + "|" + startedMs
 
-  // ---- data, from the panel's streams -------------------------------------
   property var subscriptions: []
   property var rules: []               // the owner's, editable
   property var injectedRules: []       // Omihomo's, read-only
   property var subscriptionRules: []   // the subscription's, read-only
+  property var effectiveRules: []
   signal ruleAdded()
   property var groups: []
   property var configEntries: ({})     // config name -> { name, type, alive, history }
@@ -158,8 +157,6 @@ Item {
 
   signal configChanged()
 
-  // ---- messages -----------------------------------------------------------
-
   function reportError(error, scope) {
     lastError = Model.daemonError(error)
     lastErrorCode = error && error.code ? String(error.code) : ""
@@ -182,8 +179,6 @@ Item {
     lastErrorCode = ""
     errorScope = ""
   }
-
-  // ---- calls --------------------------------------------------------------
 
   property int _nextId: 1
   // id -> function(result, error), for every call awaiting its reply.
@@ -214,7 +209,7 @@ Item {
     var message = Model.parseJson(line, null)
     if (!message || typeof message !== "object") return
     if (message.type === "hello") return greet(message)
-    if (message.type === "refused") return refuse()
+    if (message.type === "refused") return refuse(message.error)
     if (!ready) return
     if (message.type === "reply") {
       var done = _pending[message.id]
@@ -236,15 +231,17 @@ Item {
       hangUp()
       return
     }
+    if (link === "busy" || link === "refused") clearMessages()
     link = "ready"
     reconnectTimer.attempt = 0
     call("subscribe", { streams: wantedStreams() })
   }
 
-  function refuse() {
+  function refuse(error) {
     helloTimer.stop()
-    link = "refused"
+    link = error && error.code === "forbidden" ? "refused" : "busy"
     forgetAll()
+    reportError(error, "core")
     hangUp()
   }
 
@@ -264,8 +261,6 @@ Item {
     case "connections": applyConnections(data); break
     }
   }
-
-  // ---- the socket ---------------------------------------------------------
 
   // Bindings land in no fixed order while the panel is created, so nothing
   // connects before it is complete and `socketPath` is final.
@@ -367,8 +362,6 @@ Item {
     }
   }
 
-  // ---- reads --------------------------------------------------------------
-
   // Streams keep everything current, so a manual refresh only re-subscribes:
   // the daemon pushes every state stream's value again. Without a daemon, it
   // tries to reach one now rather than at the next backoff.
@@ -414,6 +407,7 @@ Item {
   function applyStatus(data) {
     var status = Model.readStatus(data)
     var previousRuntime = runtimeKey
+    var previousPrimaryGroup = configuredPrimaryGroup
     var wasRunning = coreRunning
     coreState = status.state
     coreDetail = status.detail
@@ -442,7 +436,14 @@ Item {
     // last snapshot on screen. A stop, restart, or another subscription is a
     // different runtime and starts from nothing.
     var runtimeChanged = runtimeKey !== previousRuntime
+    var primaryChanged = configuredPrimaryGroup !== previousPrimaryGroup
     if (runtimeChanged) forgetRuntime()
+    if (primaryChanged) {
+      egressIp = ""
+      egressLatency = 0
+      traceFailed = false
+      if (_egressCall !== 0) _traceQueued = true
+    }
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
@@ -450,8 +451,7 @@ Item {
       traceTesting = false
       _traceQueued = false
     }
-    // Another runtime means another egress path.
-    if (panelOpen && apiReady && (!wasRunning || runtimeChanged)) refreshTrace()
+    if (panelOpen && apiReady && (!wasRunning || runtimeChanged || primaryChanged)) refreshTrace()
   }
 
   function forgetRuntime() {
@@ -509,6 +509,7 @@ Item {
     rules = parsed.own
     injectedRules = parsed.injected
     subscriptionRules = parsed.subscription
+    effectiveRules = parsed.effective
   }
 
   function applyTraffic(data) {
@@ -521,7 +522,6 @@ Item {
     trafficHistory = history
   }
 
-  /** Folds one snapshot of what is open into the panel's connection log. */
   function applyConnections(data) {
     var now = Date.now()
     var parsed = Model.readConnections(data, now)
@@ -561,8 +561,6 @@ Item {
       done(result, null)
     }
   }
-
-  // ---- writes -------------------------------------------------------------
 
   function toggleCore() {
     if (!installed || _coreCall !== 0) return

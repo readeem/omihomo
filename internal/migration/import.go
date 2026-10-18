@@ -3,6 +3,7 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,6 +133,11 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 		if err := fetch.CheckURL(old.URL); err != nil {
 			return nil, fmt.Errorf("old subscription %d needs an HTTPS URL", i+1)
 		}
+		sub := state.Subscription{ID: state.NewID(), Name: old.Name, URL: old.URL,
+			Upload: old.Usage.Upload, Download: old.Usage.Download, Total: old.Usage.Total, Expire: old.Usage.Expire}
+		if err := requestState(root, &sub); err != nil {
+			return nil, fmt.Errorf("old subscription %d request state: %w", i+1, err)
+		}
 		cached, err := read(root, "cache/"+old.Name+".yaml", left)
 		if err != nil {
 			return nil, fmt.Errorf("read old subscription %d cache: %w", i+1, err)
@@ -145,8 +151,7 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 		if hours <= 0 || hours > 2147483647 {
 			hours = 12
 		}
-		sub := state.Subscription{ID: state.NewID(), Name: old.Name, URL: old.URL, IntervalSeconds: hours * 3600,
-			Upload: old.Usage.Upload, Download: old.Usage.Download, Total: old.Usage.Total, Expire: old.Usage.Expire}
+		sub.IntervalSeconds = hours * 3600
 		if t, err := time.Parse(time.RFC3339, old.Updated); err == nil {
 			sub.UpdatedAt = t.UnixMilli()
 		}
@@ -179,6 +184,40 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 	ok = true
 	keepLock = true
 	return staged, nil
+}
+
+func requestState(root *os.Root, sub *state.Subscription) error {
+	name := fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte(sub.URL)))
+	body, err := optional(root, name, 4096)
+	if err != nil {
+		return err
+	}
+	if body == nil {
+		return nil
+	}
+	var old struct {
+		AttemptedAt    *int64 `json:"attempted_at"`
+		AutomaticAfter *int64 `json:"automatic_after"`
+		ManualAfter    *int64 `json:"manual_after"`
+		Paused         *bool  `json:"paused"`
+	}
+	if err := json.Unmarshal(body, &old); err != nil || old.Paused == nil {
+		return errors.New("invalid saved request limits")
+	}
+	for _, deadline := range []*int64{old.AttemptedAt, old.AutomaticAfter, old.ManualAfter} {
+		// The old CLI accepted only JSON-safe integer seconds; this also keeps
+		// conversion to milliseconds within int64.
+		if deadline == nil || *deadline < 0 || *deadline > 9007199254740991 {
+			return errors.New("invalid saved request limits")
+		}
+	}
+	if *old.Paused {
+		return errors.New("requests are paused; resolve access and use the old CLI's sub resume command, or remove the subscription before upgrading")
+	}
+	sub.LastAttempt = *old.AttemptedAt * 1000
+	sub.HeldUntil = *old.ManualAfter * 1000
+	sub.RetryAt = max(*old.AutomaticAfter*1000, sub.HeldUntil)
+	return nil
 }
 
 func emptyState(target string) error {

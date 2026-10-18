@@ -268,9 +268,11 @@ type Rule struct {
 	Value  string `json:"value"`
 	Target string `json:"target"`
 	Source string `json:"source"`
+	// Inactive keeps a saved user rule visible when the subscription lacks its target.
+	Inactive bool `json:"inactive,omitempty"`
 }
 
-// RuleList is the runtime's rules in match order.
+// RuleList includes every saved user rule, then non-user runtime rules in match order.
 type RuleList struct {
 	Rules []Rule `json:"rules"`
 }

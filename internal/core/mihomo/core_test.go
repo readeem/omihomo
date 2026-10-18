@@ -465,7 +465,7 @@ func TestARuleSetWithUnreadableLinesFailsTheApply(t *testing.T) {
 	} {
 		cfg := testConfig()
 		cfg.Profile.RuleSets = []core.RuleSet{rs}
-		if err := shared.Apply(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "do not parse") {
+		if err := shared.Apply(t.Context(), cfg); !errors.Is(err, core.ErrInvalid) || !strings.Contains(err.Error(), "do not parse") {
 			t.Errorf("%s set with a bad line = %v", rs.Behavior, err)
 		}
 	}

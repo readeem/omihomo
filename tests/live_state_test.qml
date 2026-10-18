@@ -65,6 +65,19 @@ ShellRoot {
     { name: "egress after selection", until: function() { return !svc.traceTesting }, then: function() {
         t.check(svc.egressIp, "203.0.113.7", "the queued egress check lands")
         t.check(svc.traceFailed, false, "the queued egress check succeeds")
+        svc.call("test.status", { primary_group: "Other" })
+      } },
+    { name: "another client changes primary group", until: function() { return svc.configuredPrimaryGroup === "Other" }, then: function() {
+        t.check(svc.egressIp, "", "a different primary group invalidates the old egress")
+        t.check(svc.traceTesting, true, "a different primary group starts an egress check")
+      } },
+    { name: "egress after primary group", until: function() { return !svc.traceTesting }, then: function() {
+        t.check(svc.egressIp, "203.0.113.7", "the new primary group's check lands")
+        svc.setPrimaryGroup("Proxy")
+      } },
+    { name: "widget changes primary group", until: function() { return !svc.busy }, then: function() {
+        t.check(svc.egressIp, "", "the widget's primary group change invalidates egress")
+        t.check(svc.traceTesting, true, "the widget's primary group change checks egress")
       } },
     { name: "traffic and connections", until: function() {
         return svc.trafficHistory.length >= 2 && svc.connectionLog.length === 1

@@ -48,12 +48,13 @@ for suite in service_state_test live_state_test; do
   start_daemon old --protocol 0
   start_daemon new --protocol 3
   start_daemon refuse --refuse
-  for name in ok fail old new refuse; do
+  start_daemon busy --busy-once
+  for name in ok fail old new refuse busy; do
     for _ in $(seq 100); do [[ -S $sockets/$name.sock ]] && break; sleep 0.05; done
     [[ -S $sockets/$name.sock ]] || { cat "$sockets/$name.log" >&2; exit 1; }
   done
 
-  output=$(OMIHOMO_TEST_SOCKETS="$sockets" WAYLAND_DISPLAY= QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= \
+  output=$(OMIHOMO_TEST_SOCKETS="$sockets" WAYLAND_DISPLAY='' QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME='' \
     XDG_RUNTIME_DIR="$test_root/runtime" QS_DISABLE_CRASH_HANDLER=1 \
     timeout --kill-after=2s 20s qs --no-color -p "$config" 2>&1) || {
     printf '%s\n' "$output" >&2

@@ -22,11 +22,12 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 2, refuse: false, latency: 0, fail: new Set() }
+const options = { protocol: 2, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
   else if (flag === "--refuse") options.refuse = true
+  else if (flag === "--busy-once") options.busy = 1
   else if (flag === "--latency") options.latency = Number(args.shift())
   else if (flag === "--fail") args.shift().split(",").forEach((op) => options.fail.add(op))
   else throw new Error("unknown flag " + flag)
@@ -229,6 +230,12 @@ setInterval(() => {
 
 try { fs.unlinkSync(socketPath) } catch (e) {}
 const server = net.createServer((client) => {
+  if (options.busy > 0) {
+    options.busy--
+    client.end(JSON.stringify({ type: "refused",
+      error: { code: "busy", message: "too many clients" } }) + "\n")
+    return
+  }
   if (options.refuse) {
     client.end(JSON.stringify({ type: "refused",
       error: { code: "forbidden", message: "this account does not own omihomo" } }) + "\n")

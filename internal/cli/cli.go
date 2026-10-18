@@ -342,7 +342,7 @@ func checkName(ctx context.Context, c *client.Client, name string, groupOnly boo
 		return err
 	}
 	for _, g := range list.Groups {
-		if g.Name == name && (g.Selectable || !groupOnly) {
+		if g.Name == name {
 			return nil
 		}
 		if !groupOnly && slices.ContainsFunc(g.Members, func(p protocol.Proxy) bool { return p.Name == name }) {
@@ -350,7 +350,7 @@ func checkName(ctx context.Context, c *client.Client, name string, groupOnly boo
 		}
 	}
 	if groupOnly {
-		return &exitError{ExitNotFound, fmt.Errorf("no selectable group %q", name)}
+		return &exitError{ExitNotFound, fmt.Errorf("no group %q", name)}
 	}
 	return &exitError{ExitNotFound, fmt.Errorf("the active subscription has no group or proxy %q", name)}
 }

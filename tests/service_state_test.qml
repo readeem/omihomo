@@ -15,6 +15,13 @@ ShellRoot {
 
   Omihomo.Service { id: absent; socketPath: t.socket("none") }
   Omihomo.Service { id: refused; socketPath: t.socket("refuse") }
+  Omihomo.Service {
+    id: capacity
+    socketPath: t.socket("busy")
+    property var refusal: null
+    onLastErrorCodeChanged: if (lastErrorCode === "busy")
+      refusal = { link: link, code: lastErrorCode, message: lastError }
+  }
   Omihomo.Service { id: outdated; socketPath: t.socket("old") }
   Omihomo.Service { id: newer; socketPath: t.socket("new") }
   Omihomo.Service {
@@ -32,12 +39,16 @@ ShellRoot {
 
   Component.onCompleted: t.steps = [
     { name: "every daemon answers or not", until: function() {
-        return absent.link === "absent" && refused.link === "refused" && outdated.link === "outdated"
+        return absent.link === "absent" && refused.link === "refused" && capacity.refusal !== null && outdated.link === "outdated"
           && newer.link === "newer" && svc.ready && failing.ready && svc.coreState === "stopped"
       }, then: function() {
         t.check(absent.coreState, "not-installed", "no daemon reads as not installed")
         t.check(absent.installed, false, "no daemon is not installed")
         t.check(refused.installed, false, "a refusal leaves nothing to show")
+        t.check(refused.lastErrorCode, "forbidden", "ownership refusal keeps its code")
+        t.check(capacity.refusal.link, "busy", "capacity refusal never offers ownership takeover")
+        t.check(capacity.refusal.code, "busy", "capacity refusal keeps its code")
+        t.check(capacity.refusal.message, "too many clients", "capacity refusal shows the daemon's message")
         t.check(outdated.installed, false, "an older protocol is never spoken")
         t.check(newer.installed, false, "a newer protocol is never spoken")
         t.check(outdated.call("status"), 0, "no request goes to a daemon of another protocol")
@@ -53,6 +64,9 @@ ShellRoot {
         t.check(svc.coreActive, true, "a stale status cannot undo a pending start")
         svc.toggleCore()
         t.check(svc._desiredCoreRunning, 1, "a second click waits for the first")
+      } },
+    { name: "capacity becomes available", until: function() { return capacity.ready }, then: function() {
+        t.check(capacity.lastError, "", "a successful greeting clears the capacity refusal")
       } },
     { name: "start lands", until: function() { return !svc.busy }, then: function() {
         t.check(svc.coreRunning, true, "the start's reply confirms it")

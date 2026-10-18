@@ -114,8 +114,10 @@ verdict says how many such rules sat above the hit and marks its target as tenta
 core may stop at one of them. An IPv4 address excluded by the active TUN routes is shown as outside
 the VPN, using the system route, before any rule is tested. This describes transparent TUN traffic;
 an application explicitly configured to use the proxy can still send an excluded address to it. A bar
-under the tester shows how the rules divide between targets. Your rules are editable and deletable,
-and the add form under the list covers the four types from ticket #7. The rules Omihomo injects for
+under the tester shows how the rules divide between targets. Saved rules whose targets are absent
+from the active subscription stay editable, marked `off`, and are excluded from the tester.
+Your rules are editable and deletable, and the add form under the list covers the four types from
+ticket #7. The rules Omihomo injects for
 the Tailscale integration and the tailnet proxy follow under their own heading, read-only; then
 the subscription's, read-only. `rules.list` tags each rule with its source, so the panel never
 guesses which is which. The list keeps the order

@@ -153,9 +153,6 @@ func (c *Client) readLoop() {
 // connection, which ends if the reader lets 256 events queue up.
 func (c *Client) Events() <-chan protocol.Envelope { return c.events }
 
-// Done closes when the connection ends.
-func (c *Client) Done() <-chan struct{} { return c.done }
-
 // Close ends the connection.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/readeem/omihomo/internal/core"
@@ -242,11 +243,12 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	return describe(sub, activate), nil
 }
 
-// uniqueName is name, or name with the first free numeric suffix.
 func uniqueName(subs []state.Subscription, name string) string {
 	candidate := name
+	runes := []rune(name)
 	for i := 2; slices.ContainsFunc(subs, func(s state.Subscription) bool { return s.Name == candidate }); i++ {
-		candidate = fmt.Sprintf("%s %d", name, i)
+		suffix := fmt.Sprintf(" %d", i)
+		candidate = strings.TrimSpace(string(runes[:min(len(runes), profile.MaxTitle-len(suffix))])) + suffix
 	}
 	return candidate
 }
@@ -413,7 +415,7 @@ func (d *server) activateSubscription(ctx context.Context, name string) (any, *p
 		return nil, perr
 	}
 	d.mu.Lock()
-	next, settings := d.subs, d.settings
+	next, settings, prev := d.subs, d.settings, d.profile
 	d.mu.Unlock()
 	if next.Active == sub.ID {
 		return d.status(), nil
@@ -427,6 +429,12 @@ func (d *server) activateSubscription(ctx context.Context, name string) (any, *p
 	}
 	next.Active = sub.ID
 	if err := d.saveSubs(next); err != nil {
+		if !d.rollback(ctx, settings, prev) {
+			d.mu.Lock()
+			d.subs, d.profile = next, p
+			d.mu.Unlock()
+		}
+		d.publish(ctx)
 		return nil, err
 	}
 	d.mu.Lock()

@@ -654,10 +654,17 @@ func TestShutdownStopsTheCore(t *testing.T) {
 	if _, running := h.core.Config(); running {
 		t.Fatal("core left running")
 	}
-	select {
-	case <-c.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("client not disconnected")
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case _, ok := <-c.Events():
+			if !ok {
+				return
+			}
+		case <-timeout.C:
+			t.Fatal("client not disconnected")
+		}
 	}
 }
 

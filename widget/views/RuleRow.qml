@@ -20,7 +20,7 @@ NavRow {
   rowIndex: entry.i === undefined ? -1 : entry.i
   current: hit
   implicitHeight: Style.space(22)
-  opacity: below ? 0.5 : 1
+  opacity: below || (rule && rule.inactive) ? 0.5 : 1
 
   RowLayout {
     anchors.fill: parent
@@ -109,7 +109,8 @@ NavRow {
     PanelText {
       theme: ruleRow.theme
       Layout.preferredWidth: Style.space(22)
-      text: ruleRow.hit ? "hit" : (ruleRow.verdict === "miss" ? "no" : (ruleRow.verdict === "unknown" ? "?" : ""))
+      text: ruleRow.rule && ruleRow.rule.inactive ? "off"
+        : (ruleRow.hit ? "hit" : (ruleRow.verdict === "miss" ? "no" : (ruleRow.verdict === "unknown" ? "?" : "")))
       color: ruleRow.hit ? ruleRow.theme.accent : ruleRow.theme.faint
     }
 
@@ -132,8 +133,9 @@ NavRow {
   }
 
   PanelToolTip {
-    visible: ruleRow.hovered && ruleRow.verdict === "unknown"
-    text: "Depends on a DNS answer, a rule set, or the app making the connection"
+    visible: ruleRow.hovered && ((ruleRow.rule && ruleRow.rule.inactive) || ruleRow.verdict === "unknown")
+    text: ruleRow.rule && ruleRow.rule.inactive ? "This subscription has no target named " + ruleRow.rule.target
+      : "Depends on a DNS answer, a rule set, or the app making the connection"
     fontFamily: ruleRow.theme.fontFamily
   }
 }

@@ -1,5 +1,5 @@
 # pacman runs these before its own daemon-reload hook, so each reloads first.
-# In a chroot, or anywhere systemd is not running, only enabling is possible.
+# A chroot still permits unit enable/disable and owned-file cleanup.
 
 booted() {
   [ -d /run/systemd/system ]
@@ -28,8 +28,10 @@ pre_remove() {
   systemctl disable omihomo.socket omihomo.service
   if booted; then
     systemctl stop omihomo.service omihomo.socket
-    if [ -f /etc/systemd/system/tailscaled.service.d/omihomo.conf ]; then
-      rm /etc/systemd/system/tailscaled.service.d/omihomo.conf
+  fi
+  if [ -f /etc/systemd/system/tailscaled.service.d/omihomo.conf ]; then
+    rm /etc/systemd/system/tailscaled.service.d/omihomo.conf
+    if booted; then
       systemctl daemon-reload
       systemctl try-restart tailscaled.service
     fi

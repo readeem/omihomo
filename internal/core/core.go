@@ -80,6 +80,10 @@ type RuleSet struct {
 }
 
 var (
+	// ErrInvalid marks a config rejected before runtime changes, rather than a
+	// local failure to start its listeners or devices.
+	ErrInvalid = errors.New("invalid proxy configuration")
+
 	// ErrNotRunning is returned by calls that need a running core.
 	ErrNotRunning = errors.New("the proxy is not running")
 

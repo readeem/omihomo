@@ -32,6 +32,8 @@ func fail(code, format string, args ...any) *protocol.Error {
 
 func coreError(err error) *protocol.Error {
 	switch {
+	case errors.Is(err, core.ErrInvalid):
+		return fail(protocol.CodeRejected, "%v", err)
 	case errors.Is(err, core.ErrNotRunning):
 		return fail(protocol.CodeNotRunning, "the proxy is not running")
 	case errors.Is(err, core.ErrNotFound):
@@ -601,7 +603,8 @@ func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error)
 	out := []protocol.Rule{}
 	// Retain unavailable targets so the displayed indices match rules.json.
 	for _, r := range d.settings.Rules {
-		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: protocol.SourceUser})
+		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target,
+			Source: protocol.SourceUser, Inactive: !hasTarget(d.profile, r.Target)})
 	}
 	for _, r := range runtime {
 		if r.Source != protocol.SourceUser {

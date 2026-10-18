@@ -28,6 +28,8 @@ const status = {
 let userRules = json("settings/rules.json")
 const runtimeRules = json("rules.json").rules
 const groups = json("groups.json")
+const targets = new Set(["DIRECT", "REJECT", "REJECT-DROP"].concat(
+  groups.groups.flatMap((group) => [group.name].concat(group.members.map((member) => member.name)))))
 const delays = json("group-delay.json").delays
 let subscriptions = json("subscriptions.json").map(({ updated_ago, ...sub }) =>
   ({ ...sub, updated_at: Date.now() - updated_ago * 1000 }))
@@ -50,7 +52,7 @@ function connections() {
 const snapshots = {
   status: () => status,
   groups: () => groups,
-  rules: () => ({ rules: userRules.map((rule) => ({ ...rule, source: "user" }))
+  rules: () => ({ rules: userRules.map((rule) => ({ ...rule, source: "user", inactive: !targets.has(rule.target) }))
     .concat(running() ? runtimeRules : []) }),
   subscriptions: () => ({ subscriptions })
 }

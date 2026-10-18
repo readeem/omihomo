@@ -163,17 +163,17 @@ function subscriptionUsage(sub) {
   return out
 }
 
-// `rules.list` is the runtime's rules in match order, each tagged with where
-// it came from. The owner's rules carry their 1-based index, which is what
-// `omihomo rule remove` takes.
+// Saved user rules keep their 1-based removal index even when inactive;
+// only effective rules participate in routing tests.
 function readRules(data) {
   var list = data && typeof data === "object" ? data.rules : null
-  var out = { own: [], injected: [], subscription: [] }
+  var out = { own: [], injected: [], subscription: [], effective: [] }
   if (!Array.isArray(list)) return out
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
     if (!entry || typeof entry !== "object") continue
-    var rule = { type: text(entry.type), value: text(entry.value), target: text(entry.target) }
+    var rule = { type: text(entry.type), value: text(entry.value), target: text(entry.target),
+      inactive: entry.inactive === true }
     var source = text(entry.source)
     if (source === "user") {
       rule.index = out.own.length + 1
@@ -184,6 +184,7 @@ function readRules(data) {
     } else {
       out.subscription.push(rule)
     }
+    if (!rule.inactive) out.effective.push(rule)
   }
   return out
 }

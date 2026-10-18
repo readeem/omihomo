@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// maxTitle bounds a subscription's name, which comes from its server.
-	maxTitle = 64
+	// MaxTitle bounds a subscription name in runes, including collision suffixes.
+	MaxTitle = 64
 
 	// DefaultInterval is how often a subscription refreshes when its server
 	// does not say.
@@ -63,8 +63,8 @@ func cleanName(s string) string {
 	}, s)
 	s = strings.Join(strings.Fields(s), " ")
 	s = strings.TrimLeft(s, ". ")
-	if r := []rune(s); len(r) > maxTitle {
-		s = string(r[:maxTitle])
+	if r := []rune(s); len(r) > MaxTitle {
+		s = string(r[:MaxTitle])
 	}
 	return strings.TrimSpace(s)
 }

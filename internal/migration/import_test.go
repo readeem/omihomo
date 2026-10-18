@@ -2,7 +2,9 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +135,65 @@ func TestImportReadsRawWrapperAndCachedHTTPProvider(t *testing.T) {
 	}
 }
 
+func TestImportPreservesRequestDeadlines(t *testing.T) {
+	source, target := fixture(t)
+	name := fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub")))
+	body := `{"attempted_at":1791633700,"automatic_after":4102444800,"manual_after":4102444700,"paused":false}`
+	write(t, source, name, body)
+	m, err := Prepare(t.Context(), source, target, false, noLinks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err := m.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs, err := store.Subscriptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := subs.List[0]; s.LastAttempt != 1791633700000 || s.RetryAt != 4102444800000 || s.HeldUntil != 4102444700000 {
+		t.Fatalf("request limits lost: %+v", s)
+	}
+	if saved, err := os.ReadFile(filepath.Join(source, name)); err != nil || string(saved) != body {
+		t.Fatalf("old request state changed: %v", err)
+	}
+}
+
+func TestImportRefusesPausedOrInvalidRequestState(t *testing.T) {
+	for _, body := range []string{
+		`{"attempted_at":1,"automatic_after":2,"manual_after":2,"paused":true}`,
+		`{"attempted_at":-1,"automatic_after":2,"manual_after":2,"paused":false}`,
+		`{"attempted_at":9007199254740992,"automatic_after":2,"manual_after":2,"paused":false}`,
+		`{"attempted_at":1.5,"automatic_after":2,"manual_after":2,"paused":false}`,
+		`{"attempted_at":1,"automatic_after":null,"manual_after":2,"paused":false}`,
+		`{"attempted_at":1,"automatic_after":2,"manual_after":2}`,
+		`{`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			source, target := fixture(t)
+			write(t, source, fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub"))), body)
+			m, err := Prepare(t.Context(), source, target, true, noLinks)
+			if m != nil {
+				m.Close()
+			}
+			if err == nil {
+				t.Fatal("cutover would resume a restricted subscription")
+			}
+			if strings.Contains(body, `"paused":true`) && !strings.Contains(err.Error(), "resume") {
+				t.Fatalf("pause refusal has no recovery instruction: %v", err)
+			}
+			if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("partial state published: %v", err)
+			}
+		})
+	}
+}
+
 func TestImportPreservesUnclaimedCoreCacheOnRollback(t *testing.T) {
 	for _, when := range []string{"before preparation", "during shutdown"} {
 		t.Run(when, func(t *testing.T) {
@@ -163,7 +224,7 @@ func TestImportPreservesUnclaimedCoreCacheOnRollback(t *testing.T) {
 }
 
 func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
-	for _, kind := range []string{"traversal", "symlink", "fifo", "broken YAML", "invalid active", "invalid rule", "oversized", "existing state", "unknown core file", "symlinked core cache"} {
+	for _, kind := range []string{"traversal", "symlink", "fifo", "broken YAML", "invalid active", "invalid rule", "oversized", "existing state", "unknown core file", "symlinked core cache", "request symlink", "request fifo", "oversized request"} {
 		t.Run(kind, func(t *testing.T) {
 			source, target := fixture(t)
 			switch kind {
@@ -190,6 +251,20 @@ func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
 			case "symlinked core cache":
 				os.MkdirAll(filepath.Join(target, "core"), 0o700)
 				os.Symlink(filepath.Join(source, "subscriptions.json"), filepath.Join(target, "core/cache.db"))
+			case "request symlink", "request fifo", "oversized request":
+				name := fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub")))
+				write(t, source, name, "")
+				path := filepath.Join(source, name)
+				if kind == "oversized request" {
+					os.Truncate(path, 4097)
+				} else {
+					os.Remove(path)
+					if kind == "request fifo" {
+						syscall.Mkfifo(path, 0o600)
+					} else {
+						os.Symlink(filepath.Join(source, "subscriptions.json"), path)
+					}
+				}
 			}
 			m, err := Prepare(context.Background(), source, target, false, noLinks)
 			if m != nil {

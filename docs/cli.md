@@ -38,6 +38,10 @@ omihomo sub add < /path/to/private-subscription-url
 
 Keep that file owner-only. Subscription lists and logs never reveal URLs.
 
+`set group` accepts manual and automatic groups as the primary group. Only manual `select`
+groups support `group select`. `rule list` retains saved rules with unavailable targets as
+`inactive: true`; those rules do not route traffic in the active subscription.
+
 `claim` records the invoking sudo/pkexec account as the single owner and reconciles systemd.
 The legacy path flags default to that account's `.local/share/omihomo` and `.config`.
 See [upgrading an old installation](upgrade.md) for the one-time import and cleanup.

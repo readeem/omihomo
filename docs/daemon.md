@@ -173,7 +173,9 @@ the Go types in `internal/protocol`. Status is:
 `started_at` is a new runtime, and anything read from the previous one is stale. `settings.apply`
 on a running proxy applies the change to the core first; if the core refuses it, nothing changes.
 `rules.list` always includes every saved user rule, even when its target is unavailable, so
-indices remain stable for removal. While stopped it returns only those user rules.
+indices remain stable for removal. An unavailable target sets `inactive: true` on that rule;
+clients exclude it from routing tests while keeping it editable. While stopped the list contains
+only saved user rules.
 `tun_bypass` is the address space TUN routes around: loopback, private, CGNAT, link-local,
 documentation and multicast ranges. With `tailnet_proxy` the tailnet leaves it, all but
 Tailscale's MagicDNS address.

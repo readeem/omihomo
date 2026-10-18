@@ -36,3 +36,48 @@ truncate -s 134217729 "$work/dist/omihomo-bin-1.0.0-1-x86_64.pkg.tar.zst"
 if "$work/tools/sign-release" 1.0.0 >"$work/output" 2>&1; then printf 'FAIL signing accepted an oversized package\n' >&2; exit 1; fi
 unset OMIHOMO_SIGNING_KEY
 printf 'PASS release signing, key matching, canonical versions, size limits and deterministic signatures\n'
+
+sed -n '/^\[tasks.release\]/,$p' "$root/mise.toml" |
+  sed -n "/^run = '''$/,/^'''$/p" | sed '1d;$d' > "$work/release"
+git init --quiet --bare "$work/remote"
+git init --quiet --initial-branch=next "$work/checkout"
+cd "$work/checkout"
+git config user.name 'Release Fixture'
+git config user.email 'release@example.org'
+printf '{"version":"1.0.0"}\n' > manifest.json
+git add manifest.json
+git commit --quiet -m 'initial fixture'
+git remote add origin "$work/remote"
+git push --quiet origin HEAD:refs/heads/next HEAD:refs/heads/release
+start=$(git rev-parse HEAD)
+git tag -a v1.0.1 -m 'existing local tag'
+local_tag=$(git rev-parse refs/tags/v1.0.1)
+if usage_version=1.0.1 bash "$work/release" >"$work/output" 2>&1; then
+  printf 'FAIL release accepted an existing local tag\n' >&2
+  exit 1
+fi
+if ! actual_tag=$(git rev-parse --verify refs/tags/v1.0.1 2>/dev/null); then
+  printf 'FAIL release deleted a pre-existing local tag\n' >&2
+  exit 1
+fi
+[[ $actual_tag == "$local_tag" && $(git rev-parse HEAD) == "$start" \
+  && -z $(git status --porcelain) ]]
+git tag -d v1.0.1 >/dev/null
+printf '#!/bin/sh\nexit 1\n' > "$work/remote/hooks/pre-receive"
+chmod +x "$work/remote/hooks/pre-receive"
+if usage_version=1.0.1 bash "$work/release" >"$work/output" 2>&1; then
+  printf 'FAIL release ignored a rejected push\n' >&2
+  exit 1
+fi
+[[ $(git rev-parse HEAD) == "$start" && $(jq -r .version manifest.json) == 1.0.0 \
+  && -z $(git status --porcelain) ]]
+if git show-ref --verify --quiet refs/tags/v1.0.1; then
+  printf 'FAIL failed push left its new tag behind\n' >&2
+  exit 1
+fi
+rm "$work/remote/hooks/pre-receive"
+usage_version=1.0.1 bash "$work/release" >"$work/output" 2>&1
+[[ $(git rev-parse HEAD) == "$(git --git-dir="$work/remote" rev-parse refs/heads/next)" \
+  && $(git rev-parse refs/tags/v1.0.1) == "$(git --git-dir="$work/remote" rev-parse refs/tags/v1.0.1)" \
+  && $(jq -r .version manifest.json) == 1.0.1 && -z $(git status --porcelain) ]]
+printf 'PASS release local-tag refusal, failed-push rollback and atomic publication to a fixture remote\n'

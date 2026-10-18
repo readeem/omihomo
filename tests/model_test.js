@@ -186,7 +186,21 @@ test("rules split by source, and the owner's carry their index", () => {
     [[1, "DOMAIN-SUFFIX,internal.example,DIRECT"], [2, "PROCESS-NAME,syncthing,DIRECT"]])
   assert.deepEqual(rules.injected.map(r => r.value), ["ts.net"])
   assert.deepEqual(rules.subscription.map(r => r.type), ["DOMAIN-KEYWORD", "MATCH"])
-  assert.deepEqual(Model.readRules(null), { own: [], injected: [], subscription: [] })
+  assert.deepEqual(Model.readRules(null), { own: [], injected: [], subscription: [], effective: [] })
+})
+
+test("saved rules with missing targets stay editable but cannot match traffic", () => {
+  const parsed = Model.readRules({ rules: [
+    { type: "DOMAIN-SUFFIX", value: "example.com", target: "MissingGroup", source: "user", inactive: true },
+    { type: "PROCESS-NAME", value: "example-app", target: "DIRECT", source: "user" },
+    { type: "MATCH", value: "", target: "DIRECT", source: "subscription" }
+  ] })
+  assert.equal(parsed.own[0].index, 1)
+  assert.equal(parsed.own[0].inactive, true)
+  assert.equal(parsed.own[1].index, 2)
+  const result = Model.testRules(parsed.effective, "example.com")
+  assert.equal(parsed.effective[result.hit].target, "DIRECT")
+  assert.equal(parsed.effective.length, 2)
 })
 
 test("rule targets list the built-ins, then groups, then every config once", () => {

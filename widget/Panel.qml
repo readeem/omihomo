@@ -66,9 +66,11 @@ Panel {
       button: "Update widget", tag: "update…", hint: "runs in a terminal",
       command: Util.shellQuote(installerPath) + " update" }
     case "refused": return { section: "OWNERSHIP", title: "Core owned by another account",
-      text: "Only the account that claimed the core can control it. Claiming it moves control to this account.",
+      text: omihomo.lastError || "Only the account that claimed the core can control it. Claiming it moves control to this account.",
       steps: [], button: "Claim core", tag: "claim…", hint: "runs sudo /usr/bin/omihomo claim in a terminal",
       command: "sudo /usr/bin/omihomo claim" }
+    case "busy": return { section: "CORE", title: "Core busy",
+      text: omihomo.lastError, steps: [], button: "", tag: "", hint: "Reconnecting…", command: "" }
     }
     return { section: "CORE", title: "Connecting…", text: "Waiting for the Omihomo core to answer.",
       steps: [], button: "", tag: "", hint: "", command: "" }
@@ -107,7 +109,7 @@ Panel {
   readonly property string ruleTarget: ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))].value
   readonly property string ruleFormError: Model.validateRule(ruleType, ruleFormValue, ruleTarget)
 
-  readonly property var effectiveRules: omihomo.rules.concat(omihomo.injectedRules, omihomo.subscriptionRules)
+  readonly property var effectiveRules: omihomo.effectiveRules
   readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery, omihomo.routing)
   readonly property string ruleHitTarget: ruleTest.hit >= 0 ? effectiveRules[ruleTest.hit].target : ""
   readonly property var ruleTally: Model.ruleTargetTally(effectiveRules)
@@ -116,7 +118,7 @@ Panel {
     var head = 0
     var i
     for (i = 0; i < omihomo.rules.length; i++)
-      out.push({ kind: "own", s: "rule", i: i, rule: omihomo.rules[i], eff: head++ })
+      out.push({ kind: "own", s: "rule", i: i, rule: omihomo.rules[i], eff: omihomo.rules[i].inactive ? -1 : head++ })
     if (omihomo.injectedRules.length > 0) {
       out.push({ kind: "head", title: "OMIHOMO · " + omihomo.injectedRules.length, note: "tailscale · read-only" })
       for (i = 0; i < omihomo.injectedRules.length; i++)
