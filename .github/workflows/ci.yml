@@ -28,11 +28,13 @@ jobs:
       - name: isolated package boundary
         env:
           OMIHOMO_REQUIRE_PACKAGE_SANDBOX: '1'
-        # Ubuntu's AppArmor denies unprivileged user namespaces to bwrap.
+        # Ubuntu's AppArmor denies unprivileged user namespaces to bwrap, and its
+        # bwrap cannot create the mount point for the fake /usr/bin/pacman.
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo install -m 0755 /dev/null /usr/bin/pacman
           ./tests/package_boundary_test.sh
       # A replace only applies in the main module, so ours copies mihomo's;
       # a bump that changes theirs must change ours.
@@ -52,12 +54,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 5
+    timeout-minutes: 10
     # Arch packages Quickshell, the runtime the QML service tests need.
     container: archlinux:base@sha256:4e77cf2ea5f410e6f8be5abf93ccf17ce2436e87a138c167208356711a405dbd
     steps:
       - name: install tools
-        run: pacman -Syu --noconfirm --needed diffutils git nodejs quickshell
+        run: pacman -Syu --noconfirm --needed diffutils git go nodejs quickshell
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
