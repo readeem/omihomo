@@ -127,17 +127,16 @@ scan, and the new authenticated installer and signing-key exposure. The release 
 binaries, dependency source, checksums and signed metadata. It adds no network listener or
 new Go dependency; bootstrap uses Arch's curl and OpenSSL tools.
 
-Bump `version` in `manifest.json` in a pull request to `next`, merge it once CI passes, then
-tag that commit on `next`:
+Then, from a clean `next` that matches `origin/next`:
 
 ```sh
-git switch next && git pull --ff-only
-git tag v1.0.0
-git push origin v1.0.0
+mise run release 1.2.3
 ```
 
-The tag must descend from `release`; CI refuses one that does not. After CI passes, open the
-run's **Review deployments**, select `release`, and choose **Approve and deploy** following the
+It sets `version` in `manifest.json` and commits the bump when it changes, tags `v1.2.3`, and
+pushes the commit and the tag together. It refuses a version older than the manifest's, one
+already tagged, and a `next` that does not descend from `release`, as CI does. After CI passes,
+open the run's **Review deployments**, select `release`, and choose **Approve and deploy** following the
 security review. CI signs metadata, uploads all assets to a draft, publishes only after upload
 succeeds, then fast-forwards `release` to the tag. Installed widgets find the release at their
 next check. AUR runs afterward only when enabled.

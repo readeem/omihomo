@@ -43,3 +43,32 @@ run = ["go fix ./...", "gofmt -w ."]
 [tasks.package]
 description = "Build the Arch package and AUR metadata into dist/"
 run = "./tools/build-package"
+
+[tasks.release]
+description = "Set the version, tag it on next and push both, e.g. mise run release 1.2.3"
+usage = 'arg "<version>"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+version=${usage_version#v}
+tag=v$version
+[[ $version =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]] || fail "$usage_version is not X.Y.Z"
+[[ $(git branch --show-current) == next ]] || fail "releases are cut from next"
+[[ -z $(git status --porcelain) ]] || fail "the working tree is not clean"
+git fetch --quiet origin next release
+[[ $(git rev-parse HEAD) == "$(git rev-parse origin/next)" ]] || fail "next differs from origin/next; pull or push first"
+# The release workflow refuses a tag that release cannot fast-forward to.
+git merge-base --is-ancestor origin/release HEAD || fail "next does not descend from release"
+[[ -z $(git ls-remote --tags origin "refs/tags/$tag") ]] || fail "$tag already exists"
+current=$(jq -r .version manifest.json)
+(( $(vercmp "$version" "$current") >= 0 )) || fail "$version is older than manifest.json's $current"
+if [[ $version != "$current" ]]; then
+  jq --arg version "$version" '.version = $version' manifest.json > manifest.json.new
+  mv manifest.json.new manifest.json
+  git commit --quiet -m "chore(release): $version" manifest.json
+fi
+git tag -a "$tag" -m "$tag"
+git push --atomic origin HEAD:refs/heads/next "refs/tags/$tag"
+printf 'Pushed %s. Approve the deployment once CI passes: gh run watch\n' "$tag"
+'''
