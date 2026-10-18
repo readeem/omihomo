@@ -3,6 +3,7 @@ set -euo pipefail
 here=$(dirname "$0")
 
 "$here/install_test.sh"
+"$here/release_test.sh"
 
 command -v node >/dev/null 2>&1 || {
   printf 'tests require node for the widget model tests\n' >&2
@@ -11,6 +12,7 @@ command -v node >/dev/null 2>&1 || {
 node --test "$here/model_test.js"
 
 if command -v qs >/dev/null 2>&1; then
+  "$here/update_state_test.sh"
   "$here/daemon_state_test.sh"
 elif [[ ${OMIHOMO_REQUIRE_QML:-0} == 1 ]]; then
   printf 'QML service tests need Quickshell\n' >&2

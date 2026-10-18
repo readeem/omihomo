@@ -1,0 +1,54 @@
+# Sourced by capture and drive. Builds a private copy of the panel in a work
+# directory: a private HOME holds the theme and font, so nothing of the
+# desktop running this leaks into the images, the stubs shadow Hyprland and
+# the browser, and the panel talks to a fake daemon instead of the live core.
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$here/../.." && pwd)
+shell=/usr/share/omarchy/shell
+
+for need in qs node "$shell/Commons" "$shell/Ui"; do
+  [[ -e $need ]] || command -v "$need" >/dev/null || { printf '%s needs %s\n' "${0##*/}" "$need" >&2; exit 2; }
+done
+
+# stage WORK SHELL_QML lays out WORK, which must exist and be private, with
+# SHELL_QML as the config's entry point, and sets `config` and `panel_env`.
+stage() {
+  local work=$1 home=$1/home
+  config=$work/config
+  mkdir -p "$config/omihomo/bin" "$work/fakebin" \
+    "$home/.local/state/omarchy/current/theme" "$home/.config/fontconfig"
+  cp -r "$root/widget" "$config/omihomo/"
+  cp "$here/omihomo-install" "$config/omihomo/bin/"
+  cp "$2" "$config/shell.qml"
+  cp -r "$shell/Commons" "$shell/Ui" "$config/"
+  cp "$here/KeyboardPanel.qml" "$config/Ui/"
+  cp "$here/stub" "$work/fakebin/hyprctl"
+  cp "$here/stub" "$work/fakebin/xdg-open"
+  cp "$here"/theme/{colors.toml,shell.toml} "$home/.local/state/omarchy/current/theme/"
+  cp "$here/theme/fonts.conf" "$home/.config/fontconfig/"
+  cp -r "$here/data/settings" "$home/.config/omihomo"
+  printf '1.0.0-1\n' >"$work/installed"
+  panel_env=(env -i PATH="$work/fakebin:/usr/bin" HOME="$home" TZ=UTC LANG=C.UTF-8
+    XDG_RUNTIME_DIR="$work" XDG_CONFIG_HOME="$home/.config" XDG_CACHE_HOME="$home/.cache"
+    QT_QUICK_BACKEND=software QT_QPA_PLATFORMTHEME= QT_QUICK_CONTROLS_STYLE=Fusion
+    OMIHOMO_SOCKET="$work/omihomo.sock")
+}
+
+# start_daemon WORK [--after FIFO] runs the fake daemon on WORK/omihomo.sock,
+# with the core up for 3h20m, and returns once it listens; with --after, at
+# once, since it listens only once installed (see daemon.js). It runs behind
+# the `launch` command prefix when one is set.
+launch=()
+start_daemon() {
+  local work=$1
+  shift
+  "${launch[@]}" node "$here/daemon.js" "$work/omihomo.sock" "$here/data" "$(($(date +%s) - 12030))" "$@" \
+    >"$work/daemon.log" 2>&1 &
+  daemon=$!
+  [[ $# -eq 0 ]] || return 0
+  for _ in $(seq 100); do [[ -S $work/omihomo.sock ]] && return; sleep 0.05; done
+  printf 'the fake daemon did not start:\n' >&2
+  cat "$work/daemon.log" >&2
+  exit 1
+}

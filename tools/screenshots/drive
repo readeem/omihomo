@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Runs the real panel against the fake daemon and drives it like a user.
+#
+#   drive start [--visible] [--no-core]
+#                            open a session; --visible shows it as a desktop window,
+#                            --no-core starts with the core not installed yet
+#   drive keys KEY...        press keys: j, M, /, Return, Escape, Down, shift+Tab, ctrl+k
+#   drive type TEXT          type TEXT into whatever has focus
+#   drive click X Y          click at a point in screenshot pixels
+#   drive shot FILE          save a PNG of the panel
+#   drive state              print the panel's state as JSON
+#   drive log                print the panel's log, where QML errors land
+#   drive stop               end the session
+#
+# One session runs at a time and ends on its own after an hour. Settings edits
+# go through the CLI built from this checkout, into the session's private HOME.
+# The panel's terminal runs only the fake installer's install and update; the
+# log names any other command it was handed, such as uninstall's.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/stage"
+[[ -n ${XDG_RUNTIME_DIR:-} ]] || { printf 'drive needs XDG_RUNTIME_DIR\n' >&2; exit 2; }
+session=$XDG_RUNTIME_DIR/omihomo-drive
+config=$session/config
+# Outside the session, so they outlive its cleanup.
+lock=$session.lock
+log=$session.log
+
+# The supervisor holds the lock for the session's whole life, so a held lock
+# is a live session and its recorded pid cannot have been reused.
+alive() {
+  ! flock -n "$lock" true 2>/dev/null
+}
+
+need_session() {
+  alive || { printf 'no drive session; run: drive start\n' >&2; exit 1; }
+}
+
+ipc() {
+  env -i PATH=/usr/bin LANG=C.UTF-8 XDG_RUNTIME_DIR="$session" qs ipc --any-display -p "$config" call drive "$@"
+}
+
+# wait_for PATTERN waits for an extended regex in the panel's log.
+wait_for() {
+  for _ in $(seq 300); do
+    grep -qE "$1" "$log" && return
+    alive || break
+    sleep 0.1
+  done
+  tail -n 30 "$log" >&2
+  printf 'drive: gave up waiting for %s\n' "$1" >&2
+  exit 1
+}
+
+stop() {
+  if alive; then
+    kill -TERM "$(<"$session/pid")" 2>/dev/null || true
+    flock -w 10 "$lock" true
+  fi
+}
+
+# supervise runs the daemon and the panel, holding the lock on fd 9, until
+# either exits or it is told to stop, then removes the session.
+supervise() {
+  local daemon= panel=
+  trap 'kill -TERM $daemon $panel 2>/dev/null || true; wait; rm -rf -- "$session"' EXIT
+  trap 'exit 143' TERM
+  printf '%s\n' "$$" >"$session/pid"
+  # The children die with the supervisor, even when it is killed outright.
+  launch=(setpriv --pdeathsig TERM)
+  {
+    if [[ -p $session/install ]]; then start_daemon "$session" --after "$session/install"
+    else start_daemon "$session"; fi
+    "${launch[@]}" "$@" qs --no-color -p "$config" >>"$log" 2>&1 &
+    panel=$!
+  } 9>&-
+  wait -n "$daemon" "$panel" || true
+}
+
+start() {
+  local platform=(QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2) core=yes
+  for option; do
+    case $option in
+    --visible)
+      [[ -n ${WAYLAND_DISPLAY:-} ]] || { printf 'drive --visible needs a Wayland session\n' >&2; exit 2; }
+      # Absolute, because the panel's XDG_RUNTIME_DIR is the session directory.
+      platform=(QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY="$XDG_RUNTIME_DIR/${WAYLAND_DISPLAY##*/}") ;;
+    --no-core) core= ;;
+    *) printf 'drive start takes --visible and --no-core\n' >&2; exit 2 ;;
+    esac
+  done
+  umask 077
+  exec 9>>"$lock"
+  flock -n 9 || { printf 'a drive session is running; run: drive stop\n' >&2; exit 1; }
+  rm -rf -- "$session"
+  mkdir "$session"
+  : >"$log"
+  stage "$session" "$here/drive.qml"
+  [[ -n $core ]] || { rm "$session/installed"; mkfifo "$session/install"; }
+  (cd "$root" && go build -o "$session/omihomo" ./cmd/omihomo) 9>&-
+  setsid timeout 1h "$0" _supervise "${panel_env[@]}" "${platform[@]}" \
+    OMIHOMO_DRIVE_CLI="$session/omihomo" </dev/null >>"$log" 2>&1 &
+  exec 9>&-
+  wait_for DRIVE_READY
+  printf 'ready\n'
+}
+
+command=${1:-}
+shift || true
+case $command in
+start) start "$@" ;;
+_supervise) supervise "$@" ;;
+stop) stop ;;
+keys)
+  need_session
+  failed=$(ipc keys "$*")
+  [[ -z $failed ]] || { printf '%s\n' "$failed" >&2; exit 1; }
+  ;;
+type) need_session; ipc type "$*" ;;
+click) need_session; ipc click "$1" "$2" ;;
+shot)
+  need_session
+  file=$(realpath -m "${1:?drive shot FILE}")
+  mkdir -p "$(dirname "$file")"
+  n=$(ipc shot "$file")
+  wait_for "DRIVE_(SAVED|FAILED) $n( |$)"
+  ! grep -E "DRIVE_FAILED $n( |$)" "$log" >&2 || exit 1
+  printf '%s\n' "$file"
+  ;;
+state) need_session; ipc state ;;
+log) cat "$log" ;;
+*) sed -n '2,18s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac

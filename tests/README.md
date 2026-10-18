@@ -12,13 +12,27 @@ Quickshell service state against fake daemons on private sockets. It does not re
 contact subscription servers, or touch installed state. Set `OMIHOMO_REQUIRE_QML=1` to require
 Quickshell rather than skip its service tests. CI does this.
 
+## Release and update security
+
+Automated tests cover the bootstrap's actual OpenSSL verification against fake download and
+authentication commands, the Go updater through its public interface with fake HTTP/package
+manager adapters, and the QML update controller without a window. They include wrong keys,
+tampered metadata/helper/package bytes, download bounds, architecture and version validation,
+redirect rejection, private staging/cleanup, upgrade guards, cancellation and failure handling.
+They do not run an actual privileged package transaction or render the widget.
+
+`mise run security` also exercises the authenticated package adapter inside Bubblewrap with
+a read-only host filesystem, disabled network, private temporary filesystem and fake pacman.
+It checks package identity, root-owned staging and transaction failures. This needs user
+namespaces and Bubblewrap; it reports an explicit skip when the sandbox is unavailable.
+
 ## Manual cutover test
 
 Use a local terminal. Switching the proxy can briefly interrupt connections, so finish sessions
 that depend on it first. The following commands change the system; the package build does not.
 
 1. Build from the checkout with `mise run package`. The result is
-   `dist/omihomo-bin-2.0.0-1-x86_64.pkg.tar.zst`, with release archive/checksum and rendered AUR
+   `dist/omihomo-bin-1.0.0-1-x86_64.pkg.tar.zst`, with release archive/checksum and rendered AUR
    metadata beside it. Never publish a locally modified test build as a release.
 2. Note the old subscription names, active subscription, mode, TUN and primary group. Keep the
    original `~/.local/share/omihomo` for recovery; do not delete it during testing.
@@ -31,7 +45,7 @@ that depend on it first. The following commands change the system; the package b
    The underlying privileged commands are:
 
    ```sh
-   sudo pacman -U dist/omihomo-bin-2.0.0-1-x86_64.pkg.tar.zst
+   sudo pacman -U dist/omihomo-bin-1.0.0-1-x86_64.pkg.tar.zst
    sudo /usr/bin/omihomo claim
    ```
 

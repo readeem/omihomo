@@ -19,9 +19,7 @@ widget are its clients. Vocabulary is in `GLOSSARY.md`, decisions in `docs/adr/`
 1. **The installed daemon is the machine's live proxy.** Never run `omihomo claim`, `pacman -U`,
    `tools/test-cutover` or a restart of `omihomo.service`; hand those steps to us, with
    `tests/README.md#manual-cutover-test`.
-2. **The widget cannot be checked by you.** Never render or smoke-test it. `omarchy restart shell`
-   shows QML changes; Go changes need a rebuilt package.
-3. **mihomo races with itself.** Its package runs without `-race`, and only the release build tags
+2. **mihomo races with itself.** Its package runs without `-race`, and only the release build tags
    (`with_gvisor,no_easytier`) give it the gVisor stack its tests need.
 
 ## Hit every surface
@@ -34,3 +32,7 @@ widget are its clients. Vocabulary is in `GLOSSARY.md`, decisions in `docs/adr/`
 
 `mise tasks` lists the tasks. Run `mise run check` before handoff, and `mise run widget` when the
 widget or installer changes. `mise run package` writes only to `dist/`.
+
+See a widget change in `tools/screenshots/drive`: the real panel against a fake daemon, driven
+with keys and clicks, with screenshots you can read. `drive start --visible` shows it to us too.
+Stop the session when done.

@@ -3,14 +3,16 @@
 Use a local terminal after ending sessions that depend on the proxy. Update the plugin, then run:
 
 ```sh
-yay -S omihomo-bin
-sudo /usr/bin/omihomo claim
+bin/omihomo-install install
 omarchy restart shell
 /usr/bin/omihomo status
 ```
 
-For custom XDG directories, run `bin/omihomo-install` instead of the first two commands.
-Alternatively, pass `--legacy-data DIR` and `--legacy-config DIR` to `claim`.
+The installer preserves custom XDG directories when claiming and importing the old data.
+If the packaged daemon is already installed, use `bin/omihomo-install update` instead;
+run `sudo /usr/bin/omihomo claim` separately only when importing an old installation or
+claiming the daemon for this account. Custom migration paths can be passed as
+`--legacy-data DIR` and `--legacy-config DIR` to `claim`.
 
 `claim` imports subscriptions, cached content, metadata, active selection, mode, TUN, redirect,
 primary group, Tailscale settings and typed prepend rules, preserving the proxy's on/off state.

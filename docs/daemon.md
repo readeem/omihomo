@@ -7,19 +7,19 @@ hosts mihomo in-process behind it, or the in-memory fake (`--core fake`), which 
 
 ## Install on Arch Linux
 
-Install the binary package from the AUR as your ordinary user, then give that account access
-to the daemon:
+From the plugin checkout, run the installer as your ordinary user, or choose **Install core**
+in the widget. It verifies the GitHub release and asks for authentication before installation:
 
 ```sh
-yay -S omihomo-bin
-sudo /usr/bin/omihomo claim
+bin/omihomo-install install
 /usr/bin/omihomo status
 ```
 
-The plugin checkout provides `bin/omihomo-install` to run the first two commands in order. Run
-that script without `sudo`; it requests privileges only for claiming the daemon (and when yay
-installs the package). If installation fails it does not claim; if claiming fails the script
+Run the script without `sudo`; it requests privileges for verified package installation and
+then claims the daemon. If installation fails it does not claim; if claiming fails the script
 returns an error. Custom XDG directories are passed to `claim` by the installer.
+`bin/omihomo-install check` checks signed release metadata without privileges;
+`bin/omihomo-install update` installs a newer package without changing the recorded owner.
 The widget reads the daemon socket and saves edits through the CLI. The installer also enables
 the user settings sync units. For a manual install, run:
 
@@ -28,7 +28,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now omihomo-apply.path omihomo-apply.service
 ```
 
-The package installs `/usr/bin/omihomo`, `omihomo.service`, `omihomo.socket`, and a tmpfiles rule
+The package installs `/usr/bin/omihomo`, `/usr/bin/omihomo-update`, `omihomo.service`, `omihomo.socket`, and a tmpfiles rule
 for `/var/lib/omihomo`. It enables both units and starts them when systemd is running. Before
 claiming, the socket belongs to root and the daemon refuses every client. `claim` records the
 non-root account that invoked `sudo` (or `pkexec`) in `/var/lib/omihomo/owner`, writes
@@ -117,7 +117,7 @@ The vocabulary is proxies, groups, rules and connections; it never names the cor
 The daemon speaks first:
 
 ```json
-{"type":"hello","protocol":2,"version":"v2.0.0"}
+{"type":"hello","protocol":2,"version":"v1.0.0"}
 {"type":"refused","error":{"code":"forbidden","message":"this account does not own omihomo"}}
 ```
 

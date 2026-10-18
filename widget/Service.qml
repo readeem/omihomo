@@ -17,6 +17,7 @@ Item {
 
   // `OMIHOMO_SOCKET` points the panel at another daemon, as it does the CLI.
   property string socketPath: Quickshell.env("OMIHOMO_SOCKET") || "/run/omihomo/omihomo.sock"
+  property string cliPath: "/usr/bin/omihomo"
   property bool panelOpen: false
 
   // The protocol this widget speaks. A daemon that greets with another one is
@@ -534,7 +535,7 @@ Item {
   function edit(args, done) {
     if (editor.running || _editDone !== null) return 0
     _editDone = done
-    editor.command = ["/usr/bin/env", "OMIHOMO_SOCKET=" + socketPath, "/usr/bin/omihomo"].concat(args)
+    editor.command = ["/usr/bin/env", "OMIHOMO_SOCKET=" + socketPath, cliPath].concat(args)
     editor.running = true
     return 1
   }

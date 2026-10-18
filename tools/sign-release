@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set +x
+set -euo pipefail
+umask 077
+
+signing_key=${OMIHOMO_SIGNING_KEY:?OMIHOMO_SIGNING_KEY must contain an Ed25519 private PEM key}
+unset OMIHOMO_SIGNING_KEY
+trap 'unset signing_key' EXIT
+
+[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: sign-release VERSION [DIST]' >&2; exit 1; }
+version=$1
+[[ $version =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]] || {
+  echo 'version must be canonical X.Y.Z with at most nine digits per component' >&2
+  exit 1
+}
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+dist=${2:-"$root/dist"}
+work=$(mktemp -d)
+trap 'unset signing_key; rm -rf -- "$work"' EXIT
+printf '%s\n' "$signing_key" > "$work/private.pem"
+unset signing_key
+
+openssl pkey -in "$work/private.pem" -pubout -outform DER -out "$work/actual.der"
+openssl pkey -pubin -in "$root/internal/update/release.pub" -outform DER -out "$work/expected.der"
+cmp -s "$work/actual.der" "$work/expected.der" || {
+  echo 'signing key does not match internal/update/release.pub' >&2
+  exit 1
+}
+
+package="$dist/omihomo-bin-$version-1-x86_64.pkg.tar.zst"
+installer="$dist/omihomo-update-$version-x86_64"
+[[ -f $package && ! -L $package && -f $installer && ! -L $installer ]] || {
+  echo 'release package and installer must be regular files' >&2
+  exit 1
+}
+package_size=$(stat -c %s -- "$package")
+installer_size=$(stat -c %s -- "$installer")
+(( package_size > 0 && package_size <= 134217728 && installer_size > 0 && installer_size <= 33554432 )) || {
+  echo 'release artifact size is outside the allowed bounds' >&2
+  exit 1
+}
+package_hash=$(openssl dgst -sha256 -r "$package")
+installer_hash=$(openssl dgst -sha256 -r "$installer")
+package_hash=${package_hash%% *}
+installer_hash=${installer_hash%% *}
+[[ $package_hash =~ ^[0-9a-f]{64}$ && $installer_hash =~ ^[0-9a-f]{64}$ ]]
+printf '%s\n' 'OMIHOMO-RELEASE-1' "version=$version" 'pkgrel=1' 'arch=x86_64' \
+  "package-size=$package_size" "package-sha256=$package_hash" \
+  "installer-size=$installer_size" "installer-sha256=$installer_hash" > "$work/manifest"
+openssl pkeyutl -sign -rawin -inkey "$work/private.pem" -in "$work/manifest" -out "$work/signature"
+[[ $(stat -c %s "$work/signature") == 64 ]]
+openssl pkeyutl -verify -rawin -pubin -inkey "$root/internal/update/release.pub" \
+  -in "$work/manifest" -sigfile "$work/signature" >/dev/null
+mv -- "$work/manifest" "$dist/omihomo-release.txt"
+mv -- "$work/signature" "$dist/omihomo-release.txt.sig"

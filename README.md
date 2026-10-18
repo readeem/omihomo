@@ -47,7 +47,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 ## Requirements
 
 - Omarchy 4 on Arch Linux
-- `yay`, to install the `omihomo-bin` daemon package from the AUR
+- `curl` and OpenSSL, for verified GitHub package installation
 - A mihomo-compatible HTTPS subscription URL
 
 ## Install
@@ -55,13 +55,13 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 ```sh
 omarchy plugin add https://github.com/readeem/omihomo.git --enable
 omarchy bar move dev.readeem.omihomo
-yay -S omihomo-bin
-sudo /usr/bin/omihomo claim
 omarchy restart shell
 ```
 
-The widget's **Install core** action runs the package installation and claim in a terminal.
-The daemon embeds mihomo; a separate mihomo package, `yq`, `jq` and `curl` are not required.
+Use the widget's **Install core** action to install the signed GitHub release and claim it
+in a terminal. Settings checks for new releases and offers an **update** action; installation
+and updates require normal authentication and pacman confirmation. The daemon embeds mihomo.
+The widget itself updates through Omarchy. AUR publication is an optional second channel.
 
 ## Usage
 
@@ -130,6 +130,7 @@ For permanent state removal, see
 ```sh
 mise run check      # gofmt, go fix, go vet and the Go tests
 mise run widget     # installer, widget model and Quickshell service tests
+mise run security   # release signatures and isolated privileged package adapter
 mise run package    # local Arch package and AUR metadata
 ```
 

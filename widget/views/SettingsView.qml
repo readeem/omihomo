@@ -13,8 +13,12 @@ Flickable {
   readonly property Theme theme: panel.theme
   readonly property var rows: ({
     mode: modeRow, tun: tunRow, tunRedirect: tunRedirectRow,
-    tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceRow
+    tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
+    checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow
   })
+
+  readonly property var updater: panel.updater
+  readonly property bool checked: updater.availableVersion !== ""
 
   function reveal(section) {
     var item = rows[section]
@@ -31,6 +35,8 @@ Flickable {
 
   contentWidth: width
   contentHeight: settingsColumn.implicitHeight
+  // Arming uninstall grows the last card with its warning; keep it in view.
+  onContentHeightChanged: if (panel.uninstallArmed) contentY = Math.max(0, contentHeight - height)
   clip: true
   boundsBehavior: Flickable.StopAtBounds
   interactive: contentHeight > height
@@ -164,10 +170,80 @@ Flickable {
       theme: view.theme
       Layout.fillWidth: true
       Layout.topMargin: Style.space(8)
+      title: "UPDATES"
+      note: "checked every 12 hours"
+    }
+
+    Rectangle {
+      Layout.fillWidth: true
+      implicitHeight: updatesColumn.implicitHeight + Style.space(6)
+      radius: view.theme.cardRadius
+      color: view.theme.fill
+      border.width: 1
+      border.color: view.theme.line
+      ColumnLayout {
+        id: updatesColumn
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.margins: Style.space(3)
+        spacing: 0
+        SettingRow {
+          id: checkRow
+          panel: view.panel
+          Layout.fillWidth: true
+          section: "checkUpdates"
+          title: "Check for updates"
+          keyHint: "u"
+          subtitle: view.updater.error !== "" ? "▲ " + view.updater.error
+            : (view.checked ? (view.updater.installedVersion !== "" ? "installed " + view.updater.installedVersion : "core not installed")
+              + " · latest " + view.updater.availableVersion
+              : (view.updater.checking ? "asking GitHub for the latest release" : "not checked yet"))
+          urgentSubtitle: view.updater.error !== ""
+          tag: view.updater.checking ? "checking…"
+            : (view.checked && !view.updater.updateAvailable && view.updater.installedVersion !== ""
+              && view.updater.error === "" ? "up to date" : "check")
+          onActivated: view.panel.checkUpdates()
+        }
+
+        SettingRow {
+          id: updateRow
+          panel: view.panel
+          Layout.fillWidth: true
+          visible: view.updater.updateAvailable
+          section: "update"
+          title: "Update to " + view.updater.availableVersion
+          keyHint: "U"
+          subtitle: "asks for your password in a terminal"
+          tag: "update…"
+          tagTint: view.theme.accent
+          tagFilled: true
+          onActivated: view.panel.updateCore()
+        }
+
+        SettingRow {
+          id: releaseNotesRow
+          panel: view.panel
+          Layout.fillWidth: true
+          visible: view.updater.releaseUrl !== ""
+          section: "releaseNotes"
+          title: "Release notes"
+          subtitle: "what changed in " + view.updater.availableVersion.split("-")[0] + ", on GitHub"
+          tag: "↗"
+          onActivated: view.panel.openReleaseNotes()
+        }
+      }
+    }
+
+    SectionLine {
+      theme: view.theme
+      Layout.fillWidth: true
+      Layout.topMargin: Style.space(8)
       title: "MAINTENANCE"
     }
 
     Rectangle {
+      id: maintenanceCard
       Layout.fillWidth: true
       implicitHeight: maintenanceColumn.implicitHeight + Style.space(22)
       radius: view.theme.cardRadius
@@ -193,7 +269,6 @@ Flickable {
         }
 
         RowLayout {
-          id: maintenanceRow
           Layout.fillWidth: true
           Layout.leftMargin: Style.space(8)
           spacing: Style.space(6)

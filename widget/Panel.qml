@@ -40,6 +40,7 @@ Panel {
 
   readonly property Theme theme: Theme { bar: root.bar }
   readonly property Service service: omihomo
+  readonly property UpdateService updater: updateService
   readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)
 
   readonly property string installerPath: decodeURIComponent(String(Qt.resolvedUrl("../bin/omihomo-install")).replace(/^file:\/\//, ""))
@@ -47,17 +48,32 @@ Panel {
   // command that fixes it, run in a terminal since it asks for a password.
   readonly property var setup: {
     switch (omihomo.link) {
-    case "absent": return { text: "The Omihomo core is not installed. Installing it from the AUR and claiming it for this account runs in a terminal.",
-      button: "Install core", command: installerPath }
-    case "outdated": return { text: "The Omihomo core is older than this widget. Updating it runs in a terminal.",
-      button: "Update core", command: "yay -S omihomo-bin" }
-    case "newer": return { text: "The Omihomo core is newer than this widget. Update the Omihomo plugin.",
-      button: "", command: "" }
-    case "refused": return { text: "Another account owns the Omihomo core. Claiming it for this account runs in a terminal.",
-      button: "Claim core", command: "sudo /usr/bin/omihomo claim" }
+    case "absent": return { section: "SETUP", title: "Core not installed",
+      text: "Omihomo runs mihomo as a system service that this panel controls. Installing it:",
+      steps: ["verifies the latest signed release on GitHub", "installs the omihomo-bin package",
+        "claims the core for this account"],
+      button: "Install core", tag: "install…", hint: "asks for your password in a terminal",
+      command: Util.shellQuote(installerPath) + " install" }
+    case "outdated": return { section: "UPDATE REQUIRED", title: "Core is older than this widget",
+      text: "The installed core speaks an older protocol, so this panel cannot use it until it is updated. Updating it:",
+      steps: ["verifies the latest signed release on GitHub", "updates the omihomo-bin package"],
+      button: "Update core", tag: "update…", hint: "asks for your password in a terminal",
+      command: Util.shellQuote(installerPath) + " update" }
+    case "newer": return { section: "UPDATE REQUIRED", title: "Widget is older than the core",
+      text: "The installed core speaks a newer protocol. Update the Omihomo plugin to use it.",
+      steps: [], button: "", tag: "", hint: "", command: "" }
+    case "refused": return { section: "OWNERSHIP", title: "Core owned by another account",
+      text: "Only the account that claimed the core can control it. Claiming it moves control to this account.",
+      steps: [], button: "Claim core", tag: "claim…", hint: "runs sudo /usr/bin/omihomo claim in a terminal",
+      command: "sudo /usr/bin/omihomo claim" }
     }
-    return { text: "Connecting to the Omihomo core…", button: "", command: "" }
+    return { section: "CORE", title: "Connecting…", text: "Waiting for the Omihomo core to answer.",
+      steps: [], button: "", tag: "", hint: "", command: "" }
   }
+  // Set once the setup command is handed to the terminal, until the link
+  // changes, so a reopened panel says it is under way. A cancelled run leaves
+  // the link, and so this, as it was.
+  property bool setupStarted: false
   readonly property bool coreAlert: omihomo.link === "outdated" || omihomo.link === "newer"
     || omihomo.link === "refused"
 
@@ -196,6 +212,9 @@ Panel {
     case "settings":
       rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
+      rows.push({ s: "checkUpdates" })
+      if (updater.updateAvailable) rows.push({ s: "update" })
+      if (updater.releaseUrl !== "") rows.push({ s: "releaseNotes" })
       rows.push({ s: "uninstall" })
       break
     }
@@ -283,6 +302,9 @@ Panel {
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
+    case "checkUpdates": checkUpdates(); break
+    case "update": updateCore(); break
+    case "releaseNotes": openReleaseNotes(); break
     case "uninstall": uninstallCore(); break
     }
   }
@@ -338,6 +360,8 @@ Panel {
       if (key === "A") omihomo.toggleTunRedirect()
       else if (key === "T") omihomo.toggleTailscale()
       else if (key === "P") omihomo.toggleTailnetProxy()
+      else if (key === "u") checkUpdates()
+      else if (key === "U") updateCore()
     }
   }
 
@@ -360,6 +384,9 @@ Panel {
   }
 
   function hintsFor(name) {
+    if (!omihomo.installed) return setup.command === "" ? [{ keys: "esc", label: "close", key: "esc" }] : [
+      { keys: "i", label: setup.button.split(" ")[0].toLowerCase(), key: "i" },
+      { keys: "esc", label: "close", key: "esc" }]
     if (name === "rules" && targetPicking) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
@@ -380,7 +407,7 @@ Panel {
       { keys: "↵", label: "close", key: "enter" }, { keys: "A", label: "close all", key: "A" },
       { keys: "L", label: "clear log", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
     case "settings": return [
-      { keys: "↵", label: "toggle", key: "enter" }, { keys: "m", label: "mode", key: "m" },
+      { keys: "↵", label: "activate", key: "enter" }, { keys: "u", label: "check", key: "u" },
       { keys: "t", label: "TUN", key: "t" }, { keys: "A", label: "accel", key: "A" },
       { keys: "M", label: "back", key: "M" }]
     }
@@ -506,7 +533,24 @@ Panel {
   function installCore() {
     if (!bar || setup.command === "") return
     bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(setup.command))
+    setupStarted = true
     close()
+  }
+
+  function checkUpdates() {
+    updater.check()
+  }
+
+  function updateCore() {
+    if (!bar || !updater.updateAvailable) return
+    bar.run("omarchy-launch-floating-terminal-with-presentation "
+      + Util.shellQuote(Util.shellQuote(installerPath) + " update"))
+    close()
+  }
+
+  function openReleaseNotes() {
+    if (/^https:\/\/github\.com\/readeem\/omihomo\/releases\/tag\/v[0-9]+\.[0-9]+\.[0-9]+$/.test(updater.releaseUrl))
+      Qt.openUrlExternally(updater.releaseUrl)
   }
 
   function uninstallCore() {
@@ -623,6 +667,16 @@ Panel {
     }
   }
 
+  UpdateService { id: updateService }
+
+  Connections {
+    target: omihomo
+    function onLinkChanged() { root.setupStarted = false }
+    function onDaemonVersionChanged() {
+      if (omihomo.daemonVersion !== "") updateService.check()
+    }
+  }
+
   Service {
     id: omihomo
     panelOpen: root.opened
@@ -684,7 +738,8 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.cappedContentHeight(Style.space(720))
+    // Setup is one card, so the panel fits it instead of the views' height.
+    contentHeight: panel.cappedContentHeight(omihomo.installed ? Style.space(720) : body.implicitHeight)
     padding: 0
     borderSpec: Border.flat(root.theme.outline, 1)
 
@@ -703,6 +758,7 @@ Panel {
       onTextKey: function(t) { root.handleTextKey(t) }
 
       ColumnLayout {
+        id: body
         anchors.fill: parent
         spacing: 0
 
@@ -898,22 +954,117 @@ Panel {
           Layout.margins: Style.space(14)
           spacing: Style.space(10)
 
-          PanelText {
+          SectionLine {
             theme: root.theme
             Layout.fillWidth: true
-            text: root.setup.text
-            color: root.theme.dim
-            font.pixelSize: Style.font.body
-            wrapMode: Text.WordWrap
+            title: root.setup.section
           }
 
-          SmallButton {
-            theme: root.theme
-            visible: root.setup.button !== ""
-            text: root.setup.button + " · i"
-            hasCursor: root.at("install")
-            onHovered: function(on) { if (on) root.focusRow("install") }
-            onClicked: root.installCore()
+          Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: setupColumn.implicitHeight + Style.space(6)
+            radius: root.theme.cardRadius
+            color: root.theme.fill
+            border.width: 1
+            border.color: root.theme.line
+
+            ColumnLayout {
+              id: setupColumn
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.margins: Style.space(3)
+              spacing: 0
+
+              RowLayout {
+                Layout.fillWidth: true
+                Layout.margins: Style.space(8)
+                spacing: Style.space(12)
+
+                OmihomoIcon {
+                  Layout.alignment: Qt.AlignTop
+                  Layout.topMargin: Style.space(2)
+                  iconSize: Style.space(20)
+                  color: root.theme.dim
+                  alertColor: root.coreAlert ? root.theme.urgent : "transparent"
+                }
+
+                ColumnLayout {
+                  Layout.fillWidth: true
+                  spacing: Style.space(4)
+
+                  PanelText {
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    text: root.setup.title
+                    color: root.coreAlert ? root.theme.urgent : root.theme.foreground
+                    font.pixelSize: Style.font.body
+                    wrapMode: Text.WordWrap
+                  }
+
+                  PanelText {
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    text: root.setup.text
+                    color: root.theme.dim
+                    wrapMode: Text.WordWrap
+                  }
+
+                  Repeater {
+                    model: root.setup.steps
+
+                    RowLayout {
+                      required property string modelData
+                      required property int index
+                      Layout.fillWidth: true
+                      Layout.topMargin: index === 0 ? Style.space(2) : 0
+                      spacing: Style.space(8)
+
+                      PanelText {
+                        theme: root.theme
+                        Layout.alignment: Qt.AlignTop
+                        text: String(index + 1)
+                        color: root.theme.accent
+                      }
+
+                      PanelText {
+                        theme: root.theme
+                        Layout.fillWidth: true
+                        text: modelData
+                        color: root.theme.dim
+                        wrapMode: Text.WordWrap
+                      }
+                    }
+                  }
+                }
+              }
+
+              Rectangle {
+                visible: root.setup.button !== ""
+                Layout.fillWidth: true
+                Layout.leftMargin: Style.space(5)
+                Layout.rightMargin: Style.space(5)
+                implicitHeight: 1
+                color: root.theme.line
+              }
+
+              SettingRow {
+                visible: root.setup.button !== ""
+                Layout.fillWidth: true
+                Layout.topMargin: Style.space(3)
+                panel: root
+                section: "install"
+                title: root.setup.button + (root.updater.availableVersion !== ""
+                  && (omihomo.link === "absent" || omihomo.link === "outdated" && root.updater.updateAvailable)
+                  ? " " + root.updater.availableVersion : "")
+                keyHint: "i"
+                subtitle: root.setupStarted ? "started in a terminal; i runs it again" : root.setup.hint
+                tag: root.setup.tag
+                tagTint: root.theme.accent
+                tagFilled: true
+                onActivated: root.installCore()
+              }
+            }
           }
 
           Item { Layout.fillHeight: true }
@@ -1006,7 +1157,7 @@ Panel {
         }
 
         Rectangle {
-          visible: omihomo.installed
+          visible: root.hintsFor(root.view).length > 0
           Layout.fillWidth: true
           implicitHeight: Style.space(36)
           color: "transparent"

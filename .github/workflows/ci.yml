@@ -1,22 +1,37 @@
 name: CI
 
 on:
+  workflow_call:
+    outputs:
+      version:
+        description: Version of the tested release artifacts
+        value: ${{ jobs.package.outputs.version }}
   pull_request:
   push:
     branches: [main, next]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   go:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          cache: ${{ github.ref_type != 'tag' }}
       - run: mise run check
+      - name: isolated package boundary
+        env:
+          OMIHOMO_REQUIRE_PACKAGE_SANDBOX: '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap
+          ./tests/package_boundary_test.sh
       # A replace only applies in the main module, so ours copies mihomo's;
       # a bump that changes theirs must change ours.
       - name: mihomo replace
@@ -27,10 +42,14 @@ jobs:
       - run: mise run vulncheck
 
   package:
-    uses: ./.github/workflows/package.yml
+    permissions:
+      contents: read
+    uses: ./.github/workflows/package.yml # zizmor: ignore[self-repository] actionlint does not support $/ workflow calls yet.
 
   widget:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 5
     # Arch packages Quickshell, the runtime the QML service tests need.
     container: archlinux:base@sha256:4e77cf2ea5f410e6f8be5abf93ccf17ce2436e87a138c167208356711a405dbd

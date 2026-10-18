@@ -1,0 +1,6 @@
+[
+  {"type":"DOMAIN-SUFFIX","value":"github.com","target":"Proxy"},
+  {"type":"DOMAIN-KEYWORD","value":"openai","target":"US Only"},
+  {"type":"PROCESS-NAME","value":"steam","target":"DIRECT"},
+  {"type":"IP-CIDR","value":"192.168.0.0/16","target":"DIRECT"}
+]

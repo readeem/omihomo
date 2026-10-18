@@ -22,7 +22,7 @@ import (
 	"github.com/readeem/omihomo/internal/settings"
 )
 
-// Version is set at build time with -ldflags "-X ...cli.Version=v2.0.0".
+// Set at build time with -ldflags "-X ...cli.Version=vX.Y.Z".
 var Version = "dev"
 
 // Exit codes.

@@ -8,7 +8,7 @@ for tool in go makepkg jq zstd fakeroot; do
   command -v "$tool" >/dev/null || { printf 'build needs %s\n' "$tool" >&2; exit 1; }
 done
 version=$(jq -r .version manifest.json)
-[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+[[ $version =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]
 name=omihomo-$version
 mkdir -p dist
 work=$(mktemp -d "$root/dist/.package-XXXXXX")
@@ -17,6 +17,10 @@ mkdir -p "$work/$name" "$work/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_gvisor,no_easytier -trimpath \
   -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
   -o "$work/$name/omihomo" ./cmd/omihomo
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' \
+  -o "$work/$name/omihomo-update" ./cmd/omihomo-update
+install -m755 "$work/$name/omihomo-update" "dist/omihomo-update-$version-x86_64"
+(cd dist && sha256sum "omihomo-update-$version-x86_64" > "omihomo-update-$version-x86_64.sha256")
 install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles packaging/omihomo-apply.path packaging/omihomo-apply.service LICENSE "$work/$name/"
 go mod vendor -o "$work/vendor"
 (cd "$work" && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
@@ -31,10 +35,13 @@ checksum=$(cut -d' ' -f1 "dist/$name-x86_64.tar.gz.sha256")
 cp packaging/aur/PKGBUILD packaging/aur/omihomo.install "$work/build/"
 sed -i -e "s/^pkgver=.*/pkgver=$version/" -e "s/^sha256sums=.*/sha256sums=('$checksum')/" "$work/build/PKGBUILD"
 cp "dist/$name-x86_64.tar.gz" "$work/build/"
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+export SOURCE_DATE_EPOCH
 (cd "$work/build" && makepkg --nodeps --noconfirm && makepkg --printsrcinfo > .SRCINFO)
 mkdir -p dist/aur
 install -m644 "$work/build/PKGBUILD" "$work/build/.SRCINFO" "$work/build/omihomo.install" dist/aur/
 cp "$work/build/omihomo-bin-$version-1-x86_64.pkg.tar.zst" dist/
+(cd dist && sha256sum "omihomo-bin-$version-1-x86_64.pkg.tar.zst" > "omihomo-bin-$version-1-x86_64.pkg.tar.zst.sha256")
 printf '\nBuilt %s/dist/omihomo-bin-%s-1-x86_64.pkg.tar.zst\n' "$root" "$version"
 printf 'Install and cut over after the current session: sudo pacman -U dist/omihomo-bin-%s-1-x86_64.pkg.tar.zst\n' "$version"
 printf 'Then: sudo /usr/bin/omihomo claim && omarchy restart shell\n'

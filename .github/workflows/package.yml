@@ -37,13 +37,16 @@ jobs:
         id: build
         run: |
           version=$(jq -r .version manifest.json)
-          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "manifest.json version $version is not X.Y.Z"; exit 1; }
+          [[ $version =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]] || { echo "manifest.json version $version is not X.Y.Z"; exit 1; }
           name=omihomo-$version
           stage=dist/$name
           mkdir -p "$stage"
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_gvisor,no_easytier -trimpath \
             -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
             -o "$stage/omihomo" ./cmd/omihomo
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' \
+            -o "$stage/omihomo-update" ./cmd/omihomo-update
+          install -m755 "$stage/omihomo-update" "dist/omihomo-update-$version-x86_64"
           install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles packaging/omihomo-apply.path packaging/omihomo-apply.service LICENSE "$stage/"
           go mod vendor -o dist/vendor
           (cd dist && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
@@ -52,7 +55,7 @@ jobs:
           pack "$name" "$name-x86_64.tar.gz"
           pack vendor "$name-vendor.tar.gz"
           rm -r "$stage" dist/vendor
-          (cd dist && for f in "$name-x86_64.tar.gz" "$name-vendor.tar.gz"; do sha256sum "$f" > "$f.sha256"; done)
+          (cd dist && for f in "$name-x86_64.tar.gz" "$name-vendor.tar.gz" "omihomo-update-$version-x86_64"; do sha256sum "$f" > "$f.sha256"; done)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cut -d' ' -f1 "dist/$name-x86_64.tar.gz.sha256")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -96,14 +99,20 @@ jobs:
           runuser -u builder -- sh -c 'cd aur && makepkg --printsrcinfo > .SRCINFO'
       - name: build the package
         run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
           runuser -u builder -- sh -c 'cd build && makepkg --nodeps'
           namcap aur/PKGBUILD build/omihomo-bin-*.pkg.tar.zst
+          package="omihomo-bin-$VERSION-1-x86_64.pkg.tar.zst"
+          cp "build/$package" dist/
+          (cd dist && sha256sum "$package" > "$package.sha256")
       # Outside a booted systemd the install script can only enable the units,
       # which is what this checks along with the files themselves. The
       # threshold is the unit's exposure, 2.8, so loosening the sandbox fails.
       - name: install and check the package
         run: |
           pacman -U --noconfirm build/omihomo-bin-*.pkg.tar.zst
+          cmp /usr/bin/omihomo-update "dist/omihomo-update-$VERSION-x86_64"
           omihomo version | grep -q "^omihomo v$VERSION "
           grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo-bin/THIRD_PARTY_LICENSES
           systemctl is-enabled omihomo.socket omihomo.service
@@ -117,6 +126,13 @@ jobs:
           pacman -R --noconfirm omihomo-bin
           test ! -e /etc/systemd/system/multi-user.target.wants/omihomo.service
           test ! -e /etc/systemd/system/sockets.target.wants/omihomo.socket
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-package
+          path: |
+            dist/*.pkg.tar.zst
+            dist/*.pkg.tar.zst.sha256
+          retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aur

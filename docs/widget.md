@@ -9,7 +9,8 @@ else in that folder is loaded from there.
 | `widget/Panel.qml` | Bar button, the popup's header, tabs, and key hints; the panel state and the cursor and key handling for every view |
 | `widget/views/` | One file per view (`ConfigsView`, `SubscriptionsView`, `RulesView`, `ConnectionsView`, `SettingsView`) and the rows only that view uses |
 | `widget/components/` | Shared pieces: `Theme`, text, buttons, fields, the switch, tabs, `TrafficGraph`, `FlowDiagram`, and `NavRow`, the base of every cursor row |
-| `widget/Service.qml` | All state: the connection to the daemon, its streams, and actions |
+| `widget/Service.qml` | The connection to the daemon, its streams, and actions |
+| `widget/UpdateService.qml` | Cached release checks through the installer, independent of the daemon |
 | `widget/Model.js` | Pure reading of daemon messages and formatting, tested by `tests/model_test.js` |
 | `widget/OmihomoIcon.qml` | The bar mark, drawn natively rather than shipped as an SVG |
 
@@ -20,7 +21,7 @@ the panel's cursor needs to focus and scroll, so the cursor and the keys stay in
 
 ## Boundaries
 
-The widget has one callee: the daemon's socket, `/run/omihomo/omihomo.sock`, or `OMIHOMO_SOCKET`
+The proxy controls talk to the daemon's socket, `/run/omihomo/omihomo.sock`, or `OMIHOMO_SOCKET`
 when it is set (see [daemon.md](daemon.md)). `widget/Service.qml` holds one `Socket` to it,
 sends requests with an id and matches each reply to its call, and applies the events the daemon
 pushes. It runs no processes and polls nothing.
@@ -36,9 +37,9 @@ why, and the command that fixes it, run in a terminal since it asks for a passwo
 
 | Situation | Card | Command |
 | --- | --- | --- |
-| No daemon answers on the socket | Install core | `bin/omihomo-install` |
-| The daemon speaks an older protocol | Update core | `yay -S omihomo-bin` |
-| The daemon speaks a newer protocol | Update the plugin | none |
+| No daemon answers on the socket | Install core | `bin/omihomo-install install` |
+| The daemon speaks an older protocol | Update core | `bin/omihomo-install update` |
+| The daemon speaks a newer protocol | Update the Omarchy plugin | No daemon update action |
 | The daemon refuses this account, or the socket is not this account's | Claim core | `sudo /usr/bin/omihomo claim` |
 
 The panel tries again with a backoff, every 5 seconds while no daemon answers, and at once when
@@ -140,7 +141,7 @@ one drops it from the log, which is the only place it exists. Closed entries are
 oldest first, and the whole log is discarded when the core stops.
 
 The **settings view**, behind the gear, holds state that is changed rarely: mode and TUN, TUN
-acceleration, the Tailscale integration, and uninstall. Acceleration is the `tun_redirect`
+acceleration, the Tailscale integration, release updates, and uninstall. Acceleration is the `tun_redirect`
 setting, which moves `auto-redirect` and the TUN stack together. It is off by default; turning it
 off is the repair for a core that reports `TUN acceleration cannot start on this machine`, and
 its row says so while that is the reason the core is degraded. The Tailscale rows show only when
@@ -149,6 +150,19 @@ restores the last on/off state, and as a root service it has no permissions to r
 hands `sudo pacman -R omihomo-bin` to `omarchy-launch-floating-terminal-with-presentation`. It
 arms on the first activation and only runs on the second; Esc or moving the cursor off the button
 cancels. Subscriptions and settings stay in `/var/lib/omihomo`.
+
+Settings shows the installed package and latest release, with check, update, and release notes
+controls. Update is offered only after a successful check confirms a newer package. Checks run
+as the normal user through `bin/omihomo-install check`; install and update run in the existing
+floating terminal so authentication remains interactive. Only a locally validated HTTPS release
+URL under the fixed project repository can open externally. Remote text never becomes a command.
+Check errors stay in Settings and preserve the last successful result.
+
+`UpdateService` checks once when enabled and every 12 hours thereafter. The cache lives for the
+service's lifetime, including across panel opens; opening Settings does not trigger a request.
+Manual checks bypass the cache. Checks reject malformed responses and output over 8 KiB, and
+kill the check process after 30 seconds. `commandPath` is injectable for isolated tests and demos;
+it defaults to the plugin's installer. `completed` fires after each attempt settles, including failures.
 
 ## Keys
 
@@ -172,7 +186,7 @@ Navigation is one flat cursor over the current view's rows, so `j`/`k` walks the
 | `g` | Next group (configs) |
 | `p` | Make the browsed group primary (configs) |
 | `/` | Filter configs (configs); focus the rule tester (rules) |
-| `u` | Update the selected subscription (subs) |
+| `u` | Update the selected subscription (subs); check for releases (settings) |
 | `a` | Add a subscription (subs) |
 | `A` | Close every open connection (conns); toggle TUN acceleration (settings) |
 | `L` | Clear the connection log (conns) |
@@ -189,11 +203,12 @@ Every one of those is also reachable with the mouse. A focused text field owns `
 
 ## Cost
 
-Nothing polls. The bar costs one open socket and a `status` push whenever the status changes.
+Release checks run every 12 hours while the updater is enabled. Proxy state does not poll: the
+bar costs one open socket and a `status` push whenever the status changes.
 The panel's streams run only while it is open: the daemon pushes traffic and connections once a
 second, and groups, rules, and subscriptions when they change. A connection that opens and
 closes with the panel shut is never logged — the deliberate trade for a bar widget that costs
-nothing when it is not on screen. Egress is the only field that costs a network call, and it is
+nothing for those streams when it is not on screen. Egress checks are
 event-driven (see Panel).
 
 ## Installing it
@@ -224,6 +239,12 @@ one that answers, one whose writes fail, one of an older and one of a newer prot
 refuses the account, and a socket nobody listens on. They inject stale status pushes between a
 click and its reply, drop the connection, and switch runtimes, and never touch the real daemon.
 
+`tests/update_state_test.sh` runs only the non-rendering `UpdateService` controller with a fake
+installer command. Its event-driven assertions cover successful checks, package revisions,
+uninstalled and current packages, cached re-enabling, retained results on errors, malformed and
+oversized output, rejected URLs, process failures, and the timeout. It never invokes the installer
+or the live proxy, and waits on `completed` rather than polling.
+
 `qmllint` catches syntax and binding mistakes without a compositor:
 
 ```sh
@@ -238,10 +259,35 @@ Expect warnings in the same categories the first-party panels produce (`unqualif
 To see the widget run against a fake core, start a development daemon (`omihomo daemon --core
 fake`, see [daemon.md](daemon.md#running-it)) and point the shell at it with `OMIHOMO_SOCKET`.
 
+`tools/screenshots/drive` runs the real panel against the screenshot fixtures and drives it as
+a user would, for an agent or a script to check a change:
+
+```sh
+tools/screenshots/drive start          # offscreen at 2×; --visible opens a desktop window instead,
+                                       # --no-core starts with no core installed
+tools/screenshots/drive keys 3 / Down  # characters, Qt key names, shift+Tab
+tools/screenshots/drive type youtube.com
+tools/screenshots/drive click 295 190  # screenshot pixels
+tools/screenshots/drive shot /tmp/rules.png
+tools/screenshots/drive state          # view, cursor, edit and error as JSON
+tools/screenshots/drive stop
+```
+
+Keys and clicks go through Qt's input path from `QtTest`'s `TestEvent`, reached over `qs ipc`.
+The fake daemon keeps the panel's writes in memory, and settings edits run the CLI built from the
+checkout against it, in the session's private `HOME`. One session runs at a time, in
+`$XDG_RUNTIME_DIR/omihomo-drive`, and ends on its own after an hour. The panel stands in for the
+layer-shell popup as the screenshots do.
+
+The fake installer, `tools/screenshots/omihomo-install`, keeps its package version in a file.
+With `--no-core`, Install core installs 1.0.0-1 and starts the fake daemon; release 1.1.0-1 then
+appears, and Update in Settings moves to it. Nothing is downloaded. Of the commands the panel hands
+to the terminal, only those two run, without a shell; the rest, such as uninstall's `sudo`, are only
+logged, so `drive log` shows what would have run.
+
 ## Screenshots
 
-Screenshot capture is a maintainer operation using invented fixture data. Agents must not run it
-or otherwise render/smoke-test the widget; changes are tried manually in the installed shell:
+Screenshot capture rewrites the README images from invented fixture data:
 
 ```sh
 tools/screenshots/capture            # rewrites preview.png and assets/screenshots/
@@ -256,11 +302,12 @@ Everything that could vary is pinned, so a commit gives the same images on the s
 shell, Qt, font, and wallpaper:
 
 - `tools/screenshots/data/` is the invented subscription, configs, rules, connections, and
-  traffic, in the daemon's shapes. The fake daemon next to it, `daemon.js`, answers the panel from
+  traffic, in the daemon's shapes, and `settings/` the owner's settings files. The fake daemon next to it, `daemon.js`, answers the panel from
   those files on a private socket, so no request leaves the machine and the live core and state are never touched. Use only invented
   names and documentation addresses (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) there.
-- `tools/screenshots/theme/` is the theme and font, read from a throwaway `HOME`. A `hyprctl`
-  stub keeps the running desktop's rounding and gaps out.
+- `tools/screenshots/theme/` is the theme and font, read from a throwaway `HOME`. A stub
+  `hyprctl` keeps the running desktop's rounding and gaps out, and a stub `xdg-open` the browser.
+  `omihomo-install` there answers an update check with a newer release.
 - Times are relative to the run and sit mid-unit, so uptime, update ages, and connection ages
   read the same.
 

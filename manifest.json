@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "dev.readeem.omihomo",
   "name": "Omihomo",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "author": "readeem",
   "license": "GPL-3.0-only",
   "description": "Manage a mihomo proxy core from the Omarchy bar: subscriptions, groups, configs, rules, latency, and live connections.",

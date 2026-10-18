@@ -1,142 +1,167 @@
 # Release workflow
 
-Omihomo releases provide the Go daemon for Linux x86_64. The widget remains a separate Omarchy
-plugin. The AUR package `omihomo-bin` installs the prebuilt daemon and its systemd units; it does
-not compile Go on the user's machine. Runtime dependencies are systemd and util-linux
-(the owner claim uses `runuser`); the core is embedded.
+GitHub Releases distributes the `omihomo-bin` Arch package for Linux x86_64. The widget is
+an Omarchy plugin installed from git. Pacman owns the daemon and updater binaries, systemd
+units, installation hooks and removal. AUR publication is optional.
 
-## What CI builds
+## What CI publishes
 
-`.github/workflows/package.yml` is a reusable workflow called by CI and the release workflow.
-It reads `manifest.json` and accepts versions of the form `X.Y.Z`. It builds a static binary
-with `CGO_ENABLED=0`, `with_gvisor,no_easytier`, stripped symbols, and the version embedded in
-the CLI. gVisor supports TUN without redirect; disabling EasyTier avoids its JIT under the
-service's `MemoryDenyWriteExecute=yes` sandbox.
+The tag must match `manifest.json`. The full CI gate runs Go checks, the reachable-vulnerability
+scan, installer tests and isolated widget-controller tests. The package workflow builds the
+daemon and a small standard-library-only updater, then builds and tests the Arch package in
+a clean container. Publication uses those same tested files:
 
-The `release` workflow artifact contains:
+- `omihomo-bin-X.Y.Z-1-x86_64.pkg.tar.zst`: the installable Arch package;
+- `omihomo-update-X.Y.Z-x86_64`: the same updater included in the package, for first-install bootstrap;
+- `omihomo-X.Y.Z-x86_64.tar.gz`: the binaries, units and license notices;
+- `omihomo-X.Y.Z-vendor.tar.gz`: dependency source for the GPL distribution;
+- `.sha256` files for these artifacts;
+- `omihomo-release.txt` and its raw Ed25519 signature `omihomo-release.txt.sig`.
 
-- `omihomo-X.Y.Z-x86_64.tar.gz`: a versioned directory with the binary, service unit, socket
-  unit, tmpfiles rule, license, and the license notices of every vendored dependency in
-  `THIRD_PARTY_LICENSES`, which the package installs under `/usr/share/licenses/omihomo-bin`;
-- `omihomo-X.Y.Z-vendor.tar.gz`: the `go mod vendor` tree, so the release carries the source of
-  every module linked into the binary, as GPLv3 requires;
-- a `.sha256` checksum for each, in `sha256sum` format.
+The signed manifest binds the version, package revision, architecture, exact size and SHA-256
+of both executable artifacts. It contains no executable shell, paths, URLs, commands or keys.
+The signing job verifies that its private key matches the checked-in public key before use.
 
-The archive uses sorted entries, the commit timestamp, fixed ownership, and gzip without a
-stored timestamp. The package job renders `packaging/aur/PKGBUILD` with the actual version
-and archive checksum, then generates `.SRCINFO`. The template's `0.0.0` and `SKIP` values are
-placeholders; the rendered AUR files must contain the release version and a real checksum.
+CI installs and removes the package only inside its disposable Arch container. This checks
+files, enablement, version and service sandboxing; it does not test a running TUN proxy.
 
-Inside a clean Arch Linux container, CI runs `makepkg` against that same archive, runs namcap,
-installs the package, checks the CLI version, verifies the systemd units and their sandbox,
-and checks removal disables the units. The container does not boot systemd, so this verifies
-package installation and enablement, not a running TUN proxy. The `aur` artifact holds the
-rendered `PKGBUILD`, `.SRCINFO`, and `omihomo.install` that will be published to AUR.
+## Installation trust
 
-## Maintainer setup
+The plugin's `bin/omihomo-install` checks public signed release metadata as the normal user.
+The initial trust is the plugin checkout and its `internal/update/release.pub` public key.
+The widget caches update checks for twelve hours and also offers an explicit refresh.
 
-Before the first release:
+Install/update opens a terminal and requests normal sudo authentication. An environment-cleared
+shell downloads and verifies the manifest and bootstrap updater in a root-owned `0700`
+temporary directory. It rejects an updater older than the plugin or a package downgrade
+before executing it. The updater verifies the manifest again, downloads the exact tagged
+package, checks its size and hash, and asks pacman to confirm installation. It checks the
+package's name, version and architecture before installing it. Existing settings and ownership
+stay in place; only first installation runs claim and enables the user's settings sync units.
 
-1. Set up an AUR account with permission to push `omihomo-bin` and register a dedicated SSH
-   public key with that account.
-2. In the GitHub repository, create an environment named `aur`. Under its deployment branch
-   and tag rules, choose selected branches and tags and allow **tags only** matching `v*`.
-   Do not allow ordinary branches to use this environment. The workflow additionally checks
-   the exact numeric `vX.Y.Z` format. Required reviewers can be added if desired.
-3. Add the corresponding private SSH key as the environment secret `AUR_SSH_PRIVATE_KEY`.
-   Keep it in the `aur` environment, not as a repository-wide secret.
-4. Ensure GitHub Actions can create releases with `contents: write`. Package-building jobs
-   only need read access; only the AUR publication job uses the `aur` environment and SSH key.
+Signature verification is mandatory in this path, independent of pacman's local-file signature
+policy. The manifest signature authenticates the package bytes; it is not a pacman keyring
+entry or detached OpenPGP package signature. Plain checksums are for download verification.
 
-Generate the dedicated CI key from a local terminal (choose an unused filename). CI needs an
-unencrypted key; it is authorized for the AUR account's packages, not just one repository:
+Both download implementations allow only HTTPS GitHub and GitHub asset hosts, bound redirects,
+sizes and timeouts, and ignore environment-configured proxies. Installed version comparisons
+include the package revision. Equal or older packages are refused, including a recheck just
+before installation. Pacman keeps its interactive confirmation, and network timeouts never
+kill a running package transaction. Another package manager can still change installed state
+concurrently; review pacman's transaction summary before accepting.
 
-```sh
-umask 077
-ssh-keygen -t ed25519 -N '' -C 'Omihomo AUR releases' -f "$HOME/.ssh/omihomo-aur"
-cat "$HOME/.ssh/omihomo-aur.pub"
-```
+The root proxy daemon has no update operation and keeps its existing sandbox. The remaining
+trust is the plugin checkout, release signing key, reviewed CI code, and signed package content:
+a valid signed package can execute installation hooks as root. Signatures authenticate content;
+GitHub can still withhold releases, so they do not prove that a newer release does not exist.
 
-Paste only the `.pub` contents into your AUR account's SSH public keys field. Verify the AUR
-server's host fingerprint against its official SSH fingerprints before accepting the first
-connection, then check authentication without publishing:
+## Configure publication
 
-```sh
-ssh -i "$HOME/.ssh/omihomo-aur" -o IdentitiesOnly=yes aur@aur.archlinux.org list-repos
-```
+1. Create a GitHub environment named `release` under **Settings → Environments**.
+   Add a required reviewer and disable administrator bypass. For a sole maintainer,
+   leave **Prevent self-review** unchecked.
+2. Choose **Selected branches and tags**, then add a **Tag** rule matching `v*`.
+   Add no branch rule. Do this before pushing a tag: a workflow referencing a missing
+   environment creates it without protection rules.
+3. Keep the signing private key in a private directory outside version control, with directory
+   mode `0700` and file mode `0600`. Generate it once if a matching key does not already exist:
 
-After creating the `aur` GitHub environment and its **tag-only `v*`** deployment rule, add the
-private key through stdin from a checkout of this repository:
+   ```sh
+   umask 077
+   openssl genpkey -algorithm ED25519 -out "$SIGNING_KEY"
+   openssl pkey -in "$SIGNING_KEY" -pubout -out internal/update/release.pub
+   ```
 
-```sh
-gh secret set AUR_SSH_PRIVATE_KEY --env aur < "$HOME/.ssh/omihomo-aur"
-```
+   Set `SIGNING_KEY` to an unused private filename first. Commit only the public key.
+   Keep a secure backup; routine releases must use the same key.
+4. From this checkout, store the matching private key through stdin:
 
-Do not paste the private key into an issue, workflow, command argument or repository file.
-No initial manual AUR push is needed: after the first GitHub release is published, the workflow
-clones the empty package repository and pushes `PKGBUILD`, `.SRCINFO`, and `omihomo.install`.
-The package name must be available or already maintained by your AUR account. If another account
-owns it, resolve ownership before releasing.
+   ```sh
+   gh secret set OMIHOMO_SIGNING_KEY --env release < "$SIGNING_KEY"
+   gh secret list --env release
+   ```
 
-These steps follow [Arch's AUR submission guidelines](https://wiki.archlinux.org/title/AUR_submission_guidelines)
-and [GitHub's environment protection rules](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+   The secret belongs only to `release`. Never put its contents in command arguments,
+   workflow files, logs, issues or repository variables. No personal access token is needed:
+   the publication job requests `contents: write` for `GITHUB_TOKEN`.
+5. Keep `AUR_PUBLISH` unset unless the optional AUR setup below is complete.
 
-The release job pins AUR's SSH ed25519 host key instead of trusting a key fetched at runtime:
+Environment reviewers and restrictions depend on the GitHub plan for private repositories;
+they are available for public repositories on current plans. See
+[GitHub's environment instructions](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 
-```text
-aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN
-```
-
-If AUR rotates that key, verify the replacement through AUR's official infrastructure
-information before updating the workflow. Do not disable strict host key checking.
+Changing the signing key requires a reviewed plugin update containing the replacement public
+key and a newly built updater. Update that trusted checkout before using releases signed with
+the new key. Never accept replacement keys from release metadata. Replace the environment
+secret and retire the old private key; an old checkout or binary still contains its old trust root.
 
 ## Publish a version
 
-Before publishing, complete the manual tests and a maintainer security review. Review the root
-service's networking and process-inspection capabilities, owner-only socket, private subscription
-state, fixed Tailscale drop-in write access, embedded dependency scan, release checksums and the
-AUR environment's key exposure. Publishing a tag exposes a public release and enables automated
-AUR publication; do not use it as a test run.
+Complete [manual cutover testing](../tests/README.md#manual-cutover-test) and a maintainer
+security review before publication. Review the existing root service's networking and
+process-inspection privileges, owner-only control socket, private subscription state, dependency
+scan, and the new authenticated installer and signing-key exposure. The release publishes
+binaries, dependency source, checksums and signed metadata. It adds no network listener or
+new Go dependency; bootstrap uses Arch's curl and OpenSSL tools.
 
-Merge the intended changes and the `manifest.json` version bump first. From the exact commit
-to release, create and push a tag matching that version. For example, for manifest version
-`2.0.0`:
-
-```sh
-git tag v2.0.0
-git push origin v2.0.0
-```
-
-These are maintainer instructions, not steps performed while implementing the workflow.
-Pushing the tag starts `.github/workflows/release.yml`, which:
-
-1. Rejects any tag outside `vX.Y.Z` or whose version differs from `manifest.json`.
-2. Calls the reusable package workflow, including the Arch installation checks.
-3. Uploads the tested tarball and its checksum to a draft GitHub release, then publishes it.
-   On a rerun, it checks that already published assets match the tested bytes.
-4. Uses the `aur` environment to push the rendered AUR metadata to the `omihomo-bin` AUR
-   repository only after the GitHub release assets are available. It rejects publishing an
-   older version over a newer AUR version.
-
-Review both the GitHub release and AUR job result. A failed AUR publication can leave a valid
-GitHub release without an updated AUR package; inspect the failed job before retrying. Never
-replace a published archive with different bytes: AUR users verify the recorded checksum.
-Make a new release for changed binary contents.
-
-To verify a downloaded archive, put it and its `.sha256` file in the same directory and run:
+Merge the version and intended changes, then tag the exact commit:
 
 ```sh
-sha256sum -c omihomo-2.0.0-x86_64.tar.gz.sha256
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-Users install and claim the daemon with the commands in [daemon installation](daemon.md#install-on-arch-linux).
-Upgrades use the normal AUR update flow; the package restarts a running daemon. No standalone
-core downloader or self-update service is added by this release path.
+After CI passes, open the run's **Review deployments**, select `release`, and choose
+**Approve and deploy** following the security review. CI signs metadata, uploads all assets to
+a draft, and publishes only after upload succeeds. AUR runs afterward only when enabled.
 
-## Local test package
+Published assets are immutable in this workflow: reruns compare bytes and fail on differences.
+Arch's rolling build environment can change package build metadata; prefer rerunning only
+failed jobs. Never replace a published package or signature with different bytes. Release
+changed contents under a new version.
 
-`./tools/build-package` builds the release-shaped binary and dependency source archives, checksums,
-local Arch package and rendered AUR metadata under ignored `dist/`, without installing or publishing anything. It needs
-Go, `jq`, and Arch's `base-devel` tools. Use [the manual checklist](../tests/README.md#manual-cutover-test)
-for the actual cutover. CI still rebuilds and tests the exact tagged commit before publication;
-local test archives must never replace published release assets.
+## Optional AUR publication
+
+AUR is a second distribution channel for the same daemon package. It is not needed for
+GitHub installs or widget update checks.
+
+1. Obtain an AUR account with permission to push `omihomo-bin`. Check availability and
+   resolve existing ownership before enabling publication. Registration availability is
+   controlled by Arch; do not assume forum accounts also work on AUR.
+2. Generate a dedicated unencrypted SSH key at an unused private filename:
+
+   ```sh
+   umask 077
+   ssh-keygen -t ed25519 -N '' -C 'Omihomo AUR releases' -f "$AUR_KEY"
+   cat "$AUR_KEY.pub"
+   ```
+
+   Add only the public line to **My Account → SSH Public Key**, preserving existing keys.
+   This key grants access to that account's packages, not just this package.
+3. Verify the server fingerprint against the [AUR home page](https://aur.archlinux.org/),
+   then test authentication without publishing:
+
+   ```sh
+   ssh -i "$AUR_KEY" -o IdentitiesOnly=yes aur@aur.archlinux.org list-repos
+   ```
+
+4. Create an `aur` GitHub environment with the same tag-only `v*` restriction. Store its
+   SSH private key as an environment secret through stdin:
+
+   ```sh
+   gh secret set AUR_SSH_PRIVATE_KEY --env aur < "$AUR_KEY"
+   ```
+
+5. Set repository variable `AUR_PUBLISH` to `true`. The first publication creates the
+   package repository contents; no initial manual AUR push is needed.
+
+The workflow pins AUR's Ed25519 host key. Verify any replacement through official Arch
+infrastructure information before changing it. To rotate the account key, remove the old
+public key on AUR as well as replacing the GitHub secret. See
+[Arch's submission guidelines](https://wiki.archlinux.org/title/AUR_submission_guidelines).
+
+## Local testing
+
+`mise run package` writes packages and rendered AUR metadata to ignored `dist/`; it installs
+nothing. Keep local builds separate from public releases. The private signing key is not
+needed to build or test packages.

@@ -4,8 +4,7 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: read
+permissions: {}
 
 # Serialize AUR updates across tags; never interrupt a publication halfway.
 concurrency:
@@ -15,6 +14,8 @@ concurrency:
 jobs:
   version:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,51 +24,75 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          [[ $TAG =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ $TAG =~ ^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]
           test "$TAG" = "v$(jq -r .version manifest.json)"
 
-  package:
+  checks:
     needs: version
-    uses: ./.github/workflows/package.yml
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] actionlint does not support $/ workflow calls yet.
 
   publish:
-    needs: package
+    needs: checks
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tested-package
+          path: dist
+      - name: sign release
+        env:
+          OMIHOMO_SIGNING_KEY: ${{ secrets.OMIHOMO_SIGNING_KEY }}
+          VERSION: ${{ needs.checks.outputs.version }}
+        run: tools/sign-release "$VERSION" dist
       - name: publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          VERSION: ${{ needs.package.outputs.version }}
+          VERSION: ${{ needs.checks.outputs.version }}
         run: |
           cd dist
-          assets=("omihomo-$VERSION-x86_64.tar.gz" "omihomo-$VERSION-vendor.tar.gz")
-          for f in "${assets[@]}"; do sha256sum --check "$f.sha256"; done
+          checked=("omihomo-$VERSION-x86_64.tar.gz" "omihomo-$VERSION-vendor.tar.gz"
+            "omihomo-bin-$VERSION-1-x86_64.pkg.tar.zst" "omihomo-update-$VERSION-x86_64")
+          assets=(omihomo-release.txt omihomo-release.txt.sig)
+          for f in "${checked[@]}"; do
+            sha256sum --check "$f.sha256"
+            assets+=("$f" "$f.sha256")
+          done
           # Draft first: a failed upload must not expose an incomplete release.
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
           fi
           if [[ $(gh release view "$TAG" --json isDraft --jq .isDraft) == true ]]; then
-            for f in "${assets[@]}"; do gh release upload "$TAG" "$f" "$f.sha256" --clobber; done
+            gh release upload "$TAG" "${assets[@]}" --clobber
             gh release edit "$TAG" --draft=false
           else
             # Reruns may repair AUR publication, but cannot replace released bytes.
             mkdir published
-            gh release download "$TAG" --dir published --pattern "omihomo-$VERSION-*"
-            for f in "${assets[@]}"; do cmp "$f" "published/$f"; cmp "$f.sha256" "published/$f.sha256"; done
+            for f in "${assets[@]}"; do
+              gh release download "$TAG" --dir published --pattern "$f"
+              cmp "$f" "published/$f"
+            done
           fi
 
   aur:
-    needs: [package, publish]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, publish]
+    if: vars.AUR_PUBLISH == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Configure this environment to allow v* tags only. The key must be an
     # environment secret, never a repository secret available to branch CI.
     environment: aur
@@ -79,7 +104,7 @@ jobs:
       - name: push package to AUR
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          VERSION: ${{ needs.package.outputs.version }}
+          VERSION: ${{ needs.checks.outputs.version }}
         run: |
           umask 077
           key_dir=$(mktemp -d)
@@ -99,7 +124,7 @@ jobs:
           cp package/PKGBUILD package/.SRCINFO package/omihomo.install aur/
           cd aur
           git config user.name 'Omihomo releases'
-          git config user.email 'readeem@users.noreply.github.com'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add PKGBUILD .SRCINFO omihomo.install
           if ! git diff --cached --quiet; then
             git commit -m "Release $VERSION"

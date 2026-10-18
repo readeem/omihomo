@@ -32,6 +32,10 @@ run = "./tests/run"
 description = "Scan the release build for reachable vulnerabilities"
 run = "govulncheck -tags with_gvisor,no_easytier ./..."
 
+[tasks.security]
+description = "Signed bootstrap/release tests and isolated privileged package adapter tests"
+run = ["./tests/install_test.sh", "./tests/release_test.sh", "./tests/package_boundary_test.sh"]
+
 [tasks.fix]
 description = "Apply go fix and gofmt"
 run = ["go fix ./...", "gofmt -w ."]

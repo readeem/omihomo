@@ -1,9 +1,135 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-yay -S omihomo-bin
-sudo /usr/bin/omihomo claim \
-  --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
-  --legacy-config "${XDG_CONFIG_HOME:-$HOME/.config}"
-systemctl --user daemon-reload
-systemctl --user enable --now omihomo-apply.path omihomo-apply.service
+fetch() {
+  local url=$1 destination=$2 limit=$3 response status hop remaining
+  for ((hop=0; hop<5; hop++)); do
+    remaining=$((release_deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    if (( remaining > 90 )); then remaining=90; fi
+    case "$url" in
+      https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) ;;
+      *) printf 'Release redirect is outside the trusted download hosts.\n' >&2; return 1 ;;
+    esac
+    response=$(curl -q --silent --fail --proto '=https' --proto-redir '=https' \
+      --proxy '' --noproxy '*' --connect-timeout 10 --max-time "$remaining" --max-filesize "$limit" \
+      --output "$destination" --write-out $'%{http_code}\n%{redirect_url}' "$url") || {
+      printf 'Release download failed. Check connectivity and try again.\n' >&2
+      return 1
+    }
+    status=${response%%$'\n'*}
+    if [[ $status == 200 ]]; then
+      [[ $(stat -c %s "$destination") -le $limit ]] || return 1
+      return 0
+    fi
+    [[ $status == 301 || $status == 302 || $status == 303 || $status == 307 || $status == 308 ]] || return 1
+    url=${response#*$'\n'}
+  done
+  printf 'Release redirected too many times.\n' >&2
+  return 1
+}
+
+bootstrap() (
+  set -euo pipefail
+  umask 077
+  local mode=$1 public_key=$2 minimum=$3 work version pkgrel package_size installer_size installer_hash installed output
+  local version_pattern='(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})'
+  local repository=https://github.com/readeem/omihomo
+  local release_deadline=$((SECONDS + 180))
+  if [[ $mode == check ]]; then release_deadline=$((SECONDS + 20)); fi
+  local -a fields
+  work=$(mktemp -d /tmp/omihomo-bootstrap.XXXXXXXX) || return 1
+  trap 'rm -r -- "$work"' EXIT
+  printf '%s\n' "$public_key" > "$work/key.pub"
+  fetch "$repository/releases/latest/download/omihomo-release.txt" "$work/release" 1024 || return 1
+  fetch "$repository/releases/latest/download/omihomo-release.txt.sig" "$work/signature" 64 || return 1
+  [[ $(stat -c %s "$work/signature") == 64 ]] || { printf 'Invalid release signature size.\n' >&2; return 1; }
+  openssl pkeyutl -verify -pubin -inkey "$work/key.pub" -rawin -in "$work/release" \
+    -sigfile "$work/signature" >/dev/null 2>&1 || {
+    printf 'Release signature verification failed.\n' >&2
+    return 1
+  }
+  mapfile -t fields < "$work/release"
+  [[ ${#fields[@]} == 8 && ${fields[0]} == OMIHOMO-RELEASE-1 && ${fields[3]} == arch=x86_64 \
+    && ${fields[1]} =~ ^version=$version_pattern$ && ${fields[2]} =~ ^pkgrel=[1-9][0-9]{0,8}$ \
+    && ${fields[4]} =~ ^package-size=[1-9][0-9]{0,8}$ && ${fields[5]} =~ ^package-sha256=[a-f0-9]{64}$ \
+    && ${fields[6]} =~ ^installer-size=[1-9][0-9]{0,8}$ && ${fields[7]} =~ ^installer-sha256=[a-f0-9]{64}$ ]] || {
+    printf 'Invalid signed release metadata.\n' >&2
+    return 1
+  }
+  [[ $(tail -c 1 "$work/release" | od -An -tu1) =~ ^[[:space:]]*10[[:space:]]*$ ]] || return 1
+  version=${fields[1]#version=}
+  pkgrel=${fields[2]#pkgrel=}
+  package_size=${fields[4]#package-size=}
+  installer_size=${fields[6]#installer-size=}
+  installer_hash=${fields[7]#installer-sha256=}
+  (( package_size <= 134217728 && installer_size <= 33554432 )) || {
+    printf 'Release exceeds download size limits.\n' >&2
+    return 1
+  }
+  installed=''
+  if output=$(LC_ALL=C pacman -Q omihomo-bin 2>"$work/pacman-error"); then
+    [[ $output =~ ^omihomo-bin\ ($version_pattern-[1-9][0-9]{0,8})$ ]] || return 1
+    installed=${output#omihomo-bin }
+  elif [[ $(cat "$work/pacman-error") != "error: package 'omihomo-bin' was not found" || -n $output ]]; then
+    printf 'Cannot read installed package metadata.\n' >&2
+    return 1
+  fi
+  if [[ $mode == check ]]; then
+    local newer=true
+    if [[ -n $installed && $(vercmp "$version-$pkgrel" "$installed") -le 0 ]]; then newer=false; fi
+    printf '{"installed":"%s","available":"%s-%s","update_available":%s,"release_url":"%s/releases/tag/v%s"}\n' \
+      "$installed" "$version" "$pkgrel" "$newer" "$repository" "$version"
+    return 0
+  fi
+  [[ $(vercmp "$version" "$minimum") -ge 0 ]] || { printf 'Release is older than this plugin.\n' >&2; return 1; }
+  if [[ $mode == update ]]; then
+    [[ -n $installed && $(vercmp "$version-$pkgrel" "$installed") -gt 0 ]] || {
+      printf 'Refusing an absent package, reinstall, or downgrade.\n' >&2
+      return 1
+    }
+  else
+    [[ -z $installed ]] || { printf 'Package already installed. Choose Update core.\n' >&2; return 1; }
+  fi
+  fetch "$repository/releases/download/v$version/omihomo-update-$version-x86_64" "$work/installer" "$installer_size" || return 1
+  [[ $(stat -c %s "$work/installer") == "$installer_size" \
+    && $(sha256sum "$work/installer" | cut -d' ' -f1) == "$installer_hash" ]] || {
+    printf 'Installer does not match the signed release.\n' >&2
+    return 1
+  }
+  chmod 700 "$work/installer"
+  "$work/installer" "$mode" "$version"
+)
+
+mode=${1:-install}
+[[ $# -le 1 && ( $mode == check || $mode == install || $mode == update ) ]] || {
+  printf 'Usage: omihomo-install [check|install|update]\n' >&2
+  exit 2
+}
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { printf 'GitHub packages require Linux x86_64.\n' >&2; exit 1; }
+project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+public_key=$(cat "$project_root/internal/update/release.pub")
+minimum=$(sed -n 's/^  "version": "\([0-9.]*\)",$/\1/p' "$project_root/manifest.json")
+[[ $minimum =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+
+if [[ $mode == check ]]; then
+  if ! bootstrap check "$public_key" "$minimum"; then
+    printf '{"error":"Could not verify the latest release. Check connectivity and try again."}\n'
+    exit 1
+  fi
+  exit 0
+fi
+
+# The authenticated shell receives code and a public key, never user-writable
+# script paths. Every downloaded executable is verified in its own root-owned directory.
+root_script="$(declare -f fetch bootstrap)"$'\nbootstrap "$@"'
+sudo /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root TERM="${TERM:-dumb}" \
+  /usr/bin/bash -c "$root_script" omihomo-bootstrap "$mode" "$public_key" "$minimum"
+if [[ $mode == install ]]; then
+  sudo /usr/bin/omihomo claim \
+    --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
+    --legacy-config "${XDG_CONFIG_HOME:-$HOME/.config}"
+  systemctl --user daemon-reload
+  systemctl --user enable --now omihomo-apply.path omihomo-apply.service
+fi

@@ -23,6 +23,7 @@ package() {
   cd "omihomo-$pkgver"
   install -dm755 "$pkgdir/etc/systemd/system/tailscaled.service.d"
   install -Dm755 omihomo "$pkgdir/usr/bin/omihomo"
+  install -Dm755 omihomo-update "$pkgdir/usr/bin/omihomo-update"
   install -Dm644 omihomo.service "$pkgdir/usr/lib/systemd/system/omihomo.service"
   install -Dm644 omihomo.socket "$pkgdir/usr/lib/systemd/system/omihomo.socket"
   install -Dm644 omihomo-apply.path "$pkgdir/usr/lib/systemd/user/omihomo-apply.path"

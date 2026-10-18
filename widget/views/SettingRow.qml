@@ -13,6 +13,10 @@ NavRow {
   property bool urgentSubtitle: false
   property bool checked: false
   property bool modeControl: false
+  // A row with a tag is an action, so it shows the tag instead of a switch.
+  property string tag: ""
+  property color tagTint: theme.dim
+  property bool tagFilled: false
 
   implicitHeight: settingColumn.implicitHeight + Style.space(14)
   onActivated: if (settingRow.modeControl) panel.cycleMode(1)
@@ -52,9 +56,18 @@ NavRow {
       }
     }
 
+    Tag {
+      theme: settingRow.theme
+      visible: text !== ""
+      text: settingRow.tag
+      tint: settingRow.tagTint
+      strong: settingRow.tagFilled
+      filled: settingRow.tagFilled
+    }
+
     PanelSwitch {
       theme: settingRow.theme
-      visible: !settingRow.modeControl
+      visible: !settingRow.modeControl && settingRow.tag === ""
       interactive: false
       checked: settingRow.checked
     }

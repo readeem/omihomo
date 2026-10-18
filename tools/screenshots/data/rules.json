@@ -1,8 +1,4 @@
 {"rules":[
-  {"type":"DOMAIN-SUFFIX","value":"github.com","target":"Proxy","source":"user"},
-  {"type":"DOMAIN-KEYWORD","value":"openai","target":"US Only","source":"user"},
-  {"type":"PROCESS-NAME","value":"steam","target":"DIRECT","source":"user"},
-  {"type":"IP-CIDR","value":"192.168.0.0/16","target":"DIRECT","source":"user"},
   {"type":"DOMAIN-SUFFIX","value":"netflix.com","target":"Streaming","source":"subscription"},
   {"type":"DOMAIN-SUFFIX","value":"nflxvideo.net","target":"Streaming","source":"subscription"},
   {"type":"DOMAIN-SUFFIX","value":"youtube.com","target":"Streaming","source":"subscription"},

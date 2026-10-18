@@ -3,15 +3,10 @@
 # Usage: tools/screenshots/capture [output-dir]   (default: the repository)
 set -euo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-root=$(cd "$here/../.." && pwd)
+source "$(dirname "${BASH_SOURCE[0]}")/stage"
 out=$(realpath -m "${1:-$root}")
-shell=/usr/share/omarchy/shell
-wallpaper=/usr/share/omarchy/themes/tokyo-night/backgrounds/0-winding-road.webp
-
-for need in qs node "$shell/Commons" "$shell/Ui" "$wallpaper"; do
-  [[ -e $need ]] || command -v "$need" >/dev/null || { printf 'capture needs %s\n' "$need" >&2; exit 2; }
-done
+wallpaper=/usr/share/omarchy/themes/tokyo-night/backgrounds/1-winding-road.webp
+[[ -e $wallpaper ]] || { printf 'capture needs %s\n' "$wallpaper" >&2; exit 2; }
 
 umask 077
 work= child= daemon=
@@ -25,33 +20,14 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 work=$(mktemp -d /tmp/omihomo-shots.XXXXXX)
+mkdir "$work/out"
 
-# A private HOME holds the theme and font, so nothing of the desktop running
-# this leaks into the images, the fake bin directory shadows Hyprland, and the
-# panel talks to a fake daemon instead of the real core.
-config=$work/config
-mkdir -p "$work/fakebin" "$work/out" \
-  "$work/home/.local/state/omarchy/current/theme" "$work/home/.config/fontconfig"
-cp -r "$root/widget" "$config/omihomo/"
-cp "$here/capture.qml" "$config/shell.qml"
-cp -r "$shell/Commons" "$shell/Ui" "$config/"
-cp "$here/KeyboardPanel.qml" "$config/Ui/"
-cp "$here/hyprctl" "$work/fakebin/"
-cp "$here"/theme/{colors.toml,shell.toml} "$work/home/.local/state/omarchy/current/theme/"
-cp "$here/theme/fonts.conf" "$work/home/.config/fontconfig/"
-
-started=$(($(date +%s) - 12030))
-node "$here/daemon.js" "$work/omihomo.sock" "$here/data" "$started" &
-daemon=$!
-for _ in $(seq 100); do [[ -S $work/omihomo.sock ]] && break; sleep 0.05; done
+stage "$work" "$here/capture.qml"
+start_daemon "$work"
 
 log=$work/capture.log
-env -i PATH="$work/fakebin:/usr/bin" HOME="$work/home" TZ=UTC LANG=C.UTF-8 \
-  XDG_RUNTIME_DIR="$work" XDG_CONFIG_HOME="$work/home/.config" XDG_CACHE_HOME="$work/home/.cache" \
-  QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_SCALE_FACTOR=2 \
-  QT_QPA_PLATFORMTHEME= QT_QUICK_CONTROLS_STYLE=Fusion \
-  OMIHOMO_SOCKET="$work/omihomo.sock" OMIHOMO_SHOTS_OUT="$work/out" \
-  OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
+"${panel_env[@]}" QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 \
+  OMIHOMO_SHOTS_OUT="$work/out" OMIHOMO_SHOTS_WALLPAPER="file://$wallpaper" \
   timeout -k 5s 60s qs --no-color -p "$config" >"$log" 2>&1 &
 child=$!
 wait "$child" || true

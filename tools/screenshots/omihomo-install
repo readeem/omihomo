@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Stands in for bin/omihomo-install. The installed package is a file in the
+# work directory and nothing is downloaded. A release lands once the core is
+# installed, so an install is followed by an update. An install starts the
+# fake daemon when it waits on the work directory's FIFO.
+set -euo pipefail
+umask 077
+
+work=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+installed=$(cat "$work/installed" 2>/dev/null || true)
+available=1.1.0-1
+[[ -n $installed ]] || available=1.0.0-1
+
+case ${1:-} in
+check)
+  sleep 1
+  newer=false
+  [[ -z $installed || $installed == "$available" ]] || newer=true
+  printf '{"installed":"%s","available":"%s","update_available":%s,"release_url":"https://github.com/readeem/omihomo/releases/tag/v%s"}\n' \
+    "$installed" "$available" "$newer" "${available%-*}"
+  ;;
+install)
+  [[ -z $installed && -p $work/install ]] || { printf 'omihomo-install: already installed\n' >&2; exit 1; }
+  sleep 1
+  printf '%s\n' "$available" >"$work/installed"
+  printf 'start\n' >"$work/install"
+  printf 'omihomo-install: installed %s and started the core\n' "$available"
+  ;;
+update)
+  [[ -n $installed && $installed != "$available" ]] || { printf 'omihomo-install: nothing to update\n' >&2; exit 1; }
+  sleep 1
+  printf '%s\n' "$available" >"$work/installed"
+  printf 'omihomo-install: updated %s to %s\n' "$installed" "$available"
+  ;;
+*)
+  printf 'usage: omihomo-install check|install|update\n' >&2
+  exit 2
+  ;;
+esac
