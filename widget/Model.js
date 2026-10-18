@@ -814,13 +814,48 @@ function filterNames(names, query) {
   return out
 }
 
-var LEADING_EMOJI = /^((?:\uD83C[\uDDE6-\uDDFF]){2}|(?:\uD83C[\uDF00-\uDFFF]|\uD83D[\uDC00-\uDEFF]|\uD83E[\uDD00-\uDEFF]|[\u2600-\u27BF])\uFE0F?)\s+/
+// One emoji as a reader sees it: a flag (two regional indicators), or a
+// pictograph with its variation selector, skin tone, tag sequence (subdivision
+// flags), and any zero-width-joined pictographs after it.
+var PICTOGRAPH = "(?:\\uD83C[\\uDF00-\\uDFFF]|\\uD83D[\\uDC00-\\uDFFF]|\\uD83E[\\uDD00-\\uDFFF]|[\\u2600-\\u27BF])\\uFE0F?(?:\\uD83C[\\uDFFB-\\uDFFF])?"
+var EMOJI = "(?:(?:\\uD83C[\\uDDE6-\\uDDFF]){2}|" + PICTOGRAPH + "(?:\\uDB40[\\uDC20-\\uDC7F])*(?:\\u200D" + PICTOGRAPH + ")*)"
+var LEADING_EMOJI = new RegExp("^(" + EMOJI + ")\\s+")
+var TRAILING_EMOJI = new RegExp("\\s+((?:" + EMOJI + ")(?:\\s*" + EMOJI + ")*)\\s*$")
+var EMOJI_ALL = new RegExp(EMOJI, "g")
 
-// Splits a leading flag or emoji, and the space after it, off a name.
-function leadingEmoji(name) {
-  var s = text(name)
-  var m = LEADING_EMOJI.exec(s)
-  return m ? { mark: m[1], rest: s.slice(m[0].length) } : { mark: "", rest: s }
+// Splits a name into a leading flag or emoji, the text, and any emoji trailing
+// it. Each emoji end only counts when whitespace separates it from the text, so
+// "🇯🇵Node" stays one piece.
+function nameParts(name) {
+  var rest = text(name)
+  var mark = ""
+  var lead = LEADING_EMOJI.exec(rest)
+  if (lead) {
+    mark = lead[1]
+    rest = rest.slice(lead[0].length)
+  }
+  var tail = []
+  var trail = TRAILING_EMOJI.exec(rest)
+  if (trail && trail.index > 0) {
+    tail = trail[1].match(EMOJI_ALL)
+    rest = rest.slice(0, trail.index)
+  }
+  return { mark: mark, rest: rest, tail: tail }
+}
+
+// A file-name-safe key for one emoji: its code points in hex, e.g. "1f1ef-1f1f5".
+function emojiKey(emoji) {
+  var s = text(emoji)
+  var out = []
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i)
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+      c = (c - 0xD800) * 0x400 + (s.charCodeAt(i + 1) - 0xDC00) + 0x10000
+      i++
+    }
+    out.push(c.toString(16))
+  }
+  return out.join("-")
 }
 
 if (typeof module !== "undefined") {
@@ -879,6 +914,7 @@ if (typeof module !== "undefined") {
     relativeSince: relativeSince,
     nextMode: nextMode,
     filterNames: filterNames,
-    leadingEmoji: leadingEmoji
+    nameParts: nameParts,
+    emojiKey: emojiKey
   }
 }

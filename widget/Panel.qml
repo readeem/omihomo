@@ -38,7 +38,7 @@ Panel {
 
   property double nowMs: Date.now()
 
-  readonly property Theme theme: Theme { bar: root.bar }
+  readonly property Theme theme: Theme { bar: root.bar; emoji: EmojiImages {} }
   readonly property Service service: omihomo
   readonly property UpdateService updater: updateService
   readonly property color barIconColor: omihomo.coreActive ? barForeground : Qt.darker(barForeground, 1.55)

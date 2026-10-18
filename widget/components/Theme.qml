@@ -2,10 +2,11 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// The panel's palette, taken from the bar it sits on. Panel owns the one
-// instance and hands it to every component.
+// The panel's palette, taken from the bar it sits on, and its emoji images.
+// Panel owns the one instance and hands it to every component.
 QtObject {
   property var bar: null
+  property EmojiImages emoji: null
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent

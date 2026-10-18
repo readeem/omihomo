@@ -453,10 +453,22 @@ test("mode cycles through mihomo's three modes", () => {
   assert.equal(Model.nextMode(""), "rule")
 })
 
-test("a leading flag or emoji splits off a name with its space", () => {
-  assert.deepEqual(Model.leadingEmoji("🇩🇪 Германия #1-3 🚀"), { mark: "🇩🇪", rest: "Германия #1-3 🚀" })
-  assert.deepEqual(Model.leadingEmoji("🚀  Fast"), { mark: "🚀", rest: "Fast" })
-  assert.deepEqual(Model.leadingEmoji("☁️ Cloud"), { mark: "☁️", rest: "Cloud" })
-  assert.deepEqual(Model.leadingEmoji("🇩🇪Германия"), { mark: "", rest: "🇩🇪Германия" })
-  assert.deepEqual(Model.leadingEmoji("DIRECT"), { mark: "", rest: "DIRECT" })
+test("leading and trailing emoji split off a name with their spaces", () => {
+  assert.deepEqual(Model.nameParts("🇯🇵 Node A 🚀"), { mark: "🇯🇵", rest: "Node A", tail: ["🚀"] })
+  assert.deepEqual(Model.nameParts("🚀  Fast"), { mark: "🚀", rest: "Fast", tail: [] })
+  assert.deepEqual(Model.nameParts("☁️ Cloud"), { mark: "☁️", rest: "Cloud", tail: [] })
+  assert.deepEqual(Model.nameParts("🇯🇵Node"), { mark: "", rest: "🇯🇵Node", tail: [] })
+  assert.deepEqual(Model.nameParts("DIRECT"), { mark: "", rest: "DIRECT", tail: [] })
+  assert.deepEqual(Model.nameParts("🇯🇵 Node B 🚀🔥 "), { mark: "🇯🇵", rest: "Node B", tail: ["🚀", "🔥"] })
+  assert.deepEqual(Model.nameParts("🇯🇵 Node B 🚀 🟢"), { mark: "🇯🇵", rest: "Node B", tail: ["🚀", "🟢"] })
+  assert.deepEqual(Model.nameParts("Node🚀"), { mark: "", rest: "Node🚀", tail: [] })
+  assert.deepEqual(Model.nameParts("👨‍💻 Dev 👍🏽"), { mark: "👨‍💻", rest: "Dev", tail: ["👍🏽"] })
+  // An emoji-only name keeps its emoji as the mark rather than as an empty name with a tail.
+  assert.deepEqual(Model.nameParts("🇯🇵 🚀"), { mark: "🇯🇵", rest: "🚀", tail: [] })
+})
+
+test("an emoji keys by its code points", () => {
+  assert.equal(Model.emojiKey("🇯🇵"), "1f1ef-1f1f5")
+  assert.equal(Model.emojiKey("☁️"), "2601-fe0f")
+  assert.equal(Model.emojiKey("👍🏽"), "1f44d-1f3fd")
 })
