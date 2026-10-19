@@ -654,10 +654,10 @@ func TestImportedSelectionsSurviveOfflineStart(t *testing.T) {
 		return
 	}
 	home := filepath.Join(t.TempDir(), "core")
-	if err := ImportSelections(home, p, map[string]string{"Proxy": "Dead"}); err != nil {
+	if err := shared.ImportSelections(home, p, map[string]string{"Proxy": "Dead"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ImportSelections(home, p, map[string]string{"Proxy": "Local"}); !errors.Is(err, os.ErrExist) {
+	if err := shared.ImportSelections(home, p, map[string]string{"Proxy": "Local"}); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("existing cache overwritten: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(home, "cache.db"))
@@ -679,7 +679,7 @@ func TestImportSelectionsRejectsInvalidPairs(t *testing.T) {
 		{"Missing": "Local"}, {"Proxy": "Missing"}, {"Auto": "Dead"},
 	} {
 		home := filepath.Join(t.TempDir(), "core")
-		if err := ImportSelections(home, profile(), selections); err == nil {
+		if err := shared.ImportSelections(home, profile(), selections); err == nil {
 			t.Fatal("invalid selections accepted")
 		}
 		if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {

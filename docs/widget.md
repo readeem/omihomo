@@ -24,12 +24,15 @@ the panel's cursor needs to focus and scroll, so the cursor and the keys stay in
 The proxy controls talk to the daemon's socket, `/run/omihomo/omihomo.sock`, or `OMIHOMO_SOCKET`
 when it is set (see [daemon.md](daemon.md)). `widget/Service.qml` holds one `Socket` to it,
 sends requests with an id and matches each reply to its call, and applies the events the daemon
-pushes. It runs no processes and polls nothing.
+pushes. Settings edits run the CLI to save the owner's files; reads never poll.
 
 The `status` stream is always subscribed, since the bar icon needs it. `groups`, `rules`,
 `subscriptions`, `traffic`, and `connections` are subscribed while the panel is open and dropped
 when it closes. Subscribing pushes each state stream's current value at once, and later pushes
 arrive whoever made the change, so the panel stays current when the CLI changes something.
+Streams alone update displayed snapshots; command replies finish actions and report errors.
+A stream error clears its snapshot and blocks only actions that depend on it until a valid
+snapshot arrives. An earlier command reply cannot restore invalidated data.
 
 Before anything else the daemon greets the panel, and the panel speaks only to a daemon that
 greets it with its own protocol version. Otherwise it replaces its body with one card saying
@@ -51,12 +54,12 @@ error's code when a message is empty.
 
 Core power, TUN, acceleration, Tailscale, the tailnet proxy, and mode keep confirmed and desired
 values separate. A click updates the desired value immediately, pushes that left the daemon
-before the change continue updating only the confirmed value, and the change's reply, which is
-the daemon's status after it, clears the desired value. A failed call clears it and rolls the
+before the change continue updating only the confirmed value, and the change's reply clears
+the desired value. A failed call clears it and rolls the
 control back. This is the same optimistic-state pattern used by Omarchy's Tailscale panel.
 
-A config selection stays pending until its reply, which carries the group as the core now has
-it, and an egress check waits for it, so it never measures the route being replaced.
+A config selection stays pending until its reply, and an egress check waits for it, so it never
+measures the route being replaced. The groups stream carries the confirmed selection.
 
 Everything read from the core belongs to one runtime: the active subscription and the proxy's
 start time. A new start time or another subscription drops groups, latency results, the

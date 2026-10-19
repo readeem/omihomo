@@ -155,6 +155,30 @@ ShellRoot {
           && svc.connectionLog.length > 0 && svc.trafficHistory.length > 0
       }, then: function() {
         t.check(svc.lastError, "", "recovered streams clear their errors")
+        svc.call("test.hold-edit", {}, function() {
+          svc.addRule("DOMAIN-SUFFIX", "example.test", "DIRECT")
+        })
+      } },
+    { name: "invalidate rules during an edit", until: function() {
+        return svc.ruleSaving && svc.rules.length === 1
+      }, then: function() {
+        svc.receive(JSON.stringify({ type: "event", stream: "rules",
+          error: { code: "too_large", message: "rules event too large" } }))
+        svc.call("test.release-edit", {})
+      } },
+    { name: "an edit reply cannot restore invalid rules", until: function() {
+        return !svc.ruleSaving
+      }, then: function() {
+        t.check(svc.rules.length, 0, "an earlier edit reply cannot repopulate invalid rules")
+        t.check(svc.lastError, "rules event too large", "an edit reply cannot clear a stream error")
+        svc.toggleTun()
+        t.check(svc.busy, true, "a rules failure does not block a TUN setting")
+        svc.refresh()
+      } },
+    { name: "settings recover independently of rules", until: function() {
+        return !svc.busy && svc.lastError === ""
+      }, then: function() {
+        t.check(svc.tunEnabled, true, "the unrelated TUN setting reaches the daemon")
       } },
     { name: "add", until: function() { return svc.subscriptions.length === 2 && !svc.busy }, then: function() {
         t.check(svc.subscriptions[1].name, "added-1", "the subscription names itself")

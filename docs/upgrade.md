@@ -20,15 +20,16 @@ Prepare while the old installation still works, before updating the plugin:
   exist in the active subscription. Removed members and automatic groups keep their normal fallback.
   A corrupt or oversized selection cache blocks migration before cutover.
 
-Before replacing the old plugin checkout, use a separate checkout of the published release
-to run its preflight as your ordinary account (requires the pinned development tools):
+For an optional preflight before replacing the old plugin checkout, use a separate checkout
+of the published release as your ordinary account (requires the pinned development tools):
 
 ```sh
 mise exec -- go run ./cmd/omihomo preflight \
   --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo"
 ```
 
-The command validates the legacy import in a temporary directory and removes it afterward;
+Preflight and claim use the same preparation, including validation and creation of a fresh
+selection cache. The command stages the legacy import in a temporary directory and removes it afterward;
 it does not stop services, claim the daemon or replace installed state. Missing provider caches
 may require a download. `{"import":true}` means the data can be staged; `false` means no legacy
 subscription list was found, so verify the path. Resolve any failure with the still-working old
@@ -64,29 +65,26 @@ and subscriptions are never overwritten by the import.
 
 ### If package installation succeeds but claim fails
 
-Fix the reported migration problem first. Install mode now refuses the already-installed
-package, and Update does not repeat the import. Rerun claim with the original paths from your
-ordinary account's terminal. Before enabling settings sync, ensure the shell and user manager
-use the same config directory as checked by the installer:
+Fix the reported migration or config-directory problem, then retry Install from the same
+account with the original XDG paths. It reuses the same or newer installed package, repeats
+the config-directory check, resumes claim and enables settings sync. The guarded claim
+refuses to transfer ownership from another account; an intentional transfer still requires
+an explicit `sudo omihomo claim`. An older installed package must be updated first.
 
 ```sh
-sudo /usr/bin/omihomo claim \
-  --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
-  --legacy-config "${XDG_CONFIG_HOME:-$HOME/.config}"
-systemctl --user daemon-reload
-systemctl --user enable --now omihomo-apply.path omihomo-apply.service
+bin/omihomo-install install
 omarchy restart shell
 /usr/bin/omihomo version
 /usr/bin/omihomo status
 ```
 
-If the old installation used other directories, pass those exact directories instead. A failed
+If the old installation used other directories, set the original XDG variables. A failed
 pause/rule preflight can require the old CLI: run it from a retained old checkout, or restore
-the old plugin version to resolve the issue, then update the widget again before rerunning claim.
+the old plugin version to resolve the issue, then update the widget again before retrying Install.
 A failed cutover attempts to restore the old runtime. A completed migration has no automatic undo:
 retain original data and reinstall the old plugin/integration for a full rollback. Do not delete
 daemon state to force another import. If a completed import was followed by a settings-sync
-failure, fix the owner's settings files and rerun claim; subscriptions are retained.
+failure, fix the owner's settings files and retry Install; subscriptions are retained.
 
 ### Verify before cleanup
 

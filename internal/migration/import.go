@@ -38,20 +38,22 @@ type record struct {
 
 // Import is a validated replacement of an empty daemon state directory.
 type Import struct {
-	Dir string
-	// Settings are what was imported, as the daemon will run them.
-	Settings   state.Settings
-	Profile    core.Profile
-	Selections map[string]string
-	target     string
-	backup     string
-	installed  bool
-	lock       *os.File
+	Dir       string
+	Settings  state.Settings
+	target    string
+	backup    string
+	installed bool
+	lock      *os.File
+}
+
+type Core interface {
+	ParseLinks(data []byte) ([]map[string]any, error)
+	ImportSelections(home string, p core.Profile, selections map[string]string) error
 }
 
 // Prepare stages subscriptions and typed settings. Existing daemon state is never
 // overwritten. A missing old subscriptions file means there is nothing to import.
-func Prepare(ctx context.Context, source, target string, running bool, links profile.Links, export Exporter) (*Import, error) {
+func Prepare(ctx context.Context, source, target string, running bool, engine Core, export Exporter) (*Import, error) {
 	if _, err := os.Lstat(filepath.Join(target, "subscriptions.json")); err == nil {
 		return nil, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -127,6 +129,7 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 		return nil, err
 	}
 	activeName := strings.TrimSpace(string(active))
+	var activeProfile core.Profile
 	subs := state.Subscriptions{List: []state.Subscription{}}
 	seen := map[string]bool{}
 	left := int64(fetch.MaxBytes)
@@ -148,7 +151,7 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 			return nil, fmt.Errorf("read old subscription %d cache: %w", i+1, err)
 		}
 		left -= int64(len(cached))
-		snap, err := snapshot(ctx, root, cached, &left, links)
+		snap, p, err := snapshot(ctx, root, cached, &left, engine.ParseLinks)
 		if err != nil {
 			return nil, fmt.Errorf("old subscription %d cannot be imported: %w", i+1, err)
 		}
@@ -164,14 +167,7 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 		subs.List = append(subs.List, sub)
 		if old.Name == activeName {
 			subs.Active = sub.ID
-			parsed, err := profile.Read(snap.Body, links)
-			if err != nil {
-				return nil, err
-			}
-			staged.Profile, _, err = parsed.Build(snap.Providers)
-			if err != nil {
-				return nil, err
-			}
+			activeProfile = p
 		}
 	}
 	if activeName != "" && subs.Active == "" {
@@ -184,7 +180,9 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 	if err != nil {
 		return nil, fmt.Errorf("read old selections: %w", err)
 	}
-	staged.Selections = core.FilterSelections(staged.Profile, selections)
+	if err := engine.ImportSelections(filepath.Join(dir, "core"), activeProfile, core.FilterSelections(activeProfile, selections)); err != nil {
+		return nil, fmt.Errorf("prepare imported selections: %w", err)
+	}
 	if err := store.SaveSettings(settings); err != nil {
 		return nil, err
 	}
@@ -356,7 +354,7 @@ func safeName(name string) bool {
 		!strings.ContainsAny(name, "/\\") && !strings.ContainsFunc(name, unicode.IsControl)
 }
 
-func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, links profile.Links) (state.Snapshot, error) {
+func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, links profile.Links) (state.Snapshot, core.Profile, error) {
 	type provider struct {
 		Type string `yaml:"type"`
 		Path string `yaml:"path"`
@@ -366,16 +364,16 @@ func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, link
 		Rules     map[string]provider `yaml:"rule-providers"`
 	}
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return state.Snapshot{}, errors.New("cached YAML is malformed")
+		return state.Snapshot{}, core.Profile{}, errors.New("cached YAML is malformed")
 	}
 	for _, p := range doc.Providers {
 		if p.Type == "file" {
 			if len(doc.Providers) != 1 || !strings.HasPrefix(p.Path, "./providers/") || !filepath.IsLocal(p.Path) {
-				return state.Snapshot{}, errors.New("old file provider is not a subscription cache")
+				return state.Snapshot{}, core.Profile{}, errors.New("old file provider is not a subscription cache")
 			}
 			raw, err := read(root, p.Path, *left)
 			if err != nil {
-				return state.Snapshot{}, err
+				return state.Snapshot{}, core.Profile{}, err
 			}
 			*left -= int64(len(raw))
 			body = raw
@@ -383,12 +381,12 @@ func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, link
 	}
 	parsed, err := profile.Read(body, links)
 	if err != nil {
-		return state.Snapshot{}, errors.New("cached subscription could not be parsed")
+		return state.Snapshot{}, core.Profile{}, errors.New("cached subscription could not be parsed")
 	}
 	bodies := map[string][]byte{}
 	downloads := parsed.Downloads()
 	if len(downloads) > 64 {
-		return state.Snapshot{}, errors.New("cached subscription has too many providers")
+		return state.Snapshot{}, core.Profile{}, errors.New("cached subscription has too many providers")
 	}
 	for _, p := range downloads {
 		def := doc.Providers[p.Name]
@@ -406,23 +404,24 @@ func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, link
 		}
 		if errors.Is(readErr, fs.ErrNotExist) {
 			if *left <= 0 {
-				return state.Snapshot{}, errors.New("old state exceeds the import size limit")
+				return state.Snapshot{}, core.Profile{}, errors.New("old state exceeds the import size limit")
 			}
 			response, err := fetch.New(nil).Get(ctx, fetch.Request{URL: p.URL, MaxBytes: *left})
 			if err != nil {
-				return state.Snapshot{}, fmt.Errorf("provider %q has no usable cache and could not be downloaded: %w", p.Name, err)
+				return state.Snapshot{}, core.Profile{}, fmt.Errorf("provider %q has no usable cache and could not be downloaded: %w", p.Name, err)
 			}
 			data = response.Body
 		} else if readErr != nil {
-			return state.Snapshot{}, readErr
+			return state.Snapshot{}, core.Profile{}, readErr
 		}
 		*left -= int64(len(data))
 		bodies[p.Key()] = data
 	}
-	if _, _, err := parsed.Build(bodies); err != nil {
-		return state.Snapshot{}, errors.New("cached subscription has no usable profile")
+	p, _, err := parsed.Build(bodies)
+	if err != nil {
+		return state.Snapshot{}, core.Profile{}, errors.New("cached subscription has no usable profile")
 	}
-	return state.Snapshot{Body: body, Providers: bodies}, nil
+	return state.Snapshot{Body: body, Providers: bodies}, p, nil
 }
 
 func readSettings(root *os.Root) (state.Settings, error) {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/metacubex/bbolt"
 
+	"github.com/readeem/omihomo/internal/core/mihomo"
 	"github.com/readeem/omihomo/internal/state"
 )
 
@@ -58,11 +59,9 @@ func write(t *testing.T, root, name, body string) {
 	}
 }
 
-func noLinks([]byte) ([]map[string]any, error) { return nil, errors.New("not links") }
-
 func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
 	source, target := fixture(t)
-	m, err := Prepare(context.Background(), source, target, true, noLinks, exportFixture)
+	m, err := Prepare(context.Background(), source, target, true, &mihomo.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +96,7 @@ func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
 	if info, _ := os.Stat(target); info.Mode().Perm() != 0o700 {
 		t.Fatal(info.Mode())
 	}
-	if _, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture); err != nil {
+	if _, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Rollback(); err != nil {
@@ -120,7 +119,7 @@ func TestImportReadsRawWrapperAndCachedHTTPProvider(t *testing.T) {
 			if kind == "http" {
 				write(t, source, "providers/raw.yaml", "proxies: [{name: Example, type: direct}]\n")
 			}
-			m, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture)
+			m, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -146,7 +145,7 @@ func TestImportPreservesRequestDeadlines(t *testing.T) {
 	name := fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub")))
 	body := `{"attempted_at":1791633700,"automatic_after":4102444800,"manual_after":4102444700,"paused":false}`
 	write(t, source, name, body)
-	m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+	m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +182,7 @@ func TestImportRefusesPausedOrInvalidRequestState(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			source, target := fixture(t)
 			write(t, source, fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub"))), body)
-			m, err := Prepare(t.Context(), source, target, true, noLinks, exportFixture)
+			m, err := Prepare(t.Context(), source, target, true, &mihomo.Core{}, exportFixture)
 			if m != nil {
 				m.Close()
 			}
@@ -207,7 +206,7 @@ func TestImportPreservesUnclaimedCoreCacheOnRollback(t *testing.T) {
 			if when == "before preparation" {
 				write(t, target, "core/cache.db", "old cache")
 			}
-			m, err := Prepare(t.Context(), source, target, true, noLinks, exportFixture)
+			m, err := Prepare(t.Context(), source, target, true, &mihomo.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -272,7 +271,7 @@ func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
 					}
 				}
 			}
-			m, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture)
+			m, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture)
 			if m != nil {
 				m.Close()
 			}
@@ -299,7 +298,7 @@ func TestImportWaitsForOldStateWriter(t *testing.T) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture); err == nil || m != nil {
+	if m, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture); err == nil || m != nil {
 		t.Fatal("import raced the old writer")
 	}
 }
@@ -316,7 +315,7 @@ func TestImportBoundsRefreshIntervals(t *testing.T) {
 		t.Run(fmt.Sprint(tc.hours), func(t *testing.T) {
 			source, target := fixture(t)
 			write(t, source, "subscriptions.json", fmt.Sprintf(`[{"name":"Example","url":"https://example.com/sub","update_interval_hours":%d}]`, tc.hours))
-			m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -388,7 +387,7 @@ func TestImportRejectsInvalidSelectionCaches(t *testing.T) {
 					}
 				}
 			}
-			m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
 			if m != nil {
 				defer m.Close()
 			}
@@ -433,13 +432,24 @@ rules: [MATCH,Proxy]
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+	m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if len(m.Selections) != 1 || m.Selections["Proxy"] != "Chosen" {
-		t.Fatalf("imported selections: %v", m.Selections)
+	db, err = bbolt.Open(filepath.Join(m.Dir, "core/cache.db"), 0o600, &bbolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("selected"))
+		if b == nil || b.Stats().KeyN != 1 || string(b.Get([]byte("Proxy"))) != "Chosen" {
+			t.Fatal("prepared cache did not retain only the active select group's member")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if m.Settings.Running {
 		t.Fatal("selection import started proxy")

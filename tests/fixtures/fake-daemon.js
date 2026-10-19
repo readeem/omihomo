@@ -46,6 +46,8 @@ let subscriptions = [
     expire: null, active: true, interval: 43200, next_update: 0, error: "" }
 ]
 let nextSubscription = 1
+let heldEdit = null
+let holdEdit = false
 const clients = new Set()
 
 function running() {
@@ -140,7 +142,15 @@ const ops = {
       tailnet_proxy: false, primary_group: "" }, a.settings)
     rules = a.rules
     publish()
+    if (holdEdit) return new Promise((resolve) => { heldEdit = () => resolve({ result: { ...status } }) })
     return { result: status }
+  },
+  "test.hold-edit": () => { holdEdit = true; return { result: {} } },
+  "test.release-edit": () => {
+    holdEdit = false
+    if (heldEdit) heldEdit()
+    heldEdit = null
+    return { result: {} }
   },
   "groups.list": () => ({ result: groups() }),
   "groups.select": (client, a) => later(() => {

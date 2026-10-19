@@ -29,6 +29,7 @@ func (a *app) claimCommand() *ffcli.Command {
 	flags := a.flags("claim")
 	legacyData := flags.String("legacy-data", "", "old data directory (defaults to the invoking account's .local/share/omihomo)")
 	legacyConfig := flags.String("legacy-config", "", "old config directory (defaults to the invoking account's .config)")
+	keepOwner := flags.Bool("keep-owner", false, "finish installation without transferring another account's ownership")
 	cmd := &ffcli.Command{Name: "claim", ShortUsage: "sudo omihomo claim [flags]",
 		ShortHelp: "make the account that runs sudo the owner",
 		LongHelp: "Records the account that ran sudo as the one owner of this install, gives it the\n" +
@@ -39,7 +40,7 @@ func (a *app) claimCommand() *ffcli.Command {
 		if len(args) != 0 {
 			return usage(cmd, "claim takes no arguments")
 		}
-		return a.claimInstall(ctx, *legacyData, *legacyConfig)
+		return a.claimInstall(ctx, *legacyData, *legacyConfig, *keepOwner)
 	}
 	return cmd
 }

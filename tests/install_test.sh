@@ -65,8 +65,8 @@ else
   [[ $1 == /usr/bin/omihomo && $2 == claim ]] || exit 97
   config=${XDG_CONFIG_HOME:-$HOME/.config}
   if [[ $config != /* ]]; then config=$HOME/.config; fi
-  [[ $# == 6 && $3 == --legacy-data && $4 == "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
-    && $5 == --legacy-config && $6 == "$config" && -d $config ]] || exit 95
+  [[ $# == 7 && $3 == --keep-owner && $4 == --legacy-data && $5 == "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
+    && $6 == --legacy-config && $7 == "$config" && -d $config ]] || exit 95
   printf 'claim\n' >> "$INSTALL_TEST_LOG"
   exit "${INSTALL_TEST_CLAIM_EXIT:-0}"
 fi
@@ -130,11 +130,13 @@ XDG_CONFIG_HOME=relative run_install 0 install "$commands"
 run_install 0 install "$commands"
 INSTALL_TEST_PACKAGE_EXIT=42 run_install 42 install 'package install 1.0.0'
 INSTALL_TEST_CLAIM_EXIT=43 run_install 43 install $'package install 1.0.0\nsystemctl --user daemon-reload\nclaim'
+INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 install $'systemctl --user daemon-reload\nclaim\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
+INSTALL_TEST_INSTALLED=1.0.0-1 INSTALL_TEST_MANAGER_FAIL=1 run_install 1 install 'systemctl --user daemon-reload'
+INSTALL_TEST_INSTALLED=0.9.0-1 run_install 1 install ''
 INSTALL_TEST_INSTALLED=0.9.0-1 run_install 0 update 'package update 1.0.0'
 INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 update ''
 INSTALL_TEST_INSTALLED=2.0.0-1 run_install 0 update ''
 run_install 1 update ''
-INSTALL_TEST_INSTALLED=1.0.0-1 run_install 1 install ''
 run_install 0 check ''
 grep -q '"available":"1.0.0-1","plugin":"1.0.0","update_available":false' "$test_root/out"
 INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 check ''

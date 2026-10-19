@@ -95,14 +95,15 @@ ShellRoot {
         t.check(testRoot.savedRules, 0, "the form waits for the write's reply")
       } },
     { name: "rule lands", until: function() { return testRoot.savedRules === 1 }, then: function() {
-        t.check(svc.rules.length, 1, "the reply carries the new rule")
-        t.check(svc.rules[0].index, 1, "the owner's rule carries its index")
-        t.check(svc.injectedRules.length, 1, "Omihomo's rules are read-only")
+        t.check(svc.rules.length, 0, "a closed panel does not load rules from command replies")
         svc.panelOpen = true
       } },
     { name: "opening the panel subscribes", until: function() {
         return svc.subscriptions.length === 1 && svc.proxiesLoaded && svc.trafficHistory.length > 0
       }, then: function() {
+        t.check(svc.rules.length, 1, "opening the panel loads the saved rule")
+        t.check(svc.rules[0].index, 1, "the owner's rule carries its index")
+        t.check(svc.injectedRules.length, 1, "Omihomo's rules are read-only")
         t.check(svc.currentConfig, "Pass", "groups arrive with the panel")
         t.check(svc.subscriptions[0].active, true, "subscriptions arrive with the panel")
         // A daemon restarting under socket activation drops the connection.

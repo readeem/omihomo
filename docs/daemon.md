@@ -18,6 +18,9 @@ bin/omihomo-install install
 Run the script without `sudo`; it requests privileges for verified package installation and
 then claims the daemon. If installation fails it does not claim; if claiming fails the script
 returns an error. Custom XDG directories are passed to `claim` by the installer.
+Retry Install after fixing a setup failure: it reuses the same or newer installed package and
+runs `claim --keep-owner`, which permits an unclaimed install or the same owner and refuses
+another account's installation. An older installed package must be updated first.
 After package installation it checks the sync unit's expanded config directory against the shell's;
 if they differ or cannot be checked, it stops before claiming or enabling sync.
 `bin/omihomo-install check` checks signed release metadata without privileges;

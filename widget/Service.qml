@@ -81,7 +81,8 @@ Item {
     ? tailnetProxy : _desiredTailnetProxy === 1
   readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
   // Whether live state — groups, traffic, connections — can be read now.
-  readonly property bool apiReady: ready && coreRunning && !streamErrors.status
+  readonly property bool apiReady: streamsReady(["status"]) && coreRunning
+  readonly property bool groupsReady: apiReady && streamsReady(["groups"])
   // One run of one subscription. Anything read from the core belongs to the
   // runtime it was read from, and is dropped when this changes.
   readonly property string runtimeKey: activeSubscription + "|" + startedMs
@@ -173,43 +174,8 @@ Item {
     return scopes[stream] || "core"
   }
 
-  function failStream(stream, error) {
-    if (wantedStreams().indexOf(stream) < 0) return
-    var errors = Object.assign({}, streamErrors)
-    errors[stream] = error
-    streamErrors = errors
-    switch (stream) {
-    case "status": clearDesired(); break
-    case "groups":
-      groups = []
-      configEntries = ({})
-      proxiesLoaded = false
-      configTestResults = ({})
-      groupTestedAt = ({})
-      break
-    case "rules": applyRules(null); break
-    case "subscriptions": subscriptions = []; break
-    case "traffic":
-      downloadRate = 0
-      uploadRate = 0
-      trafficHistory = []
-      break
-    case "connections":
-      connectionLog = []
-      connectionsDownload = 0
-      connectionsUpload = 0
-      break
-    }
-    reportError(error, streamScope(stream))
-  }
-
-  function recoverStream(stream) {
-    if (!streamErrors[stream]) return
-    var errors = Object.assign({}, streamErrors)
-    var previous = errors[stream]
-    delete errors[stream]
-    streamErrors = errors
-    if (errorScope === streamScope(stream) && lastError === Model.daemonError(previous)) reportDone("")
+  function streamsReady(streams) {
+    return ready && streams.every(function(stream) { return !root.streamErrors[stream] })
   }
 
   function reportDone(message) {
@@ -264,8 +230,7 @@ Item {
       if (done) done(message.error ? null : message.result, message.error || null)
     } else if (message.type === "event") {
       var stream = String(message.stream)
-      if (message.error) failStream(stream, message.error)
-      else applyEvent(stream, message.data)
+      applyEvent(stream, message.data, message.error)
     }
   }
 
@@ -299,16 +264,31 @@ Item {
     return panelOpen ? ["status"].concat(panelStreams) : ["status"]
   }
 
-  function applyEvent(stream, data) {
-    recoverStream(stream)
+  // Stream snapshots own displayed state; command replies only finish actions.
+  function applyEvent(stream, data, error) {
+    if (wantedStreams().indexOf(stream) < 0) return
+    var previous = streamErrors[stream]
+    if (error || previous) {
+      var errors = Object.assign({}, streamErrors)
+      if (error) errors[stream] = error
+      else delete errors[stream]
+      streamErrors = errors
+    }
+    if (error) data = null
     switch (stream) {
-    case "status": applyStatus(data); break
+    case "status":
+      if (error) clearDesired()
+      else applyStatus(data)
+      break
     case "groups": applyGroups(data); break
     case "rules": applyRules(data); break
     case "subscriptions": subscriptions = Model.readSubscriptions(data); break
     case "traffic": applyTraffic(data); break
     case "connections": applyConnections(data); break
     }
+    if (error) reportError(error, streamScope(stream))
+    else if (previous && errorScope === streamScope(stream)
+      && lastError === Model.daemonError(previous)) reportDone("")
   }
 
   // Bindings land in no fixed order while the panel is created, so nothing
@@ -507,13 +487,9 @@ Item {
   }
 
   function forgetRuntime() {
-    groups = []
-    configEntries = ({})
-    connectionLog = []
-    proxiesLoaded = false
-    configTestResults = ({})
-    groupTestedAt = ({})
-    trafficHistory = []
+    applyGroups(null)
+    applyConnections(null)
+    applyTraffic(null)
   }
 
   // Everything the daemon said, for when there is no daemon to talk to.
@@ -534,8 +510,6 @@ Item {
     subscriptions = []
     applyRules(null)
     forgetRuntime()
-    downloadRate = 0
-    uploadRate = 0
     traceTesting = false
     _traceQueued = false
     clearDesired()
@@ -554,7 +528,11 @@ Item {
     var parsed = Model.readGroups(data)
     groups = parsed.groups
     configEntries = parsed.configs
-    proxiesLoaded = coreRunning
+    proxiesLoaded = data !== null && coreRunning
+    if (data === null) {
+      configTestResults = ({})
+      groupTestedAt = ({})
+    }
   }
 
   function applyRules(data) {
@@ -567,7 +545,12 @@ Item {
 
   function applyTraffic(data) {
     var traffic = Model.readTraffic(data)
-    if (!traffic || !coreRunning) return
+    if (!traffic || !coreRunning) {
+      downloadRate = 0
+      uploadRate = 0
+      trafficHistory = []
+      return
+    }
     downloadRate = traffic.down
     uploadRate = traffic.up
     var history = trafficHistory.slice(1 - trafficHistoryCap)
@@ -576,6 +559,12 @@ Item {
   }
 
   function applyConnections(data) {
+    if (data === null) {
+      connectionLog = []
+      connectionsDownload = 0
+      connectionsUpload = 0
+      return
+    }
     var now = Date.now()
     var parsed = Model.readConnections(data, now)
     connectionLog = Model.mergeConnectionLog(connectionLog, parsed.items, now, connectionLogCap)
@@ -616,7 +605,7 @@ Item {
   }
 
   function toggleCore() {
-    if (!ready || streamErrors.status || !installed || _coreCall !== 0) return
+    if (!streamsReady(["status"]) || !installed || _coreCall !== 0) return
     var desired = coreActive ? 0 : 1
     _desiredCoreRunning = desired
     reportDone(desired === 1 ? "Starting the proxy…" : "Stopping the proxy…")
@@ -624,7 +613,6 @@ Item {
       root._coreCall = 0
       root._desiredCoreRunning = -1
       if (error) return root.reportError(error, "core")
-      root.applyStatus(result)
       root.reportDone("")
     })
     if (_coreCall === 0) {
@@ -633,11 +621,10 @@ Item {
     }
   }
 
-  // One typed setting. `desired` is the property holding its optimistic value
-  // and `pending` that value; the reply is the daemon's status after the
-  // change, and either way the optimistic value goes.
+  // Optimistic settings last until command completion; confirmed values arrive
+  // on the status stream.
   function changeSetting(args, desired, pending, message, scope) {
-    if (!ready || streamErrors.status || streamErrors.rules || _settingsCall !== 0 || _ruleCall !== 0) return false
+    if (!streamsReady(["status"]) || _settingsCall !== 0 || _ruleCall !== 0) return false
     if (desired !== "") root[desired] = pending
     reportDone(message || "")
     var key = Object.keys(args)[0]
@@ -647,7 +634,6 @@ Item {
       root._settingsCall = 0
       if (desired !== "") root[desired] = typeof pending === "string" ? "" : -1
       if (error) return root.reportError(error, scope || "settings")
-      root.applyStatus(result)
       root.reportDone("")
     })
     if (_settingsCall !== 0) return true
@@ -691,18 +677,17 @@ Item {
   }
 
   function setPrimaryGroup(name) {
-    if (streamErrors.groups || name === "") return
+    if (!streamsReady(["groups"]) || name === "") return
     changeSetting({ primary_group: name }, "", 0, "", "configs")
   }
 
   // Returns whether the write started; the form waits for `ruleAdded`.
   function addRule(type, value, target) {
-    if (!ready || streamErrors.rules || streamErrors.groups || _ruleCall !== 0 || _settingsCall !== 0) return false
+    if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0) return false
     reportDone("")
     _ruleCall = edit(["rule", "add", "--", type, value, target], function(result, error) {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")
-      root.applyRules(result)
       root.reportDone("")
       root.ruleAdded()
     })
@@ -710,26 +695,24 @@ Item {
   }
 
   function removeRule(index) {
-    if (!ready || streamErrors.rules || streamErrors.groups || _ruleCall !== 0 || _settingsCall !== 0 || index <= 0) return
+    if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0 || index <= 0) return
     reportDone("")
     _ruleCall = edit(["rule", "remove", "--", String(index)], function(result, error) {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")
-      root.applyRules(result)
     })
   }
 
   // One subscription action at a time. `target` is the subscription it acts
   // on, "" for an add, which names itself only once the download is back.
   function subscriptionCall(op, args, target, message) {
-    if (!ready || streamErrors.subscriptions || streamErrors.status || _subCall !== 0) return
+    if (!streamsReady(["subscriptions", "status"]) || _subCall !== 0) return
     pendingSubscription = target
     reportDone(message)
     _subCall = call(op, args, function(result, error) {
       root._subCall = 0
       root.pendingSubscription = ""
       if (error) return root.reportError(error, "sub:" + target)
-      if (op === "subscriptions.activate") root.applyStatus(result)
       root.reportDone("")
     })
     if (_subCall === 0) {
@@ -759,11 +742,9 @@ Item {
     subscriptionCall("subscriptions.remove", { name: name }, name, "")
   }
 
-  // A selection is pending until its reply, which carries the group as the
-  // core now has it. Only a selection changes the egress path, so only a
-  // selection is allowed to spend the panel's one event-driven trace call.
+  // Only a selection spends the panel's one event-driven trace call.
   function selectConfig(group, config) {
-    if (!apiReady || streamErrors.groups || _selectCall !== 0 || group === "" || config === "") return
+    if (!groupsReady || _selectCall !== 0 || group === "" || config === "") return
     pendingConfig = config
     reportDone("")
     _selectCall = call("groups.select", { group: group, proxy: config }, function(result, error) {
@@ -772,8 +753,6 @@ Item {
       if (error) {
         root.reportError(error, "configs")
       } else {
-        var updated = Model.readGroup(result)
-        if (updated && !root.streamErrors.groups) root.groups = Model.replaceGroup(root.groups, updated)
         root.reportDone("")
         root.configChanged()
       }
@@ -827,7 +806,7 @@ Item {
     var args = whole ? { group: group } : { group: group, proxies: names }
     _delayCall = call("delay.test", args, function(result, error) {
       root._delayCall = 0
-      if (runtime !== root.runtimeKey || root.streamErrors.groups) return
+      if (runtime !== root.runtimeKey || !root.groupsReady) return
       root.finishConfigTests(names, error ? {} : Model.readDelays(result))
       if (!whole) return
       var tested = {}
@@ -839,20 +818,20 @@ Item {
   }
 
   function testConfig(name) {
-    if (!apiReady || streamErrors.groups || pingTestsRunning || name === "") return
+    if (!groupsReady || pingTestsRunning || name === "") return
     var group = Model.groupForConfig(groups, name)
     if (group !== "") runDelayTest(group, [name], false)
   }
 
   function testGroup(name) {
-    if (!apiReady || streamErrors.groups || pingTestsRunning || name === "") return
+    if (!groupsReady || pingTestsRunning || name === "") return
     var group = Model.groupByName(groups, name)
     var names = group && group.all ? group.all.slice() : []
     if (names.length > 0) runDelayTest(name, names, true)
   }
 
   function closeConnections(args) {
-    if (!apiReady || streamErrors.connections || _closeCall !== 0) return
+    if (!apiReady || !streamsReady(["connections"]) || _closeCall !== 0) return
     _closeCall = call("connections.close", args, function(result, error) {
       root._closeCall = 0
       if (error) root.reportError(error, "conns")

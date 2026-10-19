@@ -47,7 +47,7 @@ func (a *app) preflightCommand() *ffcli.Command {
 			return err
 		}
 		var parser mihomo.Core
-		staged, err := migration.Prepare(ctx, source, filepath.Join(dir, "state"), false, parser.ParseLinks, selectionExporter(uid, gid))
+		staged, err := migration.Prepare(ctx, source, filepath.Join(dir, "state"), false, &parser, selectionExporter(uid, gid))
 		if err != nil {
 			return fmt.Errorf("migration preflight (old install unchanged): %w", err)
 		}

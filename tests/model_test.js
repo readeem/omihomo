@@ -136,16 +136,6 @@ test("groups read in the config's order, with their members as configs", () => {
   assert.equal(parsed.configs.Proxy, undefined)
 })
 
-test("a selection's reply replaces only its own group", () => {
-  const groups = Model.readGroups({ groups: [
-    { name: "Proxy", now: "A", members: [{ name: "A" }, { name: "B" }] },
-    { name: "Auto", now: "A", members: [{ name: "A" }] }] }).groups
-  const replaced = Model.replaceGroup(groups, Model.readGroup({ name: "Proxy", now: "B", members: [] }))
-  assert.equal(replaced[0].now, "B")
-  assert.equal(replaced[1], groups[1])
-  assert.equal(Model.replaceGroup(groups, null), groups)
-})
-
 test("provider configs resolve through their owning group", () => {
   const groups = [{ name: "Proxy", all: ["Poland", "France"] }]
   assert.equal(Model.groupForConfig(groups, "Poland"), "Proxy")

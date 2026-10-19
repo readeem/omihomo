@@ -25,7 +25,10 @@ import (
 	"github.com/readeem/omihomo/internal/settings"
 )
 
-var oldUnits = []string{"omihomo-subscription-update.timer", "omihomo-subscription-update.service", "omihomo-subscription-startup.service", "omihomo.service"}
+var (
+	_        migration.Core = (*mihomo.Core)(nil)
+	oldUnits                = []string{"omihomo-subscription-update.timer", "omihomo-subscription-update.service", "omihomo-subscription-startup.service", "omihomo.service"}
+)
 
 type cutover struct {
 	root      *os.Root
@@ -34,6 +37,7 @@ type cutover struct {
 	data      string
 	state     string
 	uid, gid  int
+	keepOwner bool
 	userctl   func(context.Context, ...string) (bool, error)
 	systemctl func(context.Context, ...string) error
 	claim     func(context.Context) error
@@ -44,7 +48,7 @@ type cutover struct {
 	discard []func() error
 }
 
-func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string) error {
+func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string, keepOwner bool) error {
 	if os.Geteuid() != 0 {
 		return errors.New("claim needs root: run sudo omihomo claim")
 	}
@@ -99,7 +103,7 @@ func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string)
 		cmd.Stderr = a.env.Stderr
 		return cmd.Run()
 	}
-	machine := cutover{root: root, home: home, config: config, data: legacyData, state: filepath.Dir(owner.DefaultPath), uid: uid, gid: gid,
+	machine := cutover{root: root, home: home, config: config, data: legacyData, state: filepath.Dir(owner.DefaultPath), uid: uid, gid: gid, keepOwner: keepOwner,
 		systemctl: func(ctx context.Context, args ...string) error { return runSystemctl(ctx, a.env.Stderr, args...) },
 		userctl: func(ctx context.Context, args ...string) (bool, error) {
 			cmd := exec.CommandContext(ctx, "/usr/bin/runuser", "-u", account.Username, "--", "/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/"+strconv.Itoa(uid), "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+strconv.Itoa(uid)+"/bus", "/usr/bin/systemctl", "--user")
@@ -131,6 +135,15 @@ func (a *app) claimInstall(ctx context.Context, legacyData, legacyConfig string)
 }
 
 func (c *cutover) run(ctx context.Context) (err error) {
+	if c.keepOwner {
+		uid, err := owner.Load(filepath.Join(c.state, "owner"))
+		if err != nil && !errors.Is(err, owner.ErrUnclaimed) {
+			return err
+		}
+		if err == nil && uid != c.uid {
+			return errors.New("another account owns this installation; run claim without --keep-owner to transfer ownership explicitly")
+		}
+	}
 	var (
 		active []string
 		units  []string
@@ -163,15 +176,12 @@ func (c *cutover) run(ctx context.Context) (err error) {
 	}
 
 	var parser mihomo.Core
-	staged, err := migration.Prepare(ctx, c.data, c.state, running, parser.ParseLinks, selectionExporter(c.uid, c.gid))
+	staged, err := migration.Prepare(ctx, c.data, c.state, running, &parser, selectionExporter(c.uid, c.gid))
 	if err != nil {
 		return fmt.Errorf("prepare migration (old install unchanged): %w", err)
 	}
 	if staged != nil {
 		defer staged.Close()
-		if err := mihomo.ImportSelections(filepath.Join(staged.Dir, "core"), staged.Profile, staged.Selections); err != nil {
-			return fmt.Errorf("prepare imported selections: %w", err)
-		}
 	}
 	legacy := staged != nil || len(units) > 0
 	for _, name := range []string{"usr/share/libalpm/hooks/omihomo-permissions.hook", "usr/share/libalpm/hooks/omihomo-capabilities.hook"} {

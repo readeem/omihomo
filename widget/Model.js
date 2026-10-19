@@ -264,15 +264,6 @@ function readGroup(entry) {
   }
 }
 
-// A group in a list replaced by a fresher copy of itself, as `groups.select`
-// returns it.
-function replaceGroup(groups, group) {
-  if (!group) return groups
-  var out = []
-  for (var i = 0; i < groups.length; i++) out.push(groups[i].name === group.name ? group : groups[i])
-  return out
-}
-
 // Everything a rule can send traffic to, as dropdown options: the built-ins,
 // then the groups, then every config the groups list, once each. A name with a
 // comma cannot be written into a rule, so it is left out.
@@ -875,8 +866,6 @@ if (typeof module !== "undefined") {
     validateRule: validateRule,
     isCidr: isCidr,
     readGroups: readGroups,
-    readGroup: readGroup,
-    replaceGroup: replaceGroup,
     ruleTargets: ruleTargets,
     userGroups: userGroups,
     primaryGroupName: primaryGroupName,

@@ -13,7 +13,7 @@ import (
 
 // ImportSelections seeds an unused core home without starting the engine. The
 // caller must own home exclusively; an existing cache is never replaced.
-func ImportSelections(home string, p core.Profile, selections map[string]string) error {
+func (*Core) ImportSelections(home string, p core.Profile, selections map[string]string) error {
 	if len(selections) == 0 {
 		return nil
 	}

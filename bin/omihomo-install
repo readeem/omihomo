@@ -93,7 +93,11 @@ bootstrap() (
       return 0
     fi
   else
-    [[ -z $installed ]] || { printf 'Package already installed. Choose Update.\n' >&2; return 1; }
+    if [[ -n $installed ]]; then
+      [[ $(vercmp "$version-$pkgrel" "$installed") -le 0 ]] || { printf 'An older package is installed. Choose Update, then retry Install to finish setup.\n' >&2; return 1; }
+      printf 'Core %s is already installed; finishing setup.\n' "$installed"
+      return 0
+    fi
   fi
   fetch "$repository/releases/download/v$version/omihomo-update-$version-x86_64" "$work/installer" "$installer_size" || return 1
   [[ $(stat -c %s "$work/installer") == "$installer_size" \
@@ -169,12 +173,12 @@ if [[ $mode == install ]]; then
     exit 1
   }
   [[ $manager_config == /* && $(realpath -m -- "$manager_config") == "$(realpath -m -- "$config_home")" ]] || {
-    printf 'The shell and settings-sync unit use different config directories; claim and automatic sync were not started. Use the manager config directory for XDG_CONFIG_HOME, or configure the user manager before retrying claim.\n' >&2
+    printf 'The shell and settings-sync unit use different config directories; claim and automatic sync were not started. Use the manager config directory for XDG_CONFIG_HOME, or configure the user manager before retrying Install.\n' >&2
     exit 1
   }
   # Claim needs an existing config root to write imported settings before sync starts.
   mkdir -p -- "$config_home"
-  sudo /usr/bin/omihomo claim \
+  sudo /usr/bin/omihomo claim --keep-owner \
     --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
     --legacy-config "$config_home"
   systemctl --user enable --now omihomo-apply.path omihomo-apply.service
