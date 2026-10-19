@@ -565,6 +565,11 @@ func (p *mieru) check() error {
 // check needs an endpoint on every peer, or on the proxy itself when it
 // lists none.
 func (p *wireguard) check() error {
+	if p.AmneziaWGOption != nil {
+		if err := p.AmneziaWGOption.check(); err != nil {
+			return err
+		}
+	}
 	if len(p.Peers) == 0 {
 		return checkEndpoint(p.Server, p.Port, false)
 	}

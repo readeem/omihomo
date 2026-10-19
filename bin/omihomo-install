@@ -112,6 +112,8 @@ mode=${1:-install}
 }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { printf 'GitHub packages require Linux x86_64.\n' >&2; exit 1; }
 project_root=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+if [[ $config_home != /* ]]; then config_home=$HOME/.config; fi
 
 # The widget goes first, through Omarchy, so the core is then verified with the
 # updated checkout's key and installer. A linked development checkout is left alone.
@@ -158,9 +160,22 @@ root_script="$(declare -f fetch bootstrap)"$'\nbootstrap "$@"'
 sudo /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root TERM="${TERM:-dumb}" \
   /usr/bin/bash -c "$root_script" omihomo-bootstrap "$mode" "$public_key" "$minimum"
 if [[ $mode == install ]]; then
+  systemctl --user daemon-reload
+  systemctl --user show --property=Id --value omihomo-apply.service >/dev/null
+  manager_config=$(timeout 15s busctl --user --json=short get-property org.freedesktop.systemd1 \
+    /org/freedesktop/systemd1/unit/omihomo_2dapply_2eservice org.freedesktop.systemd1.Service Environment |
+    jq -er '.data | map(select(startswith("XDG_CONFIG_HOME="))) | if length == 1 then .[0] | ltrimstr("XDG_CONFIG_HOME=") else error("missing or duplicate config directory") end') || {
+    printf 'Cannot verify the settings-sync config directory; claim and automatic sync were not started.\n' >&2
+    exit 1
+  }
+  [[ $manager_config == /* && $(realpath -m -- "$manager_config") == "$(realpath -m -- "$config_home")" ]] || {
+    printf 'The shell and settings-sync unit use different config directories; claim and automatic sync were not started. Use the manager config directory for XDG_CONFIG_HOME, or configure the user manager before retrying claim.\n' >&2
+    exit 1
+  }
+  # Claim needs an existing config root to write imported settings before sync starts.
+  mkdir -p -- "$config_home"
   sudo /usr/bin/omihomo claim \
     --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
-    --legacy-config "${XDG_CONFIG_HOME:-$HOME/.config}"
-  systemctl --user daemon-reload
+    --legacy-config "$config_home"
   systemctl --user enable --now omihomo-apply.path omihomo-apply.service
 fi

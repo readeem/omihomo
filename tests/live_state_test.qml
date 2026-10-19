@@ -88,6 +88,74 @@ ShellRoot {
         t.check(svc.openConnectionCount, 1, "the log counts open connections")
         svc.addSubscription("https://example.test/sub")
       } },
+    { name: "stream errors invalidate snapshots", until: function() { return !svc.busy && svc.subscriptions.length === 2 }, then: function() {
+        var runtime = svc.runtimeKey
+        svc.receive(JSON.stringify({ type: "event", stream: "groups",
+          error: { code: "too_large", message: "groups event too large" } }))
+        t.check(svc.proxiesLoaded, false, "a groups error invalidates the loaded snapshot")
+        t.check(svc.currentConfig, "", "a groups error removes the old selection")
+        t.check(svc.groups.length, 0, "a groups error removes stale entries")
+        t.check(svc.lastError, "groups event too large", "stream failures are visible")
+        t.check(svc.errorScope, "configs", "groups failures appear with configs")
+        svc.selectConfig("Proxy", "Pass")
+        svc.testConfig("Pass")
+        svc.setPrimaryGroup("Proxy")
+        t.check(svc.busy, false, "stale groups cannot be selected or made primary")
+        t.check(svc.pingTestsRunning, false, "stale configs cannot be tested")
+        svc.applyEvent("traffic", { up: 1, down: 2 })
+        svc.clearMessages()
+        t.check(svc.lastError, "groups event too large", "opening another form cannot hide a stream failure")
+        svc.reportDone("unrelated action succeeded")
+        t.check(svc.lastError, "groups event too large", "unrelated success cannot hide a stream failure")
+        svc.refresh()
+        t.check(svc.runtimeKey, runtime, "refresh recovery does not need a new runtime")
+      } },
+    { name: "refresh recovers an existing subscription", until: function() {
+        return svc.proxiesLoaded && svc.currentConfig !== ""
+      }, then: function() {
+        t.check(svc.lastError, "", "a valid groups snapshot clears its failure")
+        svc.applyEvent("rules", { rules: [{ index: 1, type: "DOMAIN", value: "example.test", target: "DIRECT", source: "user" }] })
+        t.check(svc.rules.length, 1, "an editable rule is loaded before the failure")
+        var cases = [
+          { stream: "rules", scope: "rules" },
+          { stream: "subscriptions", scope: "sub:" },
+          { stream: "traffic", scope: "core" },
+          { stream: "connections", scope: "conns" },
+          { stream: "status", scope: "core" }
+        ]
+        for (var i = 0; i < cases.length; i++) {
+          var entry = cases[i]
+          svc.receive(JSON.stringify({ type: "event", stream: entry.stream,
+            error: { code: "too_large", message: entry.stream + " too large" } }))
+          t.check(svc.lastError, entry.stream + " too large", entry.stream + " failure is visible")
+          t.check(svc.errorScope, entry.scope, entry.stream + " failure has a scope")
+          if (entry.stream === "rules") svc.removeRule(1)
+          if (entry.stream === "subscriptions") svc.activateSubscription("work")
+          if (entry.stream === "connections") svc.closeAllConnections()
+          t.check(svc.busy, false, entry.stream + " cannot act on its invalid snapshot")
+        }
+        t.check(svc.rules.length, 0, "rules errors remove editable stale indices")
+        t.check(svc.effectiveRules.length, 0, "rules errors remove stale rule evaluation")
+        t.check(svc.subscriptions.length, 0, "subscription errors remove stale entries")
+        t.check(svc.downloadRate, 0, "traffic errors remove stale rates")
+        t.check(svc.trafficHistory.length, 0, "traffic errors remove stale history")
+        t.check(svc.connectionLog.length, 0, "connection errors remove stale close targets")
+        t.check(svc.connectionsDownload, 0, "connection errors remove stale totals")
+        t.check(svc.apiReady, false, "status errors make live controls unavailable")
+        svc.removeRule(1)
+        svc.activateSubscription("work")
+        svc.closeAllConnections()
+        svc.toggleCore()
+        svc.toggleTun()
+        t.check(svc.busy, false, "actions cannot use invalid stream values")
+        svc.refresh()
+      } },
+    { name: "all snapshots recover", until: function() {
+        return svc.apiReady && svc.subscriptions.length === 2 && svc.effectiveRules.length > 0
+          && svc.connectionLog.length > 0 && svc.trafficHistory.length > 0
+      }, then: function() {
+        t.check(svc.lastError, "", "recovered streams clear their errors")
+      } },
     { name: "add", until: function() { return svc.subscriptions.length === 2 && !svc.busy }, then: function() {
         t.check(svc.subscriptions[1].name, "added-1", "the subscription names itself")
         svc.activateSubscription("added-1")

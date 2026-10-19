@@ -163,12 +163,15 @@ func (c *cutover) run(ctx context.Context) (err error) {
 	}
 
 	var parser mihomo.Core
-	staged, err := migration.Prepare(ctx, c.data, c.state, running, parser.ParseLinks)
+	staged, err := migration.Prepare(ctx, c.data, c.state, running, parser.ParseLinks, selectionExporter(c.uid, c.gid))
 	if err != nil {
 		return fmt.Errorf("prepare migration (old install unchanged): %w", err)
 	}
 	if staged != nil {
 		defer staged.Close()
+		if err := mihomo.ImportSelections(filepath.Join(staged.Dir, "core"), staged.Profile, staged.Selections); err != nil {
+			return fmt.Errorf("prepare imported selections: %w", err)
+		}
 	}
 	legacy := staged != nil || len(units) > 0
 	for _, name := range []string{"usr/share/libalpm/hooks/omihomo-permissions.hook", "usr/share/libalpm/hooks/omihomo-capabilities.hook"} {

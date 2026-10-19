@@ -1,15 +1,21 @@
 package migration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+
+	"github.com/metacubex/bbolt"
 
 	"github.com/readeem/omihomo/internal/state"
 )
@@ -56,7 +62,7 @@ func noLinks([]byte) ([]map[string]any, error) { return nil, errors.New("not lin
 
 func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
 	source, target := fixture(t)
-	m, err := Prepare(context.Background(), source, target, true, noLinks)
+	m, err := Prepare(context.Background(), source, target, true, noLinks, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +97,7 @@ func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
 	if info, _ := os.Stat(target); info.Mode().Perm() != 0o700 {
 		t.Fatal(info.Mode())
 	}
-	if _, err := Prepare(context.Background(), source, target, false, noLinks); err != nil {
+	if _, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Rollback(); err != nil {
@@ -114,7 +120,7 @@ func TestImportReadsRawWrapperAndCachedHTTPProvider(t *testing.T) {
 			if kind == "http" {
 				write(t, source, "providers/raw.yaml", "proxies: [{name: Example, type: direct}]\n")
 			}
-			m, err := Prepare(context.Background(), source, target, false, noLinks)
+			m, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +146,7 @@ func TestImportPreservesRequestDeadlines(t *testing.T) {
 	name := fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub")))
 	body := `{"attempted_at":1791633700,"automatic_after":4102444800,"manual_after":4102444700,"paused":false}`
 	write(t, source, name, body)
-	m, err := Prepare(t.Context(), source, target, false, noLinks)
+	m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +183,7 @@ func TestImportRefusesPausedOrInvalidRequestState(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			source, target := fixture(t)
 			write(t, source, fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub"))), body)
-			m, err := Prepare(t.Context(), source, target, true, noLinks)
+			m, err := Prepare(t.Context(), source, target, true, noLinks, exportFixture)
 			if m != nil {
 				m.Close()
 			}
@@ -201,7 +207,7 @@ func TestImportPreservesUnclaimedCoreCacheOnRollback(t *testing.T) {
 			if when == "before preparation" {
 				write(t, target, "core/cache.db", "old cache")
 			}
-			m, err := Prepare(t.Context(), source, target, true, noLinks)
+			m, err := Prepare(t.Context(), source, target, true, noLinks, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +272,7 @@ func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
 					}
 				}
 			}
-			m, err := Prepare(context.Background(), source, target, false, noLinks)
+			m, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture)
 			if m != nil {
 				m.Close()
 			}
@@ -293,7 +299,173 @@ func TestImportWaitsForOldStateWriter(t *testing.T) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := Prepare(context.Background(), source, target, false, noLinks); err == nil || m != nil {
+	if m, err := Prepare(context.Background(), source, target, false, noLinks, exportFixture); err == nil || m != nil {
 		t.Fatal("import raced the old writer")
 	}
+}
+
+func TestImportBoundsRefreshIntervals(t *testing.T) {
+	for _, tc := range []struct {
+		hours int64
+		want  time.Duration
+	}{
+		{0, 12 * time.Hour}, {-1, 12 * time.Hour}, {24, 24 * time.Hour},
+		{8760, 365 * 24 * time.Hour}, {8761, 365 * 24 * time.Hour},
+		{2562048, 365 * 24 * time.Hour}, {2147483647, 365 * 24 * time.Hour},
+	} {
+		t.Run(fmt.Sprint(tc.hours), func(t *testing.T) {
+			source, target := fixture(t)
+			write(t, source, "subscriptions.json", fmt.Sprintf(`[{"name":"Example","url":"https://example.com/sub","update_interval_hours":%d}]`, tc.hours))
+			m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			store, err := state.Open(m.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			subs, err := store.Subscriptions()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := time.Duration(subs.List[0].IntervalSeconds) * time.Second
+			if got != tc.want {
+				t.Fatalf("imported interval = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestImportRejectsInvalidSelectionCaches(t *testing.T) {
+	for _, kind := range []string{"empty", "malformed", "oversized", "many", "bad-name", "corrupt"} {
+		t.Run(kind, func(t *testing.T) {
+			source, target := fixture(t)
+			switch kind {
+			case "empty":
+				write(t, source, "cache.db", "")
+			case "malformed":
+				write(t, source, "cache.db", "not a database")
+			case "oversized":
+				f, err := os.Create(filepath.Join(source, "cache.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = f.Truncate((16 << 20) + 1)
+				f.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			default:
+				db, err := bbolt.Open(filepath.Join(source, "cache.db"), 0o600, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = db.Update(func(tx *bbolt.Tx) error {
+					b, err := tx.CreateBucket([]byte("selected"))
+					if err != nil {
+						return err
+					}
+					if kind == "bad-name" {
+						return b.Put([]byte("Proxy"), []byte("bad\nmember"))
+					}
+					for i := range 4097 {
+						if err := b.Put(fmt.Appendf(nil, "Group %d", i), []byte("Member")); err != nil {
+							return err
+						}
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "corrupt" {
+					if err := os.Truncate(filepath.Join(source, "cache.db"), 8192); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+			if m != nil {
+				defer m.Close()
+			}
+			if err == nil {
+				t.Fatal("invalid selection cache accepted")
+			}
+			if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("failed import changed target")
+			}
+		})
+	}
+}
+
+func TestImportKeepsOnlyMembersOfActiveSelectGroups(t *testing.T) {
+	source, target := fixture(t)
+	write(t, source, "cache/Example.yaml", `proxies: [{name: First, type: direct}, {name: Chosen, type: direct}]
+proxy-groups:
+- {name: Proxy, type: select, proxies: [First, Chosen]}
+- {name: Stale, type: select, proxies: [First]}
+- {name: Auto, type: url-test, proxies: [First, Chosen], url: https://example.com, interval: 3600}
+rules: [MATCH,Proxy]
+`)
+	db, err := bbolt.Open(filepath.Join(source, "cache.db"), 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("selected"))
+		if err != nil {
+			return err
+		}
+		for g, m := range map[string]string{"Proxy": "Chosen", "Stale": "Chosen", "Auto": "Chosen", "Deleted": "Chosen"} {
+			if err := b.Put([]byte(g), []byte(m)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Prepare(t.Context(), source, target, false, noLinks, exportFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if len(m.Selections) != 1 || m.Selections["Proxy"] != "Chosen" {
+		t.Fatalf("imported selections: %v", m.Selections)
+	}
+	if m.Settings.Running {
+		t.Fatal("selection import started proxy")
+	}
+}
+
+func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "--internal-export-selections" {
+		if err := ExportLegacySelections(os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func exportFixture(ctx context.Context, body []byte) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "--internal-export-selections")
+	cmd.Stdin = bytes.NewReader(body)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var selected map[string]string
+	err = json.Unmarshal(output, &selected)
+	return selected, err
 }

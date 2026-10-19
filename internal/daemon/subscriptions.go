@@ -220,17 +220,27 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	if activate {
 		next.Active = sub.ID
 	}
-	settings := d.settings
+	settings, prev := d.settings, d.profile
 	d.mu.Unlock()
 
 	if err := d.acceptContent(ctx, settings, dl.profile, activate); err != nil {
 		return nil, err
 	}
+	revert := func() {
+		if activate && !d.rollback(ctx, settings, prev) {
+			d.mu.Lock()
+			d.subs, d.profile = next, dl.profile
+			d.mu.Unlock()
+		}
+		d.publish(ctx)
+	}
 	if err := d.store.SaveSnapshot(sub.ID, dl.snap); err != nil {
+		revert()
 		return nil, fail(protocol.CodeInternal, "the subscription could not be saved: %v", err)
 	}
 	if err := d.saveSubs(next); err != nil {
 		d.store.RemoveSnapshot(sub.ID)
+		revert()
 		return nil, err
 	}
 	if activate {

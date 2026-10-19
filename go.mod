@@ -8,6 +8,7 @@ godebug default=go1.20
 
 require (
 	github.com/dlclark/regexp2 v1.12.0
+	github.com/metacubex/bbolt v0.0.0-20260706163408-d4ec34ad7c48
 	github.com/metacubex/mihomo v1.19.32
 	github.com/peterbourgon/ff/v3 v3.4.0
 	go.yaml.in/yaml/v3 v3.0.5
@@ -58,7 +59,6 @@ require (
 	github.com/metacubex/amneziawg-go v0.0.0-20260908071407-0c1c6f40ecd7 // indirect
 	github.com/metacubex/ascon v0.1.0 // indirect
 	github.com/metacubex/bart v0.29.0 // indirect
-	github.com/metacubex/bbolt v0.0.0-20260706163408-d4ec34ad7c48 // indirect
 	github.com/metacubex/blake3 v0.1.0 // indirect
 	github.com/metacubex/chacha v0.1.5 // indirect
 	github.com/metacubex/chi v0.1.1 // indirect

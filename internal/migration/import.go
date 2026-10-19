@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +21,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/fetch"
 	"github.com/readeem/omihomo/internal/profile"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -37,16 +40,18 @@ type record struct {
 type Import struct {
 	Dir string
 	// Settings are what was imported, as the daemon will run them.
-	Settings  state.Settings
-	target    string
-	backup    string
-	installed bool
-	lock      *os.File
+	Settings   state.Settings
+	Profile    core.Profile
+	Selections map[string]string
+	target     string
+	backup     string
+	installed  bool
+	lock       *os.File
 }
 
 // Prepare stages subscriptions and typed settings. Existing daemon state is never
 // overwritten. A missing old subscriptions file means there is nothing to import.
-func Prepare(ctx context.Context, source, target string, running bool, links profile.Links) (*Import, error) {
+func Prepare(ctx context.Context, source, target string, running bool, links profile.Links, export Exporter) (*Import, error) {
 	if _, err := os.Lstat(filepath.Join(target, "subscriptions.json")); err == nil {
 		return nil, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -147,11 +152,9 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 		if err != nil {
 			return nil, fmt.Errorf("old subscription %d cannot be imported: %w", i+1, err)
 		}
-		hours := old.Hours
-		if hours <= 0 || hours > 2147483647 {
-			hours = 12
-		}
-		sub.IntervalSeconds = hours * 3600
+		sub.IntervalSeconds = int64(profile.Interval(http.Header{
+			"Profile-Update-Interval": {strconv.FormatInt(old.Hours, 10)},
+		}) / time.Second)
 		if t, err := time.Parse(time.RFC3339, old.Updated); err == nil {
 			sub.UpdatedAt = t.UnixMilli()
 		}
@@ -161,6 +164,14 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 		subs.List = append(subs.List, sub)
 		if old.Name == activeName {
 			subs.Active = sub.ID
+			parsed, err := profile.Read(snap.Body, links)
+			if err != nil {
+				return nil, err
+			}
+			staged.Profile, _, err = parsed.Build(snap.Providers)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if activeName != "" && subs.Active == "" {
@@ -169,6 +180,11 @@ func Prepare(ctx context.Context, source, target string, running bool, links pro
 	if settings.Running && subs.Active == "" {
 		return nil, errors.New("the running old service has no active subscription")
 	}
+	selections, err := exportSelections(ctx, root, export)
+	if err != nil {
+		return nil, fmt.Errorf("read old selections: %w", err)
+	}
+	staged.Selections = core.FilterSelections(staged.Profile, selections)
 	if err := store.SaveSettings(settings); err != nil {
 		return nil, err
 	}

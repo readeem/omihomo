@@ -9,6 +9,7 @@ mkdir -p "$test_root/bin" "$test_root/project/bin" "$test_root/project/internal/
 cp "$project_root/bin/omihomo-install" "$test_root/project/bin/"
 cp "$project_root/manifest.json" "$test_root/project/"
 export INSTALL_TEST_ROOT="$test_root" INSTALL_TEST_LOG="$test_root/commands"
+export HOME="$test_root/home"
 openssl genpkey -algorithm ED25519 -out "$test_root/private.pem"
 openssl pkey -in "$test_root/private.pem" -pubout -out "$test_root/project/internal/update/release.pub"
 cat > "$test_root/installer" <<'MOCK'
@@ -62,13 +63,27 @@ if [[ $1 == /usr/bin/env ]]; then
   "$@"
 else
   [[ $1 == /usr/bin/omihomo && $2 == claim ]] || exit 97
+  config=${XDG_CONFIG_HOME:-$HOME/.config}
+  if [[ $config != /* ]]; then config=$HOME/.config; fi
+  [[ $# == 6 && $3 == --legacy-data && $4 == "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
+    && $5 == --legacy-config && $6 == "$config" && -d $config ]] || exit 95
   printf 'claim\n' >> "$INSTALL_TEST_LOG"
   exit "${INSTALL_TEST_CLAIM_EXIT:-0}"
 fi
 MOCK
 cat > "$test_root/bin/systemctl" <<'MOCK'
 #!/usr/bin/env bash
+if [[ $* == '--user show --property=Id --value omihomo-apply.service' ]]; then exit 0; fi
 printf 'systemctl %s\n' "$*" >> "$INSTALL_TEST_LOG"
+MOCK
+cat > "$test_root/bin/busctl" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $* == '--user --json=short get-property org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/omihomo_2dapply_2eservice org.freedesktop.systemd1.Service Environment' ]] || exit 96
+[[ ${INSTALL_TEST_MANAGER_FAIL:-0} == 0 ]] || exit 1
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+if [[ $config != /* ]]; then config=$HOME/.config; fi
+jq -cn --arg config "${INSTALL_TEST_MANAGER_CONFIG:-$config}" '{type:"as",data:[("XDG_CONFIG_HOME="+$config)]}'
 MOCK
 # Like git, the update replaces the script rather than rewriting it in place.
 # Like Omarchy, a declined update fetches but leaves HEAD and exits 0.
@@ -104,10 +119,17 @@ run_install() {
   fi
 }
 
-commands=$'package install 1.0.0\nclaim\nsystemctl --user daemon-reload\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
+commands=$'package install 1.0.0\nsystemctl --user daemon-reload\nclaim\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
+XDG_CONFIG_HOME="$test_root/custom" INSTALL_TEST_MANAGER_CONFIG="$test_root/manager" run_install 1 install $'package install 1.0.0\nsystemctl --user daemon-reload'
+grep -q 'config director' "$test_root/err"
+INSTALL_TEST_MANAGER_FAIL=1 run_install 1 install $'package install 1.0.0\nsystemctl --user daemon-reload'
+XDG_CONFIG_HOME="$test_root/custom" run_install 0 install "$commands"
+[[ $(stat -c %a "$test_root/custom") == 700 ]]
+XDG_CONFIG_HOME="$test_root/custom path" run_install 0 install "$commands"
+XDG_CONFIG_HOME=relative run_install 0 install "$commands"
 run_install 0 install "$commands"
 INSTALL_TEST_PACKAGE_EXIT=42 run_install 42 install 'package install 1.0.0'
-INSTALL_TEST_CLAIM_EXIT=43 run_install 43 install $'package install 1.0.0\nclaim'
+INSTALL_TEST_CLAIM_EXIT=43 run_install 43 install $'package install 1.0.0\nsystemctl --user daemon-reload\nclaim'
 INSTALL_TEST_INSTALLED=0.9.0-1 run_install 0 update 'package update 1.0.0'
 INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 update ''
 INSTALL_TEST_INSTALLED=2.0.0-1 run_install 0 update ''

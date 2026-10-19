@@ -16,7 +16,24 @@ Prepare while the old installation still works, before updating the plugin:
   rules. The importer accepts `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR` and `PROCESS-NAME`,
   without trailing flags. Other raw YAML overrides, including custom listeners and DNS, are
   ignored; the daemon builds those from its fixed security policy.
-- The old core's group-selection cache is not imported. Plan to verify and reselect members.
+- Group selections are imported from the old core's cache when the group and member still
+  exist in the active subscription. Removed members and automatic groups keep their normal fallback.
+  A corrupt or oversized selection cache blocks migration before cutover.
+
+Before replacing the old plugin checkout, use a separate checkout of the published release
+to run its preflight as your ordinary account (requires the pinned development tools):
+
+```sh
+mise exec -- go run ./cmd/omihomo preflight \
+  --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo"
+```
+
+The command validates the legacy import in a temporary directory and removes it afterward;
+it does not stop services, claim the daemon or replace installed state. Missing provider caches
+may require a download. `{"import":true}` means the data can be staged; `false` means no legacy
+subscription list was found, so verify the path. Resolve any failure with the still-working old
+CLI before proceeding. Keep that old checkout until the live cutover is verified, so pause and
+rule repairs remain available even if package installation succeeds before claim fails.
 
 Update the widget, then reload the shell:
 
@@ -30,11 +47,14 @@ separate from `omihomo-bin`, so this transition uses Install. The widget resolve
 path; no terminal working directory is required. The terminal verifies the signed release,
 asks for normal sudo authentication and pacman confirmation, installs the daemon, then claims
 and migrates it. The installer forwards custom `XDG_DATA_HOME` and `XDG_CONFIG_HOME` values
-and enables automatic settings sync.
+and enables automatic settings sync. After installing the package it refuses claim and sync
+if the shell and sync unit use different config directories, before defaults can replace imported settings. Align
+the two directories first; a relative `XDG_CONFIG_HOME` uses the normal `.config` fallback.
 
 `claim` imports subscriptions, cached content, metadata, request limits, active selection, mode,
-TUN, acceleration, primary group, Tailscale settings and supported prepend rules, preserving
-the proxy's on/off state. It then removes the old user services, privilege hooks and CLI launcher,
+TUN, acceleration, primary group, Tailscale settings, selected group members and supported prepend rules, preserving
+the proxy's on/off state. Imported refresh intervals use the same one-year maximum and 12-hour
+default for missing or nonpositive values as new subscriptions. It then removes the old user services, privilege hooks and CLI launcher,
 and clears privileges on the old mihomo binary.
 
 Original data stays in the old directory; the daemon uses `/var/lib/omihomo`. Imported settings
@@ -46,7 +66,8 @@ and subscriptions are never overwritten by the import.
 
 Fix the reported migration problem first. Install mode now refuses the already-installed
 package, and Update does not repeat the import. Rerun claim with the original paths from your
-ordinary account's terminal, then enable settings sync:
+ordinary account's terminal. Before enabling settings sync, ensure the shell and user manager
+use the same config directory as checked by the installer:
 
 ```sh
 sudo /usr/bin/omihomo claim \
@@ -69,8 +90,8 @@ failure, fix the owner's settings files and rerun claim; subscriptions are retai
 
 ### Verify before cleanup
 
-Compare subscriptions, active selection, group members, typed settings and rules. Reselect group
-members as needed. Test subscription refreshes while running and stopped, DNS, browsing, LAN,
+Compare subscriptions, active selection, group members, typed settings and rules. Verify imported
+choices and the fallback for any removed members. Test subscription refreshes while running and stopped, DNS, browsing, LAN,
 TUN with and without acceleration, and Tailscale when present. Confirm removal of the old binary
 privileges and user units. Follow the [manual cutover checklist](../tests/README.md#manual-cutover-test)
 for reboot restoration while on and off, offline startup, second-account refusal and package removal.

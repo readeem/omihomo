@@ -370,6 +370,81 @@ func TestUnsavedActivationKeepsSelectionAndRuntimeTogether(t *testing.T) {
 	}
 }
 
+func TestUnsavedFirstSubscriptionRestoresRuntime(t *testing.T) {
+	for _, failure := range []string{"snapshot", "index"} {
+		for _, mode := range []string{"running", "stopped", "rollback-refused"} {
+			t.Run(failure+"/"+mode, func(t *testing.T) {
+				o := newOrigin(t)
+				o.set("/work", page{header: titled("Work"), body: workYAML})
+				engine := &firstSubscriptionCore{Core: fakecore.New()}
+				h := serveCore(t, os.Getuid(), engine, o.opts()...)
+				c := h.dial(t)
+				if mode != "stopped" {
+					call[protocol.Status](t, c, protocol.OpStart, nil)
+				}
+				path := filepath.Join(h.stateDir, "subscriptions.json")
+				if failure == "snapshot" {
+					path = filepath.Join(h.stateDir, "subscriptions")
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				engine.refuse.Store(mode == "rollback-refused")
+				if err := callErr(t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")}); err.Code != protocol.CodeInternal {
+					t.Fatalf("unsaved addition: %v", err)
+				}
+				cfg, running := engine.Config()
+				st := call[protocol.Status](t, c, protocol.OpStatus, nil)
+				list := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil)
+				wantName, wantCount := "", 0
+				if mode == "rollback-refused" {
+					wantName, wantCount = "Work", 1
+				}
+				if running != (mode != "stopped") || st.ActiveSubscription != wantName || len(list.Subscriptions) != wantCount || len(cfg.Profile.Proxies) != wantCount*2 {
+					t.Fatalf("after failed addition: status=%+v, subscriptions=%+v, running=%t, profile=%+v", st, list, running, cfg.Profile)
+				}
+				engine.refuse.Store(false)
+				call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Mode: "global"}))
+				if cfg, _ := engine.Config(); mode != "stopped" && len(cfg.Profile.Proxies) != wantCount*2 {
+					t.Fatalf("settings changed the retained runtime: %+v", cfg.Profile)
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if failure == "snapshot" {
+					if err := os.Mkdir(path, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				} else if entries, err := os.ReadDir(filepath.Join(h.stateDir, "subscriptions")); err != nil || len(entries) != 0 {
+					t.Fatalf("uncommitted snapshot survived: %v, %v", entries, err)
+				}
+				h.restart(t)
+				c = h.dial(t)
+				if list := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil); len(list.Subscriptions) != 0 {
+					t.Fatalf("unsaved addition survived restart: %+v", list)
+				}
+			})
+		}
+	}
+}
+
+type firstSubscriptionCore struct {
+	*fakecore.Core
+	refuse atomic.Bool
+}
+
+func (c *firstSubscriptionCore) Apply(ctx context.Context, cfg core.Config) error {
+	if c.refuse.Load() && len(cfg.Profile.Proxies) == 0 {
+		return fmt.Errorf("cannot restore the empty profile")
+	}
+	return c.Core.Apply(ctx, cfg)
+}
+
 type subscriptionRollbackCore struct {
 	*fakecore.Core
 	refuse atomic.Bool

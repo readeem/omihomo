@@ -124,9 +124,6 @@ func privateDir(dir string) error {
 	return nil
 }
 
-// Dir is the state directory.
-func (s *Store) Dir() string { return s.dir }
-
 // Settings returns the stored settings, or DefaultSettings if there are
 // none yet.
 func (s *Store) Settings() (Settings, error) {

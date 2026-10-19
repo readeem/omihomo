@@ -18,6 +18,8 @@ bin/omihomo-install install
 Run the script without `sudo`; it requests privileges for verified package installation and
 then claims the daemon. If installation fails it does not claim; if claiming fails the script
 returns an error. Custom XDG directories are passed to `claim` by the installer.
+After package installation it checks the sync unit's expanded config directory against the shell's;
+if they differ or cannot be checked, it stops before claiming or enabling sync.
 `bin/omihomo-install check` checks signed release metadata without privileges;
 `bin/omihomo-install update` updates the plugin through Omarchy when Omarchy manages this
 checkout, then installs a newer package without changing the recorded owner.
@@ -77,8 +79,9 @@ preserved and their targets updated. Directories are `0700`, files `0600`, inclu
 
 The user `omihomo-apply.path` watches both files and their directory, so hand and dotfile-manager
 edits apply automatically. `omihomo-apply.service` also applies them at login. These units use the
-user manager's config directory (`%E`); with custom XDG paths, ensure the manager uses the same
-`XDG_CONFIG_HOME` as the CLI, or call `omihomo apply` from the dotfile manager instead. Inspect
+user manager's config directory (`%E`). The installer refuses a mismatch with the CLI's
+`XDG_CONFIG_HOME`; configure both to use the same directory before retrying. Manual installs
+must also align these paths before enabling sync, or call `omihomo apply` from the dotfile manager instead. Inspect
 errors with `journalctl --user -u omihomo-apply.service`. Invalid edits remain available to fix;
 the daemon continues using its last accepted settings. Reapplying unchanged settings leaves the
 core running untouched.

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -30,7 +31,11 @@ import (
 var shared *Core
 
 func TestMain(m *testing.M) {
-	home, err := os.MkdirTemp("", "omihomo-core-")
+	home := os.Getenv("OMIHOMO_TEST_CORE_HOME")
+	var err error
+	if home == "" {
+		home, err = os.MkdirTemp("", "omihomo-core-")
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -632,5 +637,53 @@ func TestAnIPv4FlowFindsItsDualStackUDPSocket(t *testing.T) {
 	}
 	if got := dualStackProcess(m); got != filepath.Base(exe) {
 		t.Errorf("process = %q, want %q", got, filepath.Base(exe))
+	}
+}
+
+func TestImportedSelectionsSurviveOfflineStart(t *testing.T) {
+	p := profile()
+	if os.Getenv("OMIHOMO_TEST_CORE_HOME") != "" {
+		c := running(t, core.Config{Mode: "rule", Profile: p})
+		groups, err := c.Groups(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if groups[0].Now != "Dead" {
+			t.Fatalf("imported selection = %q", groups[0].Now)
+		}
+		return
+	}
+	home := filepath.Join(t.TempDir(), "core")
+	if err := ImportSelections(home, p, map[string]string{"Proxy": "Dead"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ImportSelections(home, p, map[string]string{"Proxy": "Local"}); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("existing cache overwritten: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(home, "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("cache permissions = %o", info.Mode().Perm())
+	}
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestImportedSelectionsSurviveOfflineStart$")
+	cmd.Env = append(os.Environ(), "OMIHOMO_TEST_CORE_HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("offline startup: %v\n%s", err, out)
+	}
+}
+
+func TestImportSelectionsRejectsInvalidPairs(t *testing.T) {
+	for _, selections := range []map[string]string{
+		{"Missing": "Local"}, {"Proxy": "Missing"}, {"Auto": "Dead"},
+	} {
+		home := filepath.Join(t.TempDir(), "core")
+		if err := ImportSelections(home, profile(), selections); err == nil {
+			t.Fatal("invalid selections accepted")
+		}
+		if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("invalid import created core home")
+		}
 	}
 }

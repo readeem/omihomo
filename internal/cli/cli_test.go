@@ -26,6 +26,9 @@ import (
 
 // TestMain keeps every test away from the account's own settings files.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "--internal-export-selections" {
+		os.Exit(cli.Run(context.Background(), os.Args[1:], cli.Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}))
+	}
 	dir, err := os.MkdirTemp("", "omihomo-cli-config-")
 	if err != nil {
 		panic(err)

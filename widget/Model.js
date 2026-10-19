@@ -798,11 +798,6 @@ function relativeSince(thenMs, nowMs) {
   return Math.floor(hours / 24) + "d ago"
 }
 
-function nextMode(mode) {
-  var index = MODES.indexOf(text(mode).toLowerCase())
-  return MODES[(index < 0 ? 0 : index + 1) % MODES.length]
-}
-
 // Case-insensitive substring match, so the config filter behaves like every
 // other filter in the shell.
 function filterNames(names, query) {
@@ -913,7 +908,6 @@ if (typeof module !== "undefined") {
     formatDate: formatDate,
     relativeTime: relativeTime,
     relativeSince: relativeSince,
-    nextMode: nextMode,
     filterNames: filterNames,
     nameParts: nameParts,
     emojiKey: emojiKey

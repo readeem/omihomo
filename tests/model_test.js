@@ -459,14 +459,6 @@ test("the config filter matches case-insensitively anywhere in the name", () => 
   assert.deepEqual(Model.filterNames(names, ""), names)
 })
 
-test("mode cycles through mihomo's three modes", () => {
-  assert.equal(Model.nextMode("rule"), "global")
-  assert.equal(Model.nextMode("global"), "direct")
-  assert.equal(Model.nextMode("direct"), "rule")
-  // An unknown mode lands on the first, rather than skipping past it.
-  assert.equal(Model.nextMode(""), "rule")
-})
-
 test("leading and trailing emoji split off a name with their spaces", () => {
   assert.deepEqual(Model.nameParts("🇯🇵 Node A 🚀"), { mark: "🇯🇵", rest: "Node A", tail: ["🚀"] })
   assert.deepEqual(Model.nameParts("🚀  Fast"), { mark: "🚀", rest: "Fast", tail: [] })

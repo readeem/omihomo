@@ -61,7 +61,6 @@ type Document struct {
 	// wrapped is a subscription of bare proxies: Build puts them in one
 	// select group that every connection goes through.
 	wrapped bool
-	dropped []string
 }
 
 // The keys that make a YAML mapping a config rather than a list of links.
@@ -150,7 +149,7 @@ const wrapperGroup = "Proxy"
 // what only it fed. dropped names what was left out, for the log; it never
 // quotes credentials.
 func (d *Document) Build(bodies map[string][]byte) (p core.Profile, dropped []string, err error) {
-	b := &builder{doc: d, bodies: bodies, names: map[string]bool{}, dropped: slices.Clone(d.dropped),
+	b := &builder{doc: d, bodies: bodies, names: map[string]bool{},
 		deadline: time.Now().Add(filterBudget)}
 	for _, name := range builtins {
 		b.names[name] = true

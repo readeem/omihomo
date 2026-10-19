@@ -109,6 +109,7 @@ const ops = {
   "status": () => ({ result: status }),
   "subscribe": (client, a) => {
     for (const stream of a.streams) {
+      if (client.streams.has(stream)) continue
       client.streams.add(stream)
       if (snapshots[stream]) send(client, { type: "event", stream, data: snapshots[stream]() })
     }

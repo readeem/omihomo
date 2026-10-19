@@ -18,6 +18,7 @@ import (
 	"github.com/peterbourgon/ff/v3/ffcli"
 
 	"github.com/readeem/omihomo/internal/client"
+	"github.com/readeem/omihomo/internal/migration"
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/settings"
 )
@@ -49,6 +50,9 @@ type Env struct {
 // Run executes one command line and returns its exit code. Help goes to
 // stderr and exits 0 when asked for, 2 after a usage error.
 func Run(ctx context.Context, args []string, env Env) int {
+	if len(args) == 1 && args[0] == "--internal-export-selections" {
+		return exitCode(env, migration.ExportLegacySelections(env.Stdin, env.Stdout))
+	}
 	root := (&app{env: env}).root()
 	if err := root.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -193,11 +197,12 @@ func (a *app) root() *ffcli.Command {
 			nargs(0, protocol.OpEgress, nil)),
 		a.watchCommand(),
 		a.versionCommand(),
+		a.preflightCommand(),
 		a.claimCommand(),
 		a.daemonCommand(),
 	)
-	root.LongHelp = "Every command but claim and daemon talks to the daemon's socket and prints one JSON\n" +
-		"line. set, rule add and rule remove also save your settings files, settings.json and\n" +
+	root.LongHelp = "Every command but version, preflight, claim and daemon talks to the daemon's socket\n" +
+		"and prints one JSON line. set, rule add and rule remove also save settings.json and\n" +
 		"rules.json in $XDG_CONFIG_HOME/omihomo, and apply runs what they hold. Flags go before\n" +
 		"arguments; -- ends the flags. OMIHOMO_SOCKET points at another socket. Run\n" +
 		"omihomo <command> -h for more."

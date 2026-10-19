@@ -82,9 +82,17 @@ function findGroup(name) {
 
 // Each op answers { result } or { error }, or a promise of one.
 const ops = {
+  "test.stream-error": (args) => {
+    for (const client of clients) {
+      if (client.streams.has(args.stream)) send(client, { type: "event", stream: args.stream,
+        error: { code: "too_large", message: args.stream + " snapshot exceeds the event size limit" } })
+    }
+    return { result: {} }
+  },
   status: () => ({ result: status }),
   subscribe: (args, client) => {
     for (const stream of args.streams) {
+      if (client.streams.has(stream)) continue
       client.streams.add(stream)
       if (snapshots[stream]) send(client, { type: "event", stream, data: snapshots[stream]() })
       // The whole last minute of traffic at once, so the graph is full.

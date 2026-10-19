@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"errors"
+	"github.com/metacubex/bbolt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/readeem/omihomo/internal/core/mihomo"
 )
@@ -297,5 +299,71 @@ func TestAFailedCutoverRemovesTheSettingsFilesItWrote(t *testing.T) {
 	}
 	if _, err := c.config.Lstat("omihomo"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the settings directory outlived the rollback: %v", err)
+	}
+}
+
+func TestCutoverPreservesValidatedSelectionsWhileStopped(t *testing.T) {
+	c, _ := cutoverFixture(t)
+	oldData(t, c, "")
+	c.userctl = func(context.Context, ...string) (bool, error) { return false, nil }
+	c.check = func(_ context.Context, running bool) error {
+		if running {
+			t.Fatal("migration started a stopped proxy")
+		}
+		return nil
+	}
+	body := `proxies: [{name: First, type: direct}, {name: Chosen, type: direct}]
+proxy-groups:
+- {name: Proxy, type: select, proxies: [First, Chosen]}
+- {name: Auto, type: url-test, proxies: [First, Chosen], url: https://example.com, interval: 3600}
+rules: [MATCH,Proxy]
+`
+	if err := os.WriteFile(filepath.Join(c.data, "cache/Example.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bbolt.Open(filepath.Join(c.data, "cache.db"), 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("selected"))
+		if err != nil {
+			return err
+		}
+		for group, member := range map[string]string{"Proxy": "Chosen", "Auto": "Chosen", "Deleted": "Chosen"} {
+			if err := b.Put([]byte(group), []byte(member)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	db, err = bbolt.Open(filepath.Join(c.state, "core/cache.db"), 0o600, &bbolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("selected"))
+		if b == nil {
+			t.Fatal("selections missing")
+		}
+		if got := string(b.Get([]byte("Proxy"))); got != "Chosen" {
+			t.Fatalf("Proxy selected %q", got)
+		}
+		if b.Get([]byte("Auto")) != nil || b.Get([]byte("Deleted")) != nil {
+			t.Fatal("stale/nonselectable selection imported")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
