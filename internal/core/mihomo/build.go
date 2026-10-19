@@ -148,6 +148,10 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 			members[i] = name
 		}
 		m["name"], m["type"], m["proxies"] = g.Name, g.Type, members
+		// The primary must remain controllable even if the subscription hides it.
+		if g.Name == primary {
+			m["hidden"] = false
+		}
 		raw.ProxyGroup = append(raw.ProxyGroup, m)
 	}
 
@@ -219,11 +223,17 @@ func checkGroupNumbers(g core.Group) error {
 	return nil
 }
 
-// primaryGroup is the group named want, else the first select group, else
-// the first group.
+// Visible groups take precedence unless the owner explicitly chooses a hidden one.
 func primaryGroup(groups []core.Group, want string) string {
 	if want != "" && slices.ContainsFunc(groups, func(g core.Group) bool { return g.Name == want }) {
 		return want
+	}
+	visible := slices.DeleteFunc(slices.Clone(groups), func(g core.Group) bool {
+		hidden, _ := g.Options["hidden"].(bool)
+		return hidden
+	})
+	if len(visible) > 0 {
+		groups = visible
 	}
 	for _, g := range groups {
 		if g.Type == "select" {

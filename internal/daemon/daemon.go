@@ -165,6 +165,7 @@ type server struct {
 	// stream after a newer one.
 	pubMu      sync.Mutex
 	lastPushed map[string][]byte
+	lastStatus protocol.Status
 }
 
 var _ Daemon = (*server)(nil)

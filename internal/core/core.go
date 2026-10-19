@@ -24,7 +24,9 @@ type Config struct {
 	TailnetProxy bool
 	// PrimaryGroup is the group global mode and Omihomo's own rules send
 	// traffic through. Empty, or a name absent from the profile, means the
-	// first select group, falling back to the first group of any type.
+	// first visible select group, falling back to the first visible group.
+	// If all groups are hidden, they remain eligible. The chosen group is
+	// always visible for control.
 	PrimaryGroup string
 	// TUNBypass is the address space TUN routes around.
 	TUNBypass []netip.Prefix

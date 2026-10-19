@@ -323,6 +323,12 @@ func (c *cutover) run(ctx context.Context) (err error) {
 // files, unless they already have either, as a dotfile manager may have
 // placed them before the claim.
 func (c *cutover) writeSettings(v protocol.ApplyArgs) error {
+	// Only the owner may follow a dotfile manager's directory link.
+	if info, err := c.config.Lstat("omihomo"); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	files := settings.Encode(v)
 	for _, f := range files {
 		if _, err := c.config.Lstat("omihomo/" + f.Name); err == nil {

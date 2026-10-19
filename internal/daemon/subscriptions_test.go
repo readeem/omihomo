@@ -938,3 +938,78 @@ func TestAChangeNeedingGeodataThatDoesNotComeIsRefused(t *testing.T) {
 		t.Fatalf("the rule was kept: %+v", list)
 	}
 }
+
+func TestUnreadableActiveSnapshotCannotStart(t *testing.T) {
+	for _, damage := range []string{"missing", "malformed", "invalid profile"} {
+		t.Run(damage, func(t *testing.T) {
+			o := newOrigin(t)
+			o.set("/work", page{header: titled("Work"), body: workYAML})
+			h := serve(t, os.Getuid(), o.opts()...)
+			c := h.dial(t)
+			call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+			call[protocol.Status](t, c, protocol.OpStart, nil)
+			h.shutdown(t)
+			entries, err := os.ReadDir(filepath.Join(h.stateDir, "subscriptions"))
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("snapshots: %v %v", entries, err)
+			}
+			path := filepath.Join(h.stateDir, "subscriptions", entries[0].Name())
+			saved, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch damage {
+			case "missing":
+				err = os.Remove(path)
+			case "malformed":
+				err = os.WriteFile(path, []byte("{"), 0o600)
+			case "invalid profile":
+				body, _ := json.Marshal(map[string]any{"body": []byte("proxies: invalid")})
+				err = os.WriteFile(path, body, 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			o.Close()
+			os.Remove(h.socket)
+			h.start(t)
+			c = h.dial(t)
+			err = c.Call(t.Context(), protocol.OpStart, nil, nil)
+			st := call[protocol.Status](t, c, protocol.OpStatus, nil)
+			if _, running := h.core.Config(); err == nil || running || st.State != protocol.StateStopped || st.Detail == "" || st.ActiveSubscription != "Work" {
+				t.Fatalf("unreadable snapshot started: status=%+v running=%t error=%v", st, running, err)
+			}
+			if err := os.WriteFile(path, saved, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			call[protocol.Status](t, c, protocol.OpStart, nil)
+			if cfg, running := h.core.Config(); !running || len(cfg.Profile.Proxies) != 2 {
+				t.Fatalf("repaired snapshot did not recover: running=%t profile=%+v", running, cfg.Profile)
+			}
+		})
+	}
+}
+
+func TestSubscriptionChangePushesIdenticalGroups(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/a", page{header: titled("A"), body: workYAML})
+	o.set("/b", page{header: titled("B"), body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	for _, path := range []string{"/a", "/b"} {
+		call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url(path)})
+	}
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	call[protocol.Empty](t, c, protocol.OpSubscribe, protocol.StreamsArgs{Streams: []string{protocol.StreamStatus, protocol.StreamGroups}})
+	next(t, c, protocol.StreamStatus)
+	initial := next(t, c, protocol.StreamGroups)
+	call[protocol.Status](t, c, protocol.OpSubscriptionUse, protocol.NameArgs{Name: "B"})
+	var st protocol.Status
+	json.Unmarshal(next(t, c, protocol.StreamStatus), &st)
+	if st.ActiveSubscription != "B" {
+		t.Fatalf("status = %+v", st)
+	}
+	if got := next(t, c, protocol.StreamGroups); string(got) != string(initial) {
+		t.Fatalf("groups changed: %s -> %s", initial, got)
+	}
+}

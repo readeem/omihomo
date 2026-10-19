@@ -243,7 +243,15 @@ func (d *server) publish(ctx context.Context) {
 // publishLocked pushes stream to its subscribers if it changed, and to also
 // regardless. The caller holds pubMu.
 func (d *server) publishLocked(ctx context.Context, stream string, also *session) {
-	b := d.eventLine(stream, d.snapshot(ctx, stream))
+	data := d.snapshot(ctx, stream)
+	if status, ok := data.(protocol.Status); ok {
+		// Clients discard their groups when the subscription or start time changes.
+		if status.ActiveSubscription != d.lastStatus.ActiveSubscription || status.StartedAt != d.lastStatus.StartedAt {
+			delete(d.lastPushed, protocol.StreamGroups)
+		}
+		d.lastStatus = status
+	}
+	b := d.eventLine(stream, data)
 	if !bytes.Equal(d.lastPushed[stream], b) {
 		d.lastPushed[stream] = b
 		for _, s := range d.subscribers(stream) {
@@ -325,6 +333,18 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 	d.mu.Unlock()
 	if d.running() {
 		return nil
+	}
+	if active := d.activeSub(); active != nil {
+		p, err := d.loadProfile(*active)
+		if err != nil {
+			detail := "the active subscription could not be read: " + err.Error()
+			d.setState(protocol.StateStopped, detail)
+			d.publish(ctx)
+			return fail(protocol.CodeRejected, "%s", detail)
+		}
+		d.mu.Lock()
+		d.profile = p
+		d.mu.Unlock()
 	}
 	d.setState(protocol.StateStarting, "")
 	d.publish(ctx)

@@ -3,6 +3,7 @@ package migration
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -401,6 +402,15 @@ func snapshot(ctx context.Context, root *os.Root, body []byte, left *int64, link
 			data, readErr = read(root, def.Path, *left)
 		} else {
 			readErr = fs.ErrNotExist
+		}
+		if errors.Is(readErr, fs.ErrNotExist) {
+			prefix := "proxies"
+			if p.Kind == profile.RuleProvider {
+				prefix = "rules"
+			}
+			// The release's HTTP providers use mihomo's URL-based MD5 cache names.
+			name := fmt.Sprintf("%s/%x", prefix, md5.Sum([]byte(p.URL)))
+			data, readErr = read(root, name, *left)
 		}
 		if errors.Is(readErr, fs.ErrNotExist) {
 			if *left <= 0 {

@@ -479,3 +479,80 @@ func exportFixture(ctx context.Context, body []byte) (map[string]string, error) 
 	err = json.Unmarshal(output, &selected)
 	return selected, err
 }
+
+func TestImportUsesHashedHTTPProviderCaches(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			source, target := fixture(t)
+			proxyURL, ruleURL := "https://127.0.0.1:1/proxies", "https://127.0.0.1:1/rules"
+			path := ""
+			if explicit {
+				path = ", path: ./missing.yaml"
+			}
+			write(t, source, "cache/Example.yaml", fmt.Sprintf(`proxy-providers:
+  subscription: {type: http, url: %s%s}
+proxy-groups:
+- {name: Proxy, type: select, use: [subscription]}
+rule-providers:
+  blocked: {type: http, behavior: domain, url: %s%s}
+rules: ["RULE-SET,blocked,REJECT", "MATCH,Proxy"]
+`, proxyURL, path, ruleURL, path))
+			write(t, source, "proxies/7e70227b15519a5b7b69821848fe1be5", "proxies: [{name: Example, type: direct}]")
+			write(t, source, "rules/7431d192c67ac40108a40e67949fa761", "payload: [+.blocked.example]")
+			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			store, _ := state.Open(m.Dir)
+			subs, _ := store.Subscriptions()
+			snap, err := store.Snapshot(subs.Active)
+			if err != nil || len(snap.Providers) != 2 {
+				t.Fatalf("cached providers lost: %+v %v", snap, err)
+			}
+		})
+	}
+}
+
+func TestImportRejectsUnsafeHashedProviderCaches(t *testing.T) {
+	for _, kind := range []string{"file symlink", "directory symlink", "oversized"} {
+		t.Run(kind, func(t *testing.T) {
+			source, target := fixture(t)
+			write(t, source, "cache/Example.yaml", `proxy-providers:
+  subscription: {type: http, url: https://127.0.0.1:1/proxies}
+proxy-groups:
+- {name: Proxy, type: select, use: [subscription]}
+rules: ["MATCH,Proxy"]
+`)
+			const name = "7e70227b15519a5b7b69821848fe1be5"
+			outside := t.TempDir()
+			write(t, outside, name, "proxies: [{name: Example, type: direct}]")
+			path := filepath.Join(source, "proxies", name)
+			var err error
+			switch kind {
+			case "directory symlink":
+				err = os.Symlink(outside, filepath.Dir(path))
+			case "file symlink":
+				if err = os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+					err = os.Symlink(filepath.Join(outside, name), path)
+				}
+			case "oversized":
+				write(t, source, "proxies/"+name, "")
+				err = os.Truncate(path, 64<<20)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+			if m != nil {
+				m.Close()
+			}
+			if err == nil {
+				t.Fatal("unsafe provider cache imported")
+			}
+			if strings.Contains(err.Error(), "download") {
+				t.Fatalf("unsafe cache treated as missing: %v", err)
+			}
+		})
+	}
+}

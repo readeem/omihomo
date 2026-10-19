@@ -28,7 +28,7 @@ Rectangle {
     x: panelSwitch.checked ? panelSwitch.width - width - Style.space(3) : Style.space(3)
     anchors.verticalCenter: parent.verticalCenter
     color: panelSwitch.checked ? panelSwitch.theme.surface : panelSwitch.theme.dim
-    Behavior on x { NumberAnimation { duration: Style.duration(220); easing.type: Easing.OutBack } }
+    Behavior on x { NumberAnimation { duration: typeof Style.duration === "function" ? Style.duration(220) : 220; easing.type: Easing.OutBack } }
   }
 
   MouseArea {

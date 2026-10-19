@@ -12,6 +12,7 @@ import (
 
 	"github.com/readeem/omihomo/internal/core/mihomo"
 	"github.com/readeem/omihomo/internal/owner"
+	"github.com/readeem/omihomo/internal/settings"
 )
 
 // oldData writes an old install's data directory with one subscription and
@@ -324,5 +325,39 @@ func TestAFailedCutoverRemovesTheSettingsFilesItWrote(t *testing.T) {
 	}
 	if _, err := c.config.Lstat("omihomo"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the settings directory outlived the rollback: %v", err)
+	}
+}
+
+func TestCutoverPreservesLinkedSettingsDirectory(t *testing.T) {
+	c, calls := cutoverFixture(t)
+	oldData(t, c, "config: {mode: global}")
+	linked := t.TempDir()
+	want := settings.Default()
+	want.Settings.Mode = "direct"
+	if err := settings.Save(linked, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(linked, filepath.Join(c.config.Name(), "omihomo")); err != nil {
+		t.Fatal(err)
+	}
+	c.apply = func(context.Context) error {
+		got, err := settings.Load(filepath.Join(c.config.Name(), "omihomo"))
+		if err != nil {
+			return err
+		}
+		if got.Settings.Mode != want.Settings.Mode {
+			t.Fatalf("existing settings replaced: %+v", got)
+		}
+		*calls = append(*calls, "apply")
+		return nil
+	}
+	if err := c.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(*calls, "apply") {
+		t.Fatalf("owner's settings not applied: %v", *calls)
+	}
+	if info, err := c.config.Lstat("omihomo"); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("settings directory link replaced: %v", err)
 	}
 }

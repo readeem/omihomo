@@ -687,3 +687,31 @@ func TestImportSelectionsRejectsInvalidPairs(t *testing.T) {
 		}
 	}
 }
+
+func TestHiddenPrimaryAgreesWithListedGroups(t *testing.T) {
+	for _, tc := range []struct {
+		configured, want string
+		hiddenOnly       bool
+	}{{"", "Visible", false}, {"Hidden", "Hidden", false}, {"Missing", "Visible", false}, {"", "Hidden", true}} {
+		t.Run(tc.configured, func(t *testing.T) {
+			cfg := core.Config{Mode: protocol.ModeGlobal, PrimaryGroup: tc.configured, Profile: core.Profile{
+				Groups: []core.Group{
+					{Name: "Hidden", Type: "select", Members: []string{"REJECT"}, Options: map[string]any{"hidden": true}},
+					{Name: "Visible", Type: "select", Members: []string{"DIRECT"}},
+				},
+			}}
+			if tc.hiddenOnly {
+				cfg.Profile.Groups = cfg.Profile.Groups[:1]
+			}
+			c := running(t, cfg)
+			global := tunnel.Proxies()[globalGroup].Adapter().(interface{ Now() string }).Now()
+			groups, err := c.Groups(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if global != tc.want || !slices.ContainsFunc(groups, func(g protocol.Group) bool { return g.Name == global }) {
+				t.Fatalf("GLOBAL=%s, want %s; listed groups=%+v", global, tc.want, groups)
+			}
+		})
+	}
+}
