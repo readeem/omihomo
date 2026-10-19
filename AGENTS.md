@@ -4,6 +4,7 @@ This project is an Omarchy 4 plugin for managing mihomo proxy client, with subsc
 
 A root-owned daemon embeds mihomo and serves an owner-only socket; the `omihomo` CLI and the QML
 widget are its clients. Vocabulary is in `GLOSSARY.md`, decisions in `docs/adr/`.
+Plugin and the daemon/CLI are updated together.
 
 ## What we never compromise on
 
@@ -13,16 +14,6 @@ widget are its clients. Vocabulary is in `GLOSSARY.md`, decisions in `docs/adr/`
    typed settings plus an allowlisted subscription (ADR-0005).
 3. **mihomo stays behind `core.Core`.** Nothing outside `internal/core/mihomo` imports it;
    `TestOnlyTheCoreImportsMihomo` enforces this.
-
-## The ways to hurt yourself
-
-1. **The installed daemon is the machine's live proxy.** Never run `omihomo claim`, `pacman -U`,
-   `tools/test-cutover` or a restart of `omihomo.service`; hand those steps to us, with
-   `tests/README.md#manual-cutover-test`.
-2. **mihomo races with itself.** Its package runs without `-race`, and only the release build tags
-   (`with_gvisor,no_easytier`) give it the gVisor stack its tests need.
-3. **`release` is what users install.** It is the default branch, but pull requests target `next`;
-   only the release workflow moves `release` (ADR-0007).
 
 ## Hit every surface
 
