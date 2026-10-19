@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "." as Omihomo
+import "../widget" as Omihomo
 
 // An open panel's live state against a fake daemon whose start, selection,
 // delay tests and egress checks each take 150 ms: latency checks, selection,
@@ -8,7 +8,7 @@ import "." as Omihomo
 ShellRoot {
   id: testRoot
 
-  Omihomo.StateTest { id: t; name: "LIVE" }
+  StateTest { id: t; name: "LIVE" }
 
   Omihomo.Service {
     id: svc
@@ -123,8 +123,8 @@ ShellRoot {
           { stream: "connections", scope: "conns" },
           { stream: "status", scope: "core" }
         ]
-        for (var i = 0; i < cases.length; i++) {
-          var entry = cases[i]
+        for (let i = 0; i < cases.length; i++) {
+          const entry = cases[i]
           svc.receive(JSON.stringify({ type: "event", stream: entry.stream,
             error: { code: "too_large", message: entry.stream + " too large" } }))
           t.check(svc.lastError, entry.stream + " too large", entry.stream + " failure is visible")

@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "." as Omihomo
+import "../widget" as Omihomo
 
 ShellRoot {
   id: suite

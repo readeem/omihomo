@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir "$test_root/runtime" "$test_root/config" "$test_root/fixtures"
-cp "$here/update_state_test.qml" "$test_root/config/shell.qml"
+sed 's|import "../widget"|import "."|' "$here/update_state_test.qml" >"$test_root/config/shell.qml"
 cp "$project_root/widget/UpdateService.qml" "$test_root/config/"
 cat > "$test_root/fixtures/command" <<'SCRIPT'
 #!/usr/bin/env bash

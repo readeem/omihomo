@@ -51,7 +51,7 @@ ShellRoot {
     fontFamily: Style.font.family
     _run: function(command) {
       var actions = ["install", "update"]
-      for (var i = 0; i < actions.length; i++) {
+      for (let i = 0; i < actions.length; i++) {
         if (command !== "omarchy-launch-floating-terminal-with-presentation "
           + Util.shellQuote(Util.shellQuote(panel.installerPath) + " " + actions[i])) continue
         console.log("DRIVE_TERMINAL ran omihomo-install " + actions[i])
@@ -84,11 +84,11 @@ ShellRoot {
     // modifiers ("shift+Tab", "ctrl+k"). Returns what it could not press.
     function keys(specs: string): string {
       var specList = specs.split(" ").filter(function(spec) { return spec !== "" })
-      for (var i = 0; i < specList.length; i++) {
-        var parts = specList[i].split("+")
-        var name = parts.pop()
-        var held = 0
-        for (var m = 0; m < parts.length; m++) {
+      for (let i = 0; i < specList.length; i++) {
+        const parts = specList[i].split("+")
+        const name = parts.pop()
+        let held = 0
+        for (let m = 0; m < parts.length; m++) {
           if (drive.modifiers[parts[m]] === undefined) return "unknown modifier " + parts[m]
           held |= drive.modifiers[parts[m]]
         }
@@ -100,7 +100,7 @@ ShellRoot {
     }
 
     function type(text: string): void {
-      for (var i = 0; i < text.length; i++) events.keyClickChar(text[i], 0, -1)
+      for (let i = 0; i < text.length; i++) events.keyClickChar(text[i], 0, -1)
     }
 
     // Takes a point in screenshot pixels.

@@ -30,7 +30,7 @@ QtObject {
   function render() {
     if (process.running || _queue.length === 0) return
     var args = ["bash", "-c", script, "omihomo-emoji", dir]
-    for (var i = 0; i < _queue.length; i++) args.push(Model.emojiKey(_queue[i]), _queue[i])
+    for (let i = 0; i < _queue.length; i++) args.push(Model.emojiKey(_queue[i]), _queue[i])
     _queue = []
     process.command = args
     process.running = true
@@ -60,8 +60,8 @@ QtObject {
     onExited: {
       var ready = String(out.text || "").split("\n")
       var images = Object.assign({}, emoji.images)
-      for (var e in emoji._requested) {
-        var key = Model.emojiKey(e)
+      for (const e in emoji._requested) {
+        const key = Model.emojiKey(e)
         if (ready.indexOf(key) !== -1) images[e] = "file://" + emoji.dir + "/" + key + ".png"
       }
       emoji.images = images

@@ -29,8 +29,8 @@ ShellRoot {
     if (!item) return null
     if (test(item)) return item
     var kids = item.children || []
-    for (var i = 0; i < kids.length; i++) {
-      var hit = find(kids[i], test)
+    for (let i = 0; i < kids.length; i++) {
+      const hit = find(kids[i], test)
       if (hit) return hit
     }
     return null
@@ -75,7 +75,7 @@ ShellRoot {
       if (service.connectionLog.length - service.openConnectionCount < 3) return
       stage = "shoot"
     } else if (stage === "shoot") {
-      var next = shots[shot]
+      const next = shots[shot]
       if (settled++ === 0) {
         panel.view = next.view
         if (next.ruleQuery) find(panel, function(item) {

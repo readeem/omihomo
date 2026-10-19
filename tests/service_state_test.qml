@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "." as Omihomo
+import "../widget" as Omihomo
 
 // The connection, optimistic writes, and failures, against fake daemons.
 // Quickshell links its QML modules into the `qs` executable, so each suite runs
@@ -11,7 +11,7 @@ ShellRoot {
   property int savedRules: 0
   property int failedRules: 0
 
-  Omihomo.StateTest { id: t; name: "SERVICE" }
+  StateTest { id: t; name: "SERVICE" }
 
   Omihomo.Service { id: absent; socketPath: t.socket("none") }
   Omihomo.Service { id: refused; socketPath: t.socket("refuse") }

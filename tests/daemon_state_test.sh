@@ -32,7 +32,7 @@ for suite in service_state_test live_state_test; do
   config="$test_root/$suite"
   sockets="$config/sockets"
   mkdir -p "$sockets"
-  cp "$here/$suite.qml" "$config/shell.qml"
+  sed 's|import "../widget"|import "."|' "$here/$suite.qml" >"$config/shell.qml"
   cp "$here/StateTest.qml" "$project_root/widget/Service.qml" "$project_root/widget/Model.js" "$config/"
 
   sed -i "s|/usr/bin/omihomo|$test_root/edit|g" "$config/Service.qml"

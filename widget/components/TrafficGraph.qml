@@ -34,9 +34,9 @@ Canvas {
 
     function trace(key) {
       ctx.beginPath()
-      for (var j = 0; j < list.length; j++) {
-        var x = (offset + j) * step
-        var y = height - 1 - (list[j][key] / peak) * (height - 3)
+      for (let j = 0; j < list.length; j++) {
+        const x = (offset + j) * step
+        const y = height - 1 - (list[j][key] / peak) * (height - 3)
         if (j === 0) ctx.moveTo(x, y)
         else ctx.lineTo(x, y)
       }

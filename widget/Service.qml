@@ -214,7 +214,7 @@ Item {
     var pending = _pending
     _pending = ({})
     var error = { code: "disconnected", message: "The connection to the core dropped" }
-    for (var id in pending) if (pending[id]) pending[id](null, error)
+    for (const id in pending) if (pending[id]) pending[id](null, error)
   }
 
   function receive(line) {
@@ -224,12 +224,12 @@ Item {
     if (message.type === "refused") return refuse(message.error)
     if (!ready) return
     if (message.type === "reply") {
-      var done = _pending[message.id]
+      const done = _pending[message.id]
       if (done === undefined) return
       delete _pending[message.id]
       if (done) done(message.error ? null : message.result, message.error || null)
     } else if (message.type === "event") {
-      var stream = String(message.stream)
+      const stream = String(message.stream)
       applyEvent(stream, message.data, message.error)
     }
   }
@@ -269,7 +269,7 @@ Item {
     if (wantedStreams().indexOf(stream) < 0) return
     var previous = streamErrors[stream]
     if (error || previous) {
-      var errors = Object.assign({}, streamErrors)
+      const errors = Object.assign({}, streamErrors)
       if (error) errors[stream] = error
       else delete errors[stream]
       streamErrors = errors
@@ -594,9 +594,8 @@ Item {
         done(null, { code: "internal", message: editError.text.trim() || "Could not save settings" })
         return
       }
-      try {
-        var result = JSON.parse(editOutput.text)
-      } catch (error) {
+      let result
+      try { result = JSON.parse(editOutput.text) } catch (error) {
         done(null, { code: "internal", message: "The CLI returned an invalid reply" })
         return
       }
@@ -772,15 +771,9 @@ Item {
     return Model.historyDelay(configEntries[String(name)])
   }
 
-  function copyConfigTestResults() {
-    var copy = {}
-    for (var name in configTestResults) copy[name] = configTestResults[name]
-    return copy
-  }
-
   function startConfigTests(names) {
-    var next = copyConfigTestResults()
-    for (var i = 0; i < names.length; i++)
+    var next = Object.assign({}, configTestResults)
+    for (let i = 0; i < names.length; i++)
       next[String(names[i])] = { state: "testing", delay: 0 }
     configTestResults = next
   }
@@ -788,10 +781,10 @@ Item {
   // Publish the whole batch once. Config rows then move straight from
   // "testing" to their final result without repainting one by one.
   function finishConfigTests(names, delays) {
-    var next = copyConfigTestResults()
-    for (var i = 0; i < names.length; i++) {
-      var name = String(names[i])
-      var delay = delays && delays[name] !== undefined ? Number(delays[name]) : 0
+    var next = Object.assign({}, configTestResults)
+    for (let i = 0; i < names.length; i++) {
+      const name = String(names[i])
+      const delay = delays && delays[name] !== undefined ? Number(delays[name]) : 0
       next[name] = isFinite(delay) && delay > 0
         ? { state: "success", delay: delay } : { state: "failed", delay: 0 }
     }
@@ -809,8 +802,7 @@ Item {
       if (runtime !== root.runtimeKey || !root.groupsReady) return
       root.finishConfigTests(names, error ? {} : Model.readDelays(result))
       if (!whole) return
-      var tested = {}
-      for (var name in root.groupTestedAt) tested[name] = root.groupTestedAt[name]
+      const tested = Object.assign({}, root.groupTestedAt)
       tested[group] = Date.now()
       root.groupTestedAt = tested
     })
@@ -859,7 +851,7 @@ Item {
     for (i = 0; i < ids.length; i++) drop[ids[i]] = true
     var kept = []
     for (i = 0; i < connectionLog.length; i++) {
-      var entry = connectionLog[i]
+      const entry = connectionLog[i]
       if (entry.open || !drop[entry.id]) kept.push(entry)
     }
     connectionLog = kept
@@ -867,7 +859,7 @@ Item {
 
   function clearConnectionLog() {
     var kept = []
-    for (var i = 0; i < connectionLog.length; i++) {
+    for (let i = 0; i < connectionLog.length; i++) {
       if (connectionLog[i].open) kept.push(connectionLog[i])
     }
     connectionLog = kept

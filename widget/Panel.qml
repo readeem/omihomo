@@ -138,8 +138,8 @@ Panel {
   readonly property var flows: Model.connectionFlows(omihomo.connectionStacks, 6, 4)
   readonly property double largestStack: {
     var most = 0
-    for (var i = 0; i < omihomo.connectionStacks.length; i++) {
-      var stack = omihomo.connectionStacks[i]
+    for (let i = 0; i < omihomo.connectionStacks.length; i++) {
+      const stack = omihomo.connectionStacks[i]
       most = Math.max(most, stack.download + stack.upload)
     }
     return most
@@ -231,7 +231,7 @@ Panel {
   onCursorRowChanged: {
     if (uninstallArmed && (!cursorRow || cursorRow.s !== "uninstall")) uninstallArmed = false
     if (removeArmed !== "") {
-      var sub = cursorRow && cursorRow.s === "sub" ? subscriptionAt(cursorRow.i) : null
+      const sub = cursorRow && cursorRow.s === "sub" ? subscriptionAt(cursorRow.i) : null
       if (!sub || sub.name !== removeArmed) removeArmed = ""
     }
   }
@@ -262,7 +262,7 @@ Panel {
   }
 
   function focusRow(section, index) {
-    for (var i = 0; i < navRows.length; i++) {
+    for (let i = 0; i < navRows.length; i++) {
       if (navRows[i].s === section && (index === undefined || navRows[i].i === index)) {
         cursorActive = true
         cursor = i
@@ -317,10 +317,10 @@ Panel {
   function deleteCursorRow() {
     if (!cursorRow) return
     if (cursorRow.s === "sub") {
-      var sub = subscriptionAt(cursorRow.i)
+      const sub = subscriptionAt(cursorRow.i)
       if (sub) removeSubscription(sub.name)
     } else if (cursorRow.s === "rule") {
-      var rule = omihomo.rules[cursorRow.i]
+      const rule = omihomo.rules[cursorRow.i]
       if (rule) omihomo.removeRule(rule.index)
     } else if (cursorRow.s === "conn") {
       activateConnectionAt(cursorRow.i)
@@ -432,7 +432,7 @@ Panel {
     if (filterOpen) closeFilter()
     if (targetPicking) closeTargetPicker()
     if (name === "configs" && browsedGroupEntry) {
-      var at = visibleConfigs.indexOf(browsedGroupEntry.now)
+      const at = visibleConfigs.indexOf(browsedGroupEntry.now)
       if (at >= 0) {
         focusRow("config", at)
         cursorActive = false
@@ -487,7 +487,7 @@ Panel {
   function cycleGroup(delta) {
     if (visibleGroups.length === 0) return
     var index = -1
-    for (var i = 0; i < visibleGroups.length; i++) if (visibleGroups[i].name === browsedGroup) index = i
+    for (let i = 0; i < visibleGroups.length; i++) if (visibleGroups[i].name === browsedGroup) index = i
     browseGroupAt((index + delta + visibleGroups.length) % visibleGroups.length)
   }
 
@@ -663,9 +663,9 @@ Panel {
     function onErrorScopeChanged() {
       var scope = omihomo.errorScope
       if (root.view !== "subs" || scope.indexOf("sub:") !== 0 || scope === "sub:") return
-      for (var i = 0; i < omihomo.subscriptions.length; i++) {
+      for (let i = 0; i < omihomo.subscriptions.length; i++) {
         if ("sub:" + omihomo.subscriptions[i].name !== scope) continue
-        var index = i
+        const index = i
         Qt.callLater(function() { subscriptionsView.list.positionViewAtIndex(index, ListView.Contain) })
         return
       }

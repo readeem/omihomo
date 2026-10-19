@@ -48,8 +48,8 @@ Canvas {
     ctx.lineTo(c + r, c)
     ctx.stroke()
     if (crossed) {
-      var bar = Math.max(2, width * 0.13)
-      var reach = c - bar / 2
+      const bar = Math.max(2, width * 0.13)
+      const reach = c - bar / 2
       ctx.beginPath()
       ctx.moveTo(c - reach, c + reach)
       ctx.lineTo(c + reach, c - reach)
@@ -61,7 +61,7 @@ Canvas {
       ctx.stroke()
     }
     if (alertColor.a > 0) {
-      var dot = width * 0.17
+      const dot = width * 0.17
       ctx.globalCompositeOperation = "destination-out"
       ctx.beginPath()
       ctx.arc(width - dot, dot, dot + stroke, 0, Math.PI * 2)

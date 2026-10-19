@@ -50,7 +50,7 @@ Item {
   }
 
   function newer(available, installed) {
-    for (var i = 0; i < available.length; i++) {
+    for (let i = 0; i < available.length; i++) {
       if (available[i] !== installed[i]) return available[i] > installed[i]
     }
     return false
