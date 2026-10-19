@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A fake omihomo daemon for the widget's QML state tests. It speaks the
-// daemon's socket protocol (docs/daemon.md) from memory: no core, no root, no
+// daemon's socket protocol (internal/protocol) from memory: no core, no root, no
 // network. Each test gets its own socket, and the flags shape what it does:
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]

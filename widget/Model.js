@@ -36,7 +36,7 @@ function parseJson(raw, fallback) {
 // ---------------------------------------------------------------- daemon
 //
 // Everything below reads one decoded message from the daemon's socket (see
-// docs/daemon.md) into the shapes the panel renders. A field the daemon left
+// internal/protocol) into the shapes the panel renders. A field the daemon left
 // out or sent with the wrong type reads as empty rather than throwing.
 
 function defaultStatus() {

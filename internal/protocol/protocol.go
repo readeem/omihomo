@@ -17,7 +17,7 @@ import "encoding/json"
 const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
-	// widget shows "update core" instead.
+	// widget offers the update that moves both.
 	Version = 2
 
 	// MaxLine bounds one message in either direction, newline excluded.
@@ -134,8 +134,8 @@ const (
 )
 
 // Streams a client can subscribe to. Subscribing to a state stream (status,
-// groups, rules) pushes its current value before the reply, and then every
-// change, whoever made it.
+// groups, rules, subscriptions) pushes its current value before the reply,
+// and then every change, whoever made it.
 const (
 	StreamStatus      = "status"      // Status, whenever it changes
 	StreamGroups      = "groups"      // GroupList, on a selection, a delay test or a new config

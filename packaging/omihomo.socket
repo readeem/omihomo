@@ -4,7 +4,7 @@
 # root's and the daemon refuses everyone anyway.
 [Unit]
 Description=Omihomo daemon socket
-Documentation=https://github.com/readeem/omihomo/blob/main/docs/daemon.md
+Documentation=https://github.com/readeem/omihomo
 
 [Socket]
 ListenStream=/run/omihomo/omihomo.sock

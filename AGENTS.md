@@ -17,7 +17,7 @@ Plugin and the daemon/CLI are updated together.
 
 ## Hit every surface
 
-- **Protocol and settings.** A change reaches the daemon, the CLI, the widget and `docs/daemon.md`.
+- **Protocol and settings.** A change reaches the daemon, the CLI and the widget.
 - **Packaging.** A new file the daemon needs is installed by `tools/build-package` and
   `.github/workflows/package.yml`.
 

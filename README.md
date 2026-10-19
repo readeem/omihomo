@@ -59,10 +59,7 @@ omarchy restart shell
 ```
 
 Use the widget's **Install core** action to install the signed GitHub release and claim it
-in a terminal. Settings checks for new releases and offers an **update** action, which updates
-the widget through Omarchy and then the core package; installation and updates require normal
-authentication and pacman confirmation. The daemon embeds mihomo, so updating the core updates
-mihomo. AUR publication is an optional second channel.
+in a terminal. Settings checks for new releases and updates the widget and the core together.
 
 ## Usage
 
@@ -78,18 +75,10 @@ mihomo. AUR publication is an optional second channel.
 | `d` / `D` | Latency test a config, a whole group |
 | `/` | Filter configs, test a rule |
 
-The full key map is in [docs/widget.md](docs/widget.md#keys), and every CLI verb is in
-[docs/cli.md](docs/cli.md).
+The key hints at the bottom of the panel show the rest, and `omihomo -h` lists the CLI verbs.
 
-### Subscriptions
-
-A subscription URL may return a full mihomo YAML config, or a raw share-link format that your
-installed mihomo version understands. A raw subscription gets one generated `Proxy` selector and a
-final `MATCH,Proxy` rule.
-
-The daemon refreshes subscriptions on their provider's schedule (12 hours by default), including
-while the panel is closed or the proxy is stopped. Failed refreshes preserve cached content.
-See [daemon behavior](docs/daemon.md#subscriptions) for limits and retry rules.
+A subscription URL may return a full mihomo YAML config or raw share links. The daemon refreshes
+it on the provider's schedule, 12 hours by default, and a failed refresh keeps the cached content.
 
 ## What it changes on your system
 
@@ -109,9 +98,8 @@ upgrade hook grants privileges. Only the recorded owner controls it, through the
 socket. The daemon allowlists subscription content and accepts typed settings only. The remaining
 trust is the privileged daemon and its embedded dependencies, including process-inspection access.
 
-Settings and rules can be tracked with a dotfile manager; see [settings files](docs/daemon.md#settings-files).
-The widget has no separate settings. It shares the daemon's state with the CLI and receives
-live traffic and connections while open. Omihomo never edits Hyprland or terminal settings.
+`settings.json` and `rules.json` can be tracked with a dotfile manager: edits apply on save.
+Omihomo never edits Hyprland or terminal settings.
 
 ## Remove
 
@@ -121,27 +109,14 @@ omarchy plugin remove dev.readeem.omihomo
 ```
 
 Removing the package stops the daemon and keeps subscriptions and settings for reinstalling.
-For permanent state removal, see
-[removal](docs/daemon.md#removal).
+To erase them, including subscription credentials, then delete `/var/lib/omihomo` and
+`/etc/systemd/system/omihomo.socket.d/owner.conf`.
 
 ## Development
 
 [`mise`](https://mise.jdx.dev) pins the toolchain and runs the tasks; `mise tasks` lists them.
-
-```sh
-mise run check      # gofmt, go fix, go vet and the Go tests
-mise run widget     # installer, widget model and Quickshell service tests
-mise run security   # release signatures and isolated privileged package adapter
-mise run package    # local Arch package and AUR metadata
-```
-
-The package build writes a local Arch package and AUR metadata under ignored `dist/`; it does
-not install or publish anything. Follow [the manual test checklist](tests/README.md#manual-cutover-test)
-to test the real daemon and widget. Never render or smoke-test the widget automatically.
-Restart the installed shell with `omarchy restart shell` to try widget changes.
-
-Architecture vocabulary is in [GLOSSARY.md](GLOSSARY.md), decisions in [docs/adr](docs/adr), and
-maintainer setup in [the release guide](docs/release.md).
+Vocabulary is in [GLOSSARY.md](GLOSSARY.md), decisions in [docs/adr](docs/adr), the manual test
+in [tests/README.md](tests/README.md), and publishing in [docs/release.md](docs/release.md).
 
 ## License
 

@@ -4,7 +4,7 @@ import Quickshell.Io
 import "Model.js" as Model
 
 // State for the Omihomo panel. Reads use one connection to the daemon's socket
-// (docs/daemon.md): requests carry an id and get one reply
+// (internal/protocol): requests carry an id and get one reply
 // each, and the daemon pushes every change on the streams this panel
 // subscribed to, whoever made it. Settings edits use the CLI to save the
 // owner's files. Nothing here polls.

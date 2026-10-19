@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stands in for the omihomo daemon while the panel is captured or driven: it
-// speaks the socket protocol (docs/daemon.md), starts from data/, and keeps
+// speaks the socket protocol (internal/protocol), starts from data/, and keeps
 // the panel's changes in memory. Nothing leaves the machine, and the live core
 // and its state are never touched.
 //
