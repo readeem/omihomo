@@ -27,7 +27,7 @@ cmp -s "$work/actual.der" "$work/expected.der" || {
   exit 1
 }
 
-package="$dist/omihomo-bin-$version-1-x86_64.pkg.tar.zst"
+package="$dist/omihomo-$version-1-x86_64.pkg.tar.zst"
 installer="$dist/omihomo-update-$version-x86_64"
 [[ -f $package && ! -L $package && -f $installer && ! -L $installer ]] || {
   echo 'release package and installer must be regular files' >&2

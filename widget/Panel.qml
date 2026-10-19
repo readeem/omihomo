@@ -45,40 +45,47 @@ Panel {
 
   readonly property string installerPath: decodeURIComponent(String(Qt.resolvedUrl("../bin/omihomo-install")).replace(/^file:\/\//, ""))
   // Without a daemon to talk to, the panel is one card saying why, and the
-  // command that fixes it, run in a terminal since it asks for a password.
+  // commands that fix it, run in a terminal since they ask for a password.
   readonly property var setup: {
     switch (omihomo.link) {
     case "absent": return { section: "SETUP", title: "Core not installed",
       text: "Omihomo runs mihomo as a system service that this panel controls. Installing it:",
-      steps: ["verifies the latest signed release on GitHub", "installs the omihomo-bin package",
+      steps: ["verifies the latest signed release on GitHub", "installs the omihomo package",
         "claims the core for this account"],
-      button: "Install core", tag: "install…", hint: "asks for your password in a terminal",
-      command: Util.shellQuote(installerPath) + " install" }
+      actions: [{ button: "Install core", tag: "install…", key: "i", hint: "asks for your password in a terminal",
+        command: Util.shellQuote(installerPath) + " install" }] }
     case "outdated": return { section: "UPDATE REQUIRED", title: "Core is older than this widget",
       text: "The installed core speaks an older protocol, so this panel cannot use it until it is updated. Updating:",
       steps: ["updates this widget through Omarchy", "verifies the latest signed release on GitHub",
-        "updates the omihomo-bin package"],
-      button: "Update", tag: "update…", hint: "asks for your password in a terminal",
-      command: Util.shellQuote(installerPath) + " update" }
+        "updates the omihomo package"],
+      actions: [{ button: "Update", tag: "update…", key: "i", hint: "asks for your password in a terminal",
+        command: Util.shellQuote(installerPath) + " update" }] }
     case "newer": return { section: "UPDATE REQUIRED", title: "Widget is older than the core",
       text: "The installed core speaks a newer protocol, so this widget cannot use it until it is updated. Updating:",
       steps: ["updates this widget through Omarchy", "updates the core too if a newer release is out"],
-      button: "Update widget", tag: "update…", hint: "runs in a terminal",
-      command: Util.shellQuote(installerPath) + " update" }
-    case "refused": return { section: "OWNERSHIP", title: "Core owned by another account",
-      text: omihomo.lastError || "Only the account that claimed the core can control it. Claiming it moves control to this account.",
-      steps: [], button: "Claim core", tag: "claim…", hint: "runs sudo /usr/bin/omihomo claim in a terminal",
-      command: "sudo /usr/bin/omihomo claim" }
+      actions: [{ button: "Update widget", tag: "update…", key: "i", hint: "runs in a terminal",
+        command: Util.shellQuote(installerPath) + " update" }] }
+    // A core whose setup stopped before claim refuses this account just as
+    // one owned by another account does, so both ways out are offered.
+    case "refused": return { section: "OWNERSHIP", title: "Core not available to this account",
+      text: omihomo.lastError || "Setup has not finished, or another account owns the core.",
+      steps: [], actions: [
+        { button: "Finish setup", tag: "setup…", key: "i",
+          hint: "resumes the install; never takes the core from another account",
+          command: Util.shellQuote(installerPath) + " install" },
+        { button: "Claim core", tag: "claim…", key: "c",
+          hint: "moves control of the core to this account",
+          command: Util.shellQuote(installerPath) + " claim" }] }
     case "busy": return { section: "CORE", title: "Core busy",
-      text: omihomo.lastError, steps: [], button: "", tag: "", hint: "Reconnecting…", command: "" }
+      text: omihomo.lastError, steps: [], actions: [] }
     }
     return { section: "CORE", title: "Connecting…", text: "Waiting for the Omihomo core to answer.",
-      steps: [], button: "", tag: "", hint: "", command: "" }
+      steps: [], actions: [] }
   }
-  // Set once the setup command is handed to the terminal, until the link
+  // The key of the setup action handed to the terminal, until the link
   // changes, so a reopened panel says it is under way. A cancelled run leaves
   // the link, and so this, as it was.
-  property bool setupStarted: false
+  property string setupStarted: ""
   readonly property bool coreAlert: omihomo.link === "outdated" || omihomo.link === "newer"
     || omihomo.link === "refused"
 
@@ -186,7 +193,7 @@ Panel {
     var rows = []
     var i
     if (!omihomo.installed) {
-      if (setup.command !== "") rows.push({ s: "install" })
+      for (i = 0; i < setup.actions.length; i++) rows.push({ s: "install", i: i })
       return rows
     }
     switch (view) {
@@ -289,7 +296,7 @@ Panel {
   function activateCursor() {
     if (!cursorRow) return
     switch (cursorRow.s) {
-    case "install": installCore(); break
+    case "install": runSetup(setup.actions[cursorRow.i]); break
     case "group": browseGroupAt(cursorRow.i); break
     case "config": chooseConfigAt(cursorRow.i); break
     case "sub": activateSubscriptionAt(cursorRow.i); break
@@ -329,7 +336,8 @@ Panel {
 
   function handleTextKey(key) {
     if (!omihomo.installed) {
-      if (key.toLowerCase() === "i") installCore()
+      const action = setup.actions.find(a => a.key === key.toLowerCase())
+      if (action) runSetup(action)
       return
     }
     var tab = ["1", "2", "3", "4"].indexOf(key)
@@ -389,9 +397,8 @@ Panel {
   }
 
   function hintsFor(name) {
-    if (!omihomo.installed) return setup.command === "" ? [{ keys: "esc", label: "close", key: "esc" }] : [
-      { keys: "i", label: setup.button.split(" ")[0].toLowerCase(), key: "i" },
-      { keys: "esc", label: "close", key: "esc" }]
+    if (!omihomo.installed) return setup.actions.map(a => ({ keys: a.key, label: a.button.split(" ")[0].toLowerCase(), key: a.key }))
+      .concat([{ keys: "esc", label: "close", key: "esc" }])
     if (name === "rules" && targetPicking) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
@@ -535,10 +542,10 @@ Panel {
     else if (omihomo.currentConfig !== "") omihomo.testConfig(omihomo.currentConfig)
   }
 
-  function installCore() {
-    if (!bar || setup.command === "") return
-    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(setup.command))
-    setupStarted = true
+  function runSetup(action) {
+    if (!bar) return
+    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(action.command))
+    setupStarted = action.key
     close()
   }
 
@@ -565,7 +572,7 @@ Panel {
       uninstallArmed = true
       return
     }
-    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote("sudo pacman -R omihomo-bin"))
+    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote("sudo pacman -R omihomo"))
     close()
   }
 
@@ -676,7 +683,7 @@ Panel {
 
   Connections {
     target: omihomo
-    function onLinkChanged() { root.setupStarted = false }
+    function onLinkChanged() { root.setupStarted = "" }
     function onDaemonVersionChanged() {
       if (omihomo.daemonVersion !== "") updateService.check()
     }
@@ -1045,7 +1052,7 @@ Panel {
               }
 
               Rectangle {
-                visible: root.setup.button !== ""
+                visible: root.setup.actions.length > 0
                 Layout.fillWidth: true
                 Layout.leftMargin: Style.space(5)
                 Layout.rightMargin: Style.space(5)
@@ -1053,21 +1060,28 @@ Panel {
                 color: root.theme.line
               }
 
-              SettingRow {
-                visible: root.setup.button !== ""
-                Layout.fillWidth: true
-                Layout.topMargin: Style.space(3)
-                panel: root
-                section: "install"
-                title: root.setup.button + (root.updater.availableVersion !== ""
-                  && (omihomo.link === "absent" || omihomo.link === "outdated" && root.updater.updateAvailable)
-                  ? " " + root.updater.availableVersion : "")
-                keyHint: "i"
-                subtitle: root.setupStarted ? "started in a terminal; i runs it again" : root.setup.hint
-                tag: root.setup.tag
-                tagTint: root.theme.accent
-                tagFilled: true
-                onActivated: root.installCore()
+              Repeater {
+                model: root.setup.actions
+
+                SettingRow {
+                  required property var modelData
+                  required property int index
+                  Layout.fillWidth: true
+                  Layout.topMargin: index === 0 ? Style.space(3) : 0
+                  panel: root
+                  section: "install"
+                  rowIndex: index
+                  title: modelData.button + (root.updater.availableVersion !== ""
+                    && (omihomo.link === "absent" || omihomo.link === "outdated" && root.updater.updateAvailable)
+                    ? " " + root.updater.availableVersion : "")
+                  keyHint: modelData.key
+                  subtitle: root.setupStarted === modelData.key
+                    ? "started in a terminal; " + modelData.key + " runs it again" : modelData.hint
+                  tag: modelData.tag
+                  tagTint: root.theme.accent
+                  tagFilled: index === 0
+                  onActivated: root.runSetup(modelData)
+                }
               }
             }
           }

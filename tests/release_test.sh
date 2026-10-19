@@ -8,7 +8,7 @@ mkdir -p "$work/tools" "$work/internal/update" "$work/dist"
 cp "$root/tools/sign-release" "$work/tools/"
 openssl genpkey -algorithm ED25519 -out "$work/key.pem"
 openssl pkey -in "$work/key.pem" -pubout -out "$work/internal/update/release.pub"
-printf 'invented package\n' > "$work/dist/omihomo-bin-1.0.0-1-x86_64.pkg.tar.zst"
+printf 'invented package\n' > "$work/dist/omihomo-1.0.0-1-x86_64.pkg.tar.zst"
 printf 'invented helper\n' > "$work/dist/omihomo-update-1.0.0-x86_64"
 export OMIHOMO_SIGNING_KEY
 OMIHOMO_SIGNING_KEY=$(cat "$work/key.pem")
@@ -32,7 +32,7 @@ openssl genpkey -algorithm ED25519 -out "$work/wrong.pem"
 OMIHOMO_SIGNING_KEY=$(cat "$work/wrong.pem")
 if "$work/tools/sign-release" 1.0.0 >"$work/output" 2>&1; then printf 'FAIL signing accepted a wrong key\n' >&2; exit 1; fi
 OMIHOMO_SIGNING_KEY=$(cat "$work/key.pem")
-truncate -s 134217729 "$work/dist/omihomo-bin-1.0.0-1-x86_64.pkg.tar.zst"
+truncate -s 134217729 "$work/dist/omihomo-1.0.0-1-x86_64.pkg.tar.zst"
 if "$work/tools/sign-release" 1.0.0 >"$work/output" 2>&1; then printf 'FAIL signing accepted an oversized package\n' >&2; exit 1; fi
 unset OMIHOMO_SIGNING_KEY
 printf 'PASS release signing, key matching, canonical versions, size limits and deterministic signatures\n'

@@ -33,7 +33,7 @@ depend on the proxy first: switching it can briefly interrupt connections.
    refresh retries once connectivity returns.
 8. Run `sudo /usr/bin/omihomo claim` again; subscriptions must remain. From a second account the
    socket must be inaccessible, and even root's client request is refused.
-9. Remove `omihomo-bin`. Both system units must stop while `/var/lib/omihomo` stays. Reinstall
+9. Remove `omihomo`. Both system units must stop while `/var/lib/omihomo` stays. Reinstall
    and claim to verify retained subscriptions and settings.
 
 For a fresh-install test, use a disposable Omarchy installation: install and claim, check the

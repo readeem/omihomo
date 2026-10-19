@@ -41,7 +41,7 @@ description = "Apply go fix and gofmt"
 run = ["go fix ./...", "gofmt -w ."]
 
 [tasks.package]
-description = "Build the Arch package and AUR metadata into dist/"
+description = "Build the Arch package into dist/"
 run = "./tools/build-package"
 
 [tasks.release]

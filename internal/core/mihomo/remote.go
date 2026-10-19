@@ -3,11 +3,13 @@ package mihomo
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/component/geodata"
@@ -130,9 +132,84 @@ func (c *Core) reloadDatabases() {
 	}
 }
 
+// legacyGeodata lists each name the daemon finds a geodata file under, with
+// the names an old core may have cached it as, in the order mihomo picks
+// them.
+var legacyGeodata = []struct {
+	name string
+	from []string
+}{
+	{"geoip.metadb", []string{"Country.mmdb", "geoip.metadb"}},
+	{"GeoSite.dat", []string{"GeoSite.dat"}},
+	{"ASN.mmdb", []string{"ASN.mmdb"}},
+}
+
+// maxGeodata matches the daemon's download limit.
+const maxGeodata = 64 << 20
+
+// ImportGeodata copies into an unused core home each geodata file an old
+// core cached in legacy that is usable for the rules of p, keeping its age.
+// The caller must own home exclusively. A file that is missing, a link, too
+// large or unusable is skipped and left for the daemon to download.
+func (*Core) ImportGeodata(home string, legacy *os.Root, p core.Profile) error {
+	for _, g := range legacyGeodata {
+		for _, from := range g.from {
+			staged, err := importGeodata(legacy, from, filepath.Join(home, g.name), p)
+			if err != nil {
+				return err
+			}
+			if staged {
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// importGeodata returns an error only for a failure to write into home.
+func importGeodata(legacy *os.Root, from, dst string, p core.Profile) (bool, error) {
+	src, err := legacy.OpenFile(from, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false, nil
+	}
+	defer src.Close()
+	info, err := src.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxGeodata {
+		return false, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(src, maxGeodata+1))
+	if err != nil || len(data) > maxGeodata {
+		return false, nil
+	}
+	if err := privateDir(filepath.Dir(dst)); err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+"-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.Write(data)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chtimes(tmp.Name(), info.ModTime(), info.ModTime())
+	}
+	if err != nil {
+		return false, err
+	}
+	if checkGeodata(core.GeodataFile{Path: dst}, tmp.Name(), p) != nil {
+		return false, nil
+	}
+	return true, os.Rename(tmp.Name(), dst)
+}
+
+// checkGeodata tells the files apart by name alone: mihomo's own paths are
+// empty in a process that does not host it.
 func checkGeodata(f core.GeodataFile, path string, p core.Profile) error {
-	switch filepath.Base(f.Path) {
-	case filepath.Base(constant.Path.GeoSite()):
+	switch {
+	case strings.EqualFold(filepath.Base(f.Path), "GeoSite.dat"):
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err

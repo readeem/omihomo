@@ -140,6 +140,21 @@ rules:
 	}
 }
 
+// A rule may send traffic through GLOBAL, which the core always runs.
+func TestRulesMayTargetGlobal(t *testing.T) {
+	p, _ := build(t, `
+proxies:
+  - {name: Local, type: direct}
+proxy-groups:
+  - {name: Proxy, type: select, proxies: [Local, REJECT]}
+rules:
+  - MATCH,GLOBAL
+`, nil)
+	if got := ruleLines(p); !slices.Equal(got, []string{"MATCH,,GLOBAL"}) {
+		t.Errorf("rules %v", got)
+	}
+}
+
 // Bare proxies, from share links or a provider-style YAML, run through one
 // select group every connection uses.
 func TestBareProxiesAreWrapped(t *testing.T) {

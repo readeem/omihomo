@@ -17,7 +17,7 @@ cat > "$work/pacman" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-  -Q) printf "error: package 'omihomo-bin' was not found\n" >&2; exit 1 ;;
+  -Q) printf "error: package 'omihomo' was not found\n" >&2; exit 1 ;;
   -Qip) [[ $# == 3 && $2 == -- ]]; cat /tmp/omihomo-package-fixture/metadata ;;
   -U)
     [[ $# == 4 && $2 == --needed && $3 == -- ]]
@@ -80,7 +80,7 @@ for mode in offline online no-dropin; do
   bwrap --unshare-all --die-with-parent --new-session --uid 0 --gid 0 \
     --ro-bind / / --tmpfs /tmp --tmpfs /run --tmpfs /etc/systemd/system --proc /proc --dev /dev \
     --ro-bind "$work/systemctl" /usr/bin/systemctl \
-    --ro-bind "$root/packaging/aur/omihomo.install" /tmp/omihomo.install \
+    --ro-bind "$root/packaging/omihomo.install" /tmp/omihomo.install \
     --ro-bind "$work/test-remove" /tmp/test-remove \
     -- /usr/bin/bash /tmp/test-remove "$mode"
 done

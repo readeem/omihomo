@@ -50,6 +50,7 @@ type Import struct {
 type Core interface {
 	ParseLinks(data []byte) ([]map[string]any, error)
 	ImportSelections(home string, p core.Profile, selections map[string]string) error
+	ImportGeodata(home string, legacy *os.Root, p core.Profile) error
 }
 
 // Prepare stages subscriptions and typed settings. Existing daemon state is never
@@ -130,7 +131,9 @@ func Prepare(ctx context.Context, source, target string, running bool, engine Co
 		return nil, err
 	}
 	activeName := strings.TrimSpace(string(active))
-	var activeProfile core.Profile
+	// The old core saved choices by group name across subscriptions, so a
+	// choice is kept when any imported profile's select group offers it.
+	var groups, activeProfile core.Profile
 	subs := state.Subscriptions{List: []state.Subscription{}}
 	seen := map[string]bool{}
 	left := int64(fetch.MaxBytes)
@@ -166,6 +169,7 @@ func Prepare(ctx context.Context, source, target string, running bool, engine Co
 			return nil, err
 		}
 		subs.List = append(subs.List, sub)
+		groups.Groups = append(groups.Groups, p.Groups...)
 		if old.Name == activeName {
 			subs.Active = sub.ID
 			activeProfile = p
@@ -181,8 +185,13 @@ func Prepare(ctx context.Context, source, target string, running bool, engine Co
 	if err != nil {
 		return nil, fmt.Errorf("read old selections: %w", err)
 	}
-	if err := engine.ImportSelections(filepath.Join(dir, "core"), activeProfile, core.FilterSelections(activeProfile, selections)); err != nil {
+	if err := engine.ImportSelections(filepath.Join(dir, "core"), groups, core.FilterSelections(groups, selections)); err != nil {
 		return nil, fmt.Errorf("prepare imported selections: %w", err)
+	}
+	// Staged before the old core stops, so the new one need not download
+	// what the old one already had.
+	if err := engine.ImportGeodata(filepath.Join(dir, "core"), root, activeProfile); err != nil {
+		return nil, fmt.Errorf("prepare imported geodata: %w", err)
 	}
 	if err := store.SaveSettings(settings); err != nil {
 		return nil, err

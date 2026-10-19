@@ -300,12 +300,12 @@ func TestAuthenticatedPacmanBoundary(t *testing.T) {
 		name, metadata      string
 		fail, reachesPacman bool
 	}{
-		{"valid", "Name : omihomo-bin\nVersion : 1.0.0-1\nArchitecture : x86_64\n", false, true},
+		{"valid", "Name : omihomo\nVersion : 1.0.0-1\nArchitecture : x86_64\n", false, true},
 		{"wrong name", "Name : unrelated\nVersion : 1.0.0-1\nArchitecture : x86_64\n", false, false},
-		{"wrong version", "Name : omihomo-bin\nVersion : 0.9.0-1\nArchitecture : x86_64\n", false, false},
-		{"wrong architecture", "Name : omihomo-bin\nVersion : 1.0.0-1\nArchitecture : aarch64\n", false, false},
-		{"duplicate identity", "Name : omihomo-bin\nName : unrelated\nVersion : 1.0.0-1\nArchitecture : x86_64\n", false, false},
-		{"failed transaction", "Name : omihomo-bin\nVersion : 1.0.0-1\nArchitecture : x86_64\n", true, true},
+		{"wrong version", "Name : omihomo\nVersion : 0.9.0-1\nArchitecture : x86_64\n", false, false},
+		{"wrong architecture", "Name : omihomo\nVersion : 1.0.0-1\nArchitecture : aarch64\n", false, false},
+		{"duplicate identity", "Name : omihomo\nName : unrelated\nVersion : 1.0.0-1\nArchitecture : x86_64\n", false, false},
+		{"failed transaction", "Name : omihomo\nVersion : 1.0.0-1\nArchitecture : x86_64\n", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, name := range []string{"package", "fail"} {

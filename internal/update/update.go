@@ -142,7 +142,7 @@ func (u *Updater) Apply(ctx context.Context, action, version string) error {
 		return fmt.Errorf("create private package directory: %w", err)
 	}
 	defer os.RemoveAll(dir)
-	name := "omihomo-bin-" + r.version + "-" + r.pkgrel + "-x86_64.pkg.tar.zst"
+	name := "omihomo-" + r.version + "-" + r.pkgrel + "-x86_64.pkg.tar.zst"
 	path := dir + "/" + name
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

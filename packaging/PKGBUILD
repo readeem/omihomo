@@ -1,9 +1,7 @@
 # Maintainer: readeem <https://github.com/readeem>
 #
-# The release workflow publishes this file to the AUR from packaging/aur in
-# https://github.com/readeem/omihomo, filling in pkgver and the checksum of the
-# release tarball it built. Change it there, not on the AUR.
-pkgname=omihomo-bin
+# The build fills in pkgver and the checksum of the release tarball it built.
+pkgname=omihomo
 pkgver=0.0.0
 pkgrel=1
 pkgdesc='Daemon for the Omihomo Omarchy widget: the mihomo proxy core as a sandboxed system service'
@@ -11,8 +9,6 @@ arch=('x86_64')
 url='https://github.com/readeem/omihomo'
 license=('GPL-3.0-only')
 depends=('systemd' 'util-linux' 'jq')
-provides=('omihomo')
-conflicts=('omihomo')
 install=omihomo.install
 # A static Go binary, already stripped by the build.
 options=('!strip' '!debug')

@@ -39,8 +39,10 @@ removes the old user services, privilege hooks, launcher and the old binary's ca
 writes the imported settings to `settings.json` and `rules.json`, unless either already exists,
 in which case the existing files win.
 
-If the package installs but claim fails, fix the reported problem and choose **Install core**
-again from the same account with the same XDG paths; it resumes the claim. A failed cutover
+If the package installs but claim fails, fix the reported problem and choose **Finish setup**
+in the widget from the same account with the same XDG paths; it resumes the claim and starts
+settings sync, and never takes the core from another account. **Claim core** is the explicit
+transfer to this account. A failed cutover
 restores the old runtime, but a completed one has no undo: the old data directory is the
 rollback. Never delete `/var/lib/omihomo` to force another import.
 

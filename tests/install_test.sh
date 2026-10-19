@@ -48,9 +48,9 @@ MOCK
 cat > "$test_root/bin/pacman" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $* == '-Q omihomo-bin' ]] || exit 99
-if [[ -n ${INSTALL_TEST_INSTALLED:-} ]]; then printf 'omihomo-bin %s\n' "$INSTALL_TEST_INSTALLED"
-else printf "error: package 'omihomo-bin' was not found\n" >&2; exit 1; fi
+[[ $* == '-Q omihomo' ]] || exit 99
+if [[ -n ${INSTALL_TEST_INSTALLED:-} ]]; then printf 'omihomo %s\n' "$INSTALL_TEST_INSTALLED"
+else printf "error: package 'omihomo' was not found\n" >&2; exit 1; fi
 MOCK
 cat > "$test_root/bin/sudo" <<'MOCK'
 #!/usr/bin/env bash
@@ -63,11 +63,14 @@ if [[ $1 == /usr/bin/env ]]; then
   "$@"
 else
   [[ $1 == /usr/bin/omihomo && $2 == claim ]] || exit 97
+  shift 2
+  keep=''
+  if [[ $1 == --keep-owner ]]; then keep=' --keep-owner'; shift; fi
   config=${XDG_CONFIG_HOME:-$HOME/.config}
   if [[ $config != /* ]]; then config=$HOME/.config; fi
-  [[ $# == 7 && $3 == --keep-owner && $4 == --legacy-data && $5 == "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
-    && $6 == --legacy-config && $7 == "$config" && -d $config ]] || exit 95
-  printf 'claim\n' >> "$INSTALL_TEST_LOG"
+  [[ $# == 4 && $1 == --legacy-data && $2 == "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
+    && $3 == --legacy-config && $4 == "$config" && -d $config ]] || exit 95
+  printf 'claim%s\n' "$keep" >> "$INSTALL_TEST_LOG"
   exit "${INSTALL_TEST_CLAIM_EXIT:-0}"
 fi
 MOCK
@@ -119,7 +122,7 @@ run_install() {
   fi
 }
 
-commands=$'package install 1.0.0\nsystemctl --user daemon-reload\nclaim\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
+commands=$'package install 1.0.0\nsystemctl --user daemon-reload\nclaim --keep-owner\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
 XDG_CONFIG_HOME="$test_root/custom" INSTALL_TEST_MANAGER_CONFIG="$test_root/manager" run_install 1 install $'package install 1.0.0\nsystemctl --user daemon-reload'
 grep -q 'config director' "$test_root/err"
 INSTALL_TEST_MANAGER_FAIL=1 run_install 1 install $'package install 1.0.0\nsystemctl --user daemon-reload'
@@ -129,10 +132,12 @@ XDG_CONFIG_HOME="$test_root/custom path" run_install 0 install "$commands"
 XDG_CONFIG_HOME=relative run_install 0 install "$commands"
 run_install 0 install "$commands"
 INSTALL_TEST_PACKAGE_EXIT=42 run_install 42 install 'package install 1.0.0'
-INSTALL_TEST_CLAIM_EXIT=43 run_install 43 install $'package install 1.0.0\nsystemctl --user daemon-reload\nclaim'
-INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 install $'systemctl --user daemon-reload\nclaim\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
+INSTALL_TEST_CLAIM_EXIT=43 run_install 43 install $'package install 1.0.0\nsystemctl --user daemon-reload\nclaim --keep-owner'
+INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 install $'systemctl --user daemon-reload\nclaim --keep-owner\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
 INSTALL_TEST_INSTALLED=1.0.0-1 INSTALL_TEST_MANAGER_FAIL=1 run_install 1 install 'systemctl --user daemon-reload'
 INSTALL_TEST_INSTALLED=0.9.0-1 run_install 1 install ''
+XDG_CONFIG_HOME="$test_root/custom" run_install 0 claim \
+  $'systemctl --user daemon-reload\nclaim\nsystemctl --user enable --now omihomo-apply.path omihomo-apply.service'
 INSTALL_TEST_INSTALLED=0.9.0-1 run_install 0 update 'package update 1.0.0'
 INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 update ''
 INSTALL_TEST_INSTALLED=2.0.0-1 run_install 0 update ''

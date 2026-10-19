@@ -697,7 +697,9 @@ func (b *builder) rules(sets []core.RuleSet) []core.Rule {
 		case !slices.Contains(ruleTypes, r.Type) || hasRegex(r.Type+","+r.Value):
 			b.drop("rule %d: type %s is not supported", i+1, r.Type)
 			continue
-		case !b.names[r.Target]:
+		// The core always runs GLOBAL, on the primary group, though a
+		// subscription may not declare it.
+		case !b.names[r.Target] && r.Target != "GLOBAL":
 			b.drop("rule %d: target %q does not exist", i+1, r.Target)
 			continue
 		case r.Type == "RULE-SET" && !slices.ContainsFunc(sets, func(s core.RuleSet) bool { return s.Name == r.Value }):

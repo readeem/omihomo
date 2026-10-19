@@ -1,6 +1,6 @@
 # Release workflow
 
-Tags publish the `omihomo-bin` package to GitHub Releases; the `release` branch, which Omarchy
+Tags publish the `omihomo` package to GitHub Releases; the `release` branch, which Omarchy
 installs the plugin from, follows them ([ADR-0007](adr/0007-release-branch.md)).
 
 ## Configure publication
@@ -53,27 +53,3 @@ fast-forwards `release` to the tag. If CI fails before approval, nothing is publ
 Published assets are immutable: reruns compare bytes and fail on differences. Prefer rerunning
 only failed jobs, since Arch's rolling build environment can change package metadata. Release
 changed contents under a new version.
-
-## Optional AUR publication
-
-1. Get an AUR account that may push `omihomo-bin`.
-2. Generate a dedicated SSH key and add only its public line under **My Account → SSH Public
-   Key**. It grants access to all of that account's packages.
-
-   ```sh
-   umask 077
-   ssh-keygen -t ed25519 -N '' -C 'Omihomo AUR releases' -f "$AUR_KEY"
-   ssh -i "$AUR_KEY" -o IdentitiesOnly=yes aur@aur.archlinux.org list-repos
-   ```
-
-   Check the server fingerprint against the [AUR home page](https://aur.archlinux.org/) first.
-3. Create an `aur` environment with the same `v*` tag rule, then store the key in it:
-
-   ```sh
-   gh secret set AUR_SSH_PRIVATE_KEY --env aur < "$AUR_KEY"
-   ```
-
-4. Set the repository variable `AUR_PUBLISH` to `true`. The first release creates the package.
-
-The workflow pins AUR's host key; verify a replacement through official Arch sources. Rotating
-the account key means removing the old public key on AUR as well as replacing the secret.

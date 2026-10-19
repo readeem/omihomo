@@ -120,14 +120,21 @@ type downloadError struct {
 	retryAfter time.Duration
 }
 
+// fetchFailed classifies a failed request. A status or a body over the limit
+// is the server's answer; anything else, as when the network is not up yet,
+// is not.
+func fetchFailed(err error, msg *protocol.Error) *downloadError {
+	derr := &downloadError{err: msg, answered: errors.Is(err, fetch.ErrTooLarge)}
+	if serr, ok := errors.AsType[*fetch.StatusError](err); ok {
+		derr.answered, derr.retryAfter = true, serr.RetryAfter
+	}
+	return derr
+}
+
 func (d *server) download(ctx context.Context, name, url string) (*download, *downloadError) {
 	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: url, MaxBytes: d.cfg.downloadLimit})
 	if err != nil {
-		derr := &downloadError{err: fail(protocol.CodeFetch, "%v", err)}
-		if serr, ok := errors.AsType[*fetch.StatusError](err); ok {
-			derr.answered, derr.retryAfter = true, serr.RetryAfter
-		}
-		return nil, derr
+		return nil, fetchFailed(err, fail(protocol.CodeFetch, "%v", err))
 	}
 	rejected := func(err error) *downloadError {
 		return &downloadError{err: fail(protocol.CodeRejected, "%v", err), answered: true}
@@ -152,11 +159,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 		if err != nil {
 			// Without it the rules it feeds would be left out, and with them
 			// whatever they block: the content is incomplete, not new.
-			derr := &downloadError{err: fail(protocol.CodeFetch, "provider %q: %v", p.Name, err)}
-			if serr, ok := errors.AsType[*fetch.StatusError](err); ok {
-				derr.answered, derr.retryAfter = true, serr.RetryAfter
-			}
-			return nil, derr
+			return nil, fetchFailed(err, fail(protocol.CodeFetch, "provider %q: %v", p.Name, err))
 		}
 		dl.snap.Providers[p.Key()] = r.Body
 		left -= int64(len(r.Body))

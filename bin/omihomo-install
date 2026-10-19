@@ -69,10 +69,10 @@ bootstrap() (
     return 1
   }
   installed=''
-  if output=$(LC_ALL=C pacman -Q omihomo-bin 2>"$work/pacman-error"); then
-    [[ $output =~ ^omihomo-bin\ ($version_pattern-[1-9][0-9]{0,8})$ ]] || return 1
-    installed=${output#omihomo-bin }
-  elif [[ $(cat "$work/pacman-error") != "error: package 'omihomo-bin' was not found" || -n $output ]]; then
+  if output=$(LC_ALL=C pacman -Q omihomo 2>"$work/pacman-error"); then
+    [[ $output =~ ^omihomo\ ($version_pattern-[1-9][0-9]{0,8})$ ]] || return 1
+    installed=${output#omihomo }
+  elif [[ $(cat "$work/pacman-error") != "error: package 'omihomo' was not found" || -n $output ]]; then
     printf 'Cannot read installed package metadata.\n' >&2
     return 1
   fi
@@ -110,8 +110,8 @@ bootstrap() (
 )
 
 mode=${1:-install}
-[[ $# -le 1 && ( $mode == check || $mode == install || $mode == update || $mode == update-core ) ]] || {
-  printf 'Usage: omihomo-install [check|install|update]\n' >&2
+[[ $# -le 1 && ( $mode == check || $mode == install || $mode == claim || $mode == update || $mode == update-core ) ]] || {
+  printf 'Usage: omihomo-install [check|install|claim|update]\n' >&2
   exit 2
 }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { printf 'GitHub packages require Linux x86_64.\n' >&2; exit 1; }
@@ -160,10 +160,14 @@ fi
 
 # The authenticated shell receives code and a public key, never user-writable
 # script paths. Every downloaded executable is verified in its own root-owned directory.
-root_script="$(declare -f fetch bootstrap)"$'\nbootstrap "$@"'
-sudo /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root TERM="${TERM:-dumb}" \
-  /usr/bin/bash -c "$root_script" omihomo-bootstrap "$mode" "$public_key" "$minimum"
-if [[ $mode == install ]]; then
+if [[ $mode != claim ]]; then
+  root_script="$(declare -f fetch bootstrap)"$'\nbootstrap "$@"'
+  sudo /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root TERM="${TERM:-dumb}" \
+    /usr/bin/bash -c "$root_script" omihomo-bootstrap "$mode" "$public_key" "$minimum"
+fi
+# Install finishes setup without taking over another account's core; claim is
+# the explicit transfer. Both pass this shell's XDG paths and start settings sync.
+if [[ $mode == install || $mode == claim ]]; then
   systemctl --user daemon-reload
   systemctl --user show --property=Id --value omihomo-apply.service >/dev/null
   manager_config=$(timeout 15s busctl --user --json=short get-property org.freedesktop.systemd1 \
@@ -173,12 +177,14 @@ if [[ $mode == install ]]; then
     exit 1
   }
   [[ $manager_config == /* && $(realpath -m -- "$manager_config") == "$(realpath -m -- "$config_home")" ]] || {
-    printf 'The shell and settings-sync unit use different config directories; claim and automatic sync were not started. Use the manager config directory for XDG_CONFIG_HOME, or configure the user manager before retrying Install.\n' >&2
+    printf 'The shell and settings-sync unit use different config directories; claim and automatic sync were not started. Use the manager config directory for XDG_CONFIG_HOME, or configure the user manager before retrying.\n' >&2
     exit 1
   }
   # Claim needs an existing config root to write imported settings before sync starts.
   mkdir -p -- "$config_home"
-  sudo /usr/bin/omihomo claim --keep-owner \
+  keep_owner=(--keep-owner)
+  if [[ $mode == claim ]]; then keep_owner=(); fi
+  sudo /usr/bin/omihomo claim "${keep_owner[@]}" \
     --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo" \
     --legacy-config "$config_home"
   systemctl --user enable --now omihomo-apply.path omihomo-apply.service

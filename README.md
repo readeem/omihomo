@@ -104,7 +104,7 @@ Omihomo never edits Hyprland or terminal settings.
 ## Remove
 
 ```sh
-sudo pacman -R omihomo-bin
+sudo pacman -R omihomo
 omarchy plugin remove dev.readeem.omihomo
 ```
 

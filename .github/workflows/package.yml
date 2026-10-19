@@ -1,6 +1,6 @@
 name: Package
 
-# Builds the release tarball and the AUR package from it, then installs that
+# Builds the release tarball and the Arch package from it, then installs that
 # package in a clean Arch container and checks what it installed. CI runs it
 # on every change so a tag never finds a broken package; the release workflow
 # publishes what it produces.
@@ -67,7 +67,7 @@ jobs:
           path: dist/
           retention-days: 7
 
-  aur:
+  arch:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -86,26 +86,23 @@ jobs:
         with:
           name: release
           path: dist
-      # aur/ is exactly what goes to the AUR. makepkg finds the tarball in
-      # its build directory, so nothing is downloaded and the checksum is
-      # checked against the file the release will publish.
+      # makepkg finds the tarball in its build directory, so nothing is
+      # downloaded and the checksum is checked against the file the release
+      # will publish.
       - name: render the PKGBUILD
         run: |
-          mkdir aur
-          cp packaging/aur/PKGBUILD packaging/aur/omihomo.install aur/
-          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^sha256sums=.*/sha256sums=('$SHA256')/" aur/PKGBUILD
-          grep -qx "pkgver=$VERSION" aur/PKGBUILD
-          grep -qx "sha256sums=('$SHA256')" aur/PKGBUILD
-          useradd --create-home builder
           mkdir build
-          cp aur/* "dist/omihomo-$VERSION-x86_64.tar.gz" build/
-          chown -R builder: aur build
-          runuser -u builder -- sh -c 'cd aur && makepkg --printsrcinfo > .SRCINFO'
+          cp packaging/PKGBUILD packaging/omihomo.install "dist/omihomo-$VERSION-x86_64.tar.gz" build/
+          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^sha256sums=.*/sha256sums=('$SHA256')/" build/PKGBUILD
+          grep -qx "pkgver=$VERSION" build/PKGBUILD
+          grep -qx "sha256sums=('$SHA256')" build/PKGBUILD
+          useradd --create-home builder
+          chown -R builder: build
       - name: build the package
         run: |
           runuser -u builder -- env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" sh -c 'cd build && makepkg --nodeps'
-          namcap aur/PKGBUILD build/omihomo-bin-*.pkg.tar.zst
-          package="omihomo-bin-$VERSION-1-x86_64.pkg.tar.zst"
+          package="omihomo-$VERSION-1-x86_64.pkg.tar.zst"
+          namcap build/PKGBUILD "build/$package"
           cp "build/$package" dist/
           (cd dist && sha256sum "$package" > "$package.sha256")
       # Outside a booted systemd the install script can only enable the units,
@@ -113,10 +110,10 @@ jobs:
       # threshold is the unit's exposure, 2.8, so loosening the sandbox fails.
       - name: install and check the package
         run: |
-          pacman -U --noconfirm build/omihomo-bin-*.pkg.tar.zst
+          pacman -U --noconfirm "build/omihomo-$VERSION-1-x86_64.pkg.tar.zst"
           cmp /usr/bin/omihomo-update "dist/omihomo-update-$VERSION-x86_64"
           omihomo version | grep -q "^omihomo v$VERSION "
-          grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo-bin/THIRD_PARTY_LICENSES
+          grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
           systemctl is-enabled omihomo.socket omihomo.service
           test -f /usr/lib/systemd/user/omihomo-apply.path
           test -f /usr/lib/systemd/user/omihomo-apply.service
@@ -125,7 +122,7 @@ jobs:
           XDG_RUNTIME_DIR="$runtime" systemd-analyze --user verify /usr/lib/systemd/user/omihomo-apply.path /usr/lib/systemd/user/omihomo-apply.service
           systemd-analyze verify /usr/lib/systemd/system/omihomo.socket /usr/lib/systemd/system/omihomo.service
           systemd-analyze security --offline=yes --threshold=28 /usr/lib/systemd/system/omihomo.service
-          pacman -R --noconfirm omihomo-bin
+          pacman -R --noconfirm omihomo
           test ! -e /etc/systemd/system/multi-user.target.wants/omihomo.service
           test ! -e /etc/systemd/system/sockets.target.wants/omihomo.socket
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -134,10 +131,4 @@ jobs:
           path: |
             dist/*.pkg.tar.zst
             dist/*.pkg.tar.zst.sha256
-          retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: aur
-          path: aur/
-          include-hidden-files: true
           retention-days: 7

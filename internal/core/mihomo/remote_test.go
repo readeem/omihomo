@@ -125,3 +125,69 @@ func TestASiteListNeedsTheCategoriesInUse(t *testing.T) {
 		t.Error("an empty site list was taken")
 	}
 }
+
+// An old install's geodata is staged when it serves the rules, and left
+// for download otherwise.
+func TestImportGeodataStagesOnlyUsableFiles(t *testing.T) {
+	site, err := proto.Marshal(&router.GeoSiteList{Entry: []*router.GeoSite{
+		{CountryCode: "CN", Domain: []*router.Domain{{Type: router.Domain_Domain, Value: "example.cn"}}},
+		{CountryCode: "GOOGLE", Domain: []*router.Domain{{Type: router.Domain_Domain, Value: "google.com"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := func(t *testing.T, legacy, home string, p core.Profile) error {
+		root, err := os.OpenRoot(legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		return shared.ImportGeodata(home, root, p)
+	}
+	uses := func(category string) core.Profile {
+		return core.Profile{Rules: []core.Rule{{Type: "GEOSITE", Value: category, Target: "DIRECT"}, {Type: "GEOIP", Value: "CN", Target: "DIRECT"}}}
+	}
+	t.Run("usable", func(t *testing.T) {
+		legacy, home := t.TempDir(), filepath.Join(t.TempDir(), "core")
+		os.WriteFile(filepath.Join(legacy, "GeoSite.dat"), site, 0o644)
+		os.WriteFile(filepath.Join(legacy, "Country.mmdb"), []byte("not a database"), 0o644)
+		if err := stage(t, legacy, home, uses("google")); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(home, "GeoSite.dat"))
+		if err != nil || string(got) != string(site) {
+			t.Fatalf("staged site list: %v", err)
+		}
+		if info, _ := os.Stat(filepath.Join(home, "GeoSite.dat")); info.Mode().Perm() != 0o600 {
+			t.Errorf("staged mode %v", info.Mode())
+		}
+		entries, _ := os.ReadDir(home)
+		if len(entries) != 1 {
+			t.Errorf("staged %v", entries)
+		}
+	})
+	for name, prepare := range map[string]func(t *testing.T, legacy string){
+		"missing category": func(t *testing.T, legacy string) {
+			os.WriteFile(filepath.Join(legacy, "GeoSite.dat"), site, 0o600)
+		},
+		"symlink": func(t *testing.T, legacy string) {
+			outside := filepath.Join(t.TempDir(), "site")
+			os.WriteFile(outside, site, 0o600)
+			os.Symlink(outside, filepath.Join(legacy, "GeoSite.dat"))
+		},
+		"directory": func(t *testing.T, legacy string) {
+			os.Mkdir(filepath.Join(legacy, "GeoSite.dat"), 0o700)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			legacy, home := t.TempDir(), filepath.Join(t.TempDir(), "core")
+			prepare(t, legacy)
+			if err := stage(t, legacy, home, uses("youtube")); err != nil {
+				t.Fatal(err)
+			}
+			if entries, _ := os.ReadDir(home); len(entries) != 0 {
+				t.Errorf("staged %v", entries)
+			}
+		})
+	}
+}

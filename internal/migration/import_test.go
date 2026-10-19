@@ -401,8 +401,15 @@ func TestImportRejectsInvalidSelectionCaches(t *testing.T) {
 	}
 }
 
-func TestImportKeepsOnlyMembersOfActiveSelectGroups(t *testing.T) {
+func TestImportKeepsOnlyMembersOfImportedSelectGroups(t *testing.T) {
 	source, target := fixture(t)
+	write(t, source, "subscriptions.json", `[{"name":"Example","url":"https://example.com/sub"},{"name":"Other","url":"https://example.com/other"}]`)
+	write(t, source, "cache/Other.yaml", `proxies: [{name: First, type: direct}, {name: Chosen, type: direct}]
+proxy-groups:
+- {name: Secondary, type: select, proxies: [First, Chosen]}
+- {name: Proxy, type: select, proxies: [First]}
+rules: [MATCH,Secondary]
+`)
 	write(t, source, "cache/Example.yaml", `proxies: [{name: First, type: direct}, {name: Chosen, type: direct}]
 proxy-groups:
 - {name: Proxy, type: select, proxies: [First, Chosen]}
@@ -419,7 +426,7 @@ rules: [MATCH,Proxy]
 		if err != nil {
 			return err
 		}
-		for g, m := range map[string]string{"Proxy": "Chosen", "Stale": "Chosen", "Auto": "Chosen", "Deleted": "Chosen"} {
+		for g, m := range map[string]string{"Proxy": "Chosen", "Secondary": "Chosen", "Stale": "Chosen", "Auto": "Chosen", "Deleted": "Chosen"} {
 			if err := b.Put([]byte(g), []byte(m)); err != nil {
 				return err
 			}
@@ -444,8 +451,8 @@ rules: [MATCH,Proxy]
 	defer db.Close()
 	if err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("selected"))
-		if b == nil || b.Stats().KeyN != 1 || string(b.Get([]byte("Proxy"))) != "Chosen" {
-			t.Fatal("prepared cache did not retain only the active select group's member")
+		if b == nil || b.Stats().KeyN != 2 || string(b.Get([]byte("Proxy"))) != "Chosen" || string(b.Get([]byte("Secondary"))) != "Chosen" {
+			t.Fatal("prepared cache did not retain only the imported select groups' members")
 		}
 		return nil
 	}); err != nil {
@@ -453,6 +460,27 @@ rules: [MATCH,Proxy]
 	}
 	if m.Settings.Running {
 		t.Fatal("selection import started proxy")
+	}
+}
+
+// A site list the old core cached is staged before the old core stops, so
+// the new one starts without downloading it.
+func TestImportStagesUsableLegacyGeodata(t *testing.T) {
+	source, target := fixture(t)
+	write(t, source, "cache/Example.yaml", strings.Replace(cached, `rules: [`, `rules: ["GEOSITE,cn,DIRECT", `, 1))
+	// A site list whose CN category holds example.cn.
+	write(t, source, "GeoSite.dat", "\x0a\x14\x0a\x02CN\x12\x0e\x08\x02\x12\x0aexample.cn")
+	write(t, source, "geoip.metadb", "not a database")
+	m, err := Prepare(t.Context(), source, target, true, &mihomo.Core{}, exportFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if _, err := os.Stat(filepath.Join(m.Dir, "core", "GeoSite.dat")); err != nil {
+		t.Fatalf("site list not staged: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(m.Dir, "core", "geoip.metadb")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an invalid database was staged: %v", err)
 	}
 }
 

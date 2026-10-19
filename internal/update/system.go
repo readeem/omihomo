@@ -12,19 +12,19 @@ import (
 type Pacman struct{}
 
 func (Pacman) Installed(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "/usr/bin/pacman", "-Q", "omihomo-bin")
+	cmd := exec.CommandContext(ctx, "/usr/bin/pacman", "-Q", "omihomo")
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C"}
 	out, err := cmd.Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 && strings.TrimSpace(string(out)) == "" &&
-			strings.TrimSpace(string(exit.Stderr)) == "error: package 'omihomo-bin' was not found" {
+			strings.TrimSpace(string(exit.Stderr)) == "error: package 'omihomo' was not found" {
 			return "", nil
 		}
 		return "", errors.New("cannot read installed package metadata")
 	}
 	fields := strings.Fields(string(out))
-	if len(fields) != 2 || fields[0] != "omihomo-bin" {
+	if len(fields) != 2 || fields[0] != "omihomo" {
 		return "", errors.New("unexpected installed package metadata")
 	}
 	return fields[1], nil
@@ -52,7 +52,7 @@ func (Pacman) Install(ctx context.Context, path, version string) error {
 		}
 		identity[name] = strings.TrimSpace(value)
 	}
-	if identity["Name"] != "omihomo-bin" || identity["Version"] != version || identity["Architecture"] != "x86_64" {
+	if identity["Name"] != "omihomo" || identity["Version"] != version || identity["Architecture"] != "x86_64" {
 		return errors.New("package identity does not match the signed release")
 	}
 	// A download deadline must never terminate pacman during a transaction.

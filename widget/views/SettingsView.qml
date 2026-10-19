@@ -296,7 +296,7 @@ Flickable {
           visible: view.panel.uninstallArmed
           Layout.fillWidth: true
           Layout.leftMargin: Style.space(8)
-          text: "Removes the omihomo-bin package and stops the service. Subscriptions and settings stay in /var/lib/omihomo."
+          text: "Removes the omihomo package and stops the service. Subscriptions and settings stay in /var/lib/omihomo."
           color: view.theme.dim
           wrapMode: Text.WordWrap
         }

@@ -5,7 +5,7 @@ umask 077
 [[ $EUID != 0 ]] || { printf 'Run as the account that should own Omihomo, without sudo around this script.\n' >&2; exit 1; }
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 version=$(jq -r .version "$root/manifest.json")
-package="$root/dist/omihomo-bin-$version-1-x86_64.pkg.tar.zst"
+package="$root/dist/omihomo-$version-1-x86_64.pkg.tar.zst"
 [[ -f $package ]] || { printf 'Build the package first with tools/build-package.\n' >&2; exit 1; }
 command -v omarchy >/dev/null || { printf 'This test needs an Omarchy installation.\n' >&2; exit 1; }
 

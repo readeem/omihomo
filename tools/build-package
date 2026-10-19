@@ -32,16 +32,14 @@ tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --nume
   -C "$work" -cf - vendor | gzip -n > "dist/$name-vendor.tar.gz"
 (cd dist && sha256sum "$name-vendor.tar.gz" > "$name-vendor.tar.gz.sha256")
 checksum=$(cut -d' ' -f1 "dist/$name-x86_64.tar.gz.sha256")
-cp packaging/aur/PKGBUILD packaging/aur/omihomo.install "$work/build/"
+cp packaging/PKGBUILD packaging/omihomo.install "$work/build/"
 sed -i -e "s/^pkgver=.*/pkgver=$version/" -e "s/^sha256sums=.*/sha256sums=('$checksum')/" "$work/build/PKGBUILD"
 cp "dist/$name-x86_64.tar.gz" "$work/build/"
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
 export SOURCE_DATE_EPOCH
-(cd "$work/build" && makepkg --nodeps --noconfirm && makepkg --printsrcinfo > .SRCINFO)
-mkdir -p dist/aur
-install -m644 "$work/build/PKGBUILD" "$work/build/.SRCINFO" "$work/build/omihomo.install" dist/aur/
-cp "$work/build/omihomo-bin-$version-1-x86_64.pkg.tar.zst" dist/
-(cd dist && sha256sum "omihomo-bin-$version-1-x86_64.pkg.tar.zst" > "omihomo-bin-$version-1-x86_64.pkg.tar.zst.sha256")
-printf '\nBuilt %s/dist/omihomo-bin-%s-1-x86_64.pkg.tar.zst\n' "$root" "$version"
-printf 'Install and cut over after the current session: sudo pacman -U dist/omihomo-bin-%s-1-x86_64.pkg.tar.zst\n' "$version"
+(cd "$work/build" && makepkg --nodeps --noconfirm)
+cp "$work/build/omihomo-$version-1-x86_64.pkg.tar.zst" dist/
+(cd dist && sha256sum "omihomo-$version-1-x86_64.pkg.tar.zst" > "omihomo-$version-1-x86_64.pkg.tar.zst.sha256")
+printf '\nBuilt %s/dist/omihomo-%s-1-x86_64.pkg.tar.zst\n' "$root" "$version"
+printf 'Install and cut over after the current session: sudo pacman -U dist/omihomo-%s-1-x86_64.pkg.tar.zst\n' "$version"
 printf 'Then: sudo /usr/bin/omihomo claim && omarchy restart shell\n'

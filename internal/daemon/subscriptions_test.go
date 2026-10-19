@@ -488,7 +488,7 @@ func TestDuplicateLongTitlesRemainManageable(t *testing.T) {
 func TestRejectedRunningRefreshHoldsEveryRequest(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{body: workYAML})
-	h := serve(t, os.Getuid(), o.opts()...)
+	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithRefreshCheck(10*time.Millisecond))...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	call[protocol.Status](t, c, protocol.OpStart, nil)
@@ -509,8 +509,34 @@ func TestRejectedRunningRefreshHoldsEveryRequest(t *testing.T) {
 	if got := list.Subscriptions[0].NextUpdate; got != h.clock.Now().Add(12*time.Hour-time.Minute).UnixMilli() {
 		t.Fatalf("retry deadline = %d", got)
 	}
+	// Once the hold ends the refresh loop asks again, and nothing else may.
+	hits := o.count("/work")
 	h.clock.advance(12*time.Hour - time.Minute)
-	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
+	waitFor(t, func() bool { return o.count("/work") > hits })
+}
+
+// A body over the limit is the server's answer: the interval holds every
+// request, scheduled or manual.
+func TestAnOversizedRefreshWaitsTheInterval(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithDownloadLimit(int64(len(workYAML))))...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	o.set("/work", page{body: workYAML + "#" + strings.Repeat("x", len(workYAML))})
+	h.clock.advance(12 * time.Hour)
+	name := protocol.NameArgs{Name: "127.0.0.1"}
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeFetch {
+		t.Fatalf("oversized refresh = %v", err)
+	}
+	list := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil)
+	if got := list.Subscriptions[0].NextUpdate; got != h.clock.Now().Add(12*time.Hour).UnixMilli() {
+		t.Fatalf("next try in %s", time.Duration(got-h.clock.Now().UnixMilli())*time.Millisecond)
+	}
+	h.clock.advance(time.Minute)
+	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeConflict {
+		t.Fatalf("manual refresh bypassed hold: %v", err)
+	}
 }
 
 func TestAFailedRefreshKeepsWhatWorks(t *testing.T) {
