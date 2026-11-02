@@ -149,6 +149,16 @@ ColumnLayout {
       color: view.theme.dim
       wrapMode: Text.WordWrap
     }
+    InlineAction {
+      theme: view.theme
+      objectName: "newRule"
+      iconText: "+"
+      tooltipText: "New rule · n"
+      enabled: !view.service.ruleSaving
+      hasCursor: view.panel.at("newRule")
+      onHovered: function(on) { if (on) view.panel.focusRow("newRule") }
+      onClicked: view.panel.newRule()
+    }
   }
 
   ScrollList {
@@ -184,124 +194,118 @@ ColumnLayout {
     }
   }
 
-  RowLayout {
-    Layout.fillWidth: true
-    PanelText {
-      theme: view.theme
-      Layout.fillWidth: true
-      text: view.panel.editingRule > 0 ? "Edit rule " + view.panel.editingRule : "New rule"
-      color: view.theme.dim
-    }
-    PanelText { theme: view.theme; text: view.panel.ruleEnabled ? "Enabled" : "Disabled"; color: view.theme.dim }
-    RuleToggle {
-      objectName: "ruleEnabled"
-      theme: view.theme
-      checked: view.panel.ruleEnabled
-      enabled: !view.service.ruleSaving
-      onToggled: { view.panel.ruleEnabled = !view.panel.ruleEnabled; view.panel.openRuleForm() }
-    }
-  }
-
-  PanelText {
-    theme: view.theme
-    Layout.fillWidth: true
-    text: Model.ruleHint(view.panel.ruleType)
-    color: view.theme.dim
-    wrapMode: Text.WordWrap
-  }
-
-  RowLayout {
-    Layout.fillWidth: true
-    visible: ["GEOIP", "IP-ASN", "IP-CIDR", "IP-CIDR6", "IP-SUFFIX", "RULE-SET"].indexOf(view.panel.ruleType) !== -1
-    Repeater {
-      model: ["no-resolve", "src"]
-      SmallButton {
-        required property string modelData
-        theme: view.theme
-        text: modelData === "src" ? "Match source IP" : "Skip DNS lookup"
-        primary: view.panel.ruleParams.indexOf(modelData) !== -1
-        onClicked: {
-          var flags = view.panel.ruleParams.split(" ").filter(function(p) { return p !== "" && p !== modelData })
-          if (!primary) flags.push(modelData)
-          view.panel.ruleParams = flags.join(" ")
-        }
-      }
-    }
-  }
-
-  PanelField {
-    panel: view.panel
-    id: ruleValueField
-    theme: view.theme
-    Layout.fillWidth: true
-    foreground: view.theme.foreground
-    placeholderText: view.panel.ruleType === "MATCH" ? "No value needed" : "Rule value"
-    hasCursor: view.panel.at("ruleValue")
-    verticalPadding: Style.space(4)
-    onHoveredChanged: if (hovered) view.panel.focusRow("ruleValue")
-    onAccepted: view.panel.submitRuleForm()
-    onActiveFocusChanged: view.panel.fieldFocusChanged(ruleValueField, activeFocus)
-    Keys.onEscapePressed: view.panel.handleEscape()
-  }
-
-  RowLayout {
+  ColumnLayout {
+    objectName: "ruleForm"
+    visible: view.panel.ruleFormOpen
     Layout.fillWidth: true
     spacing: Style.space(8)
 
-    Selector {
-      id: ruleTypeSelector
-      panel: view.panel
-      section: "ruleType"
-      pickerHost: pickerDock
-      placeholderText: "Filter rule types"
-      choices: Model.RULE_TYPES.map(function(type) {
-        return { value: type, label: type, description: Model.ruleCategory(type) }
-      })
-      value: view.panel.ruleType
-      Layout.maximumWidth: (view.width - Style.space(16)) / 3
-      onSelected: function(value) {
-        view.panel.ruleTypeIndex = Model.RULE_TYPES.indexOf(value)
-        view.panel.ruleParams = ""
-        if (value === "MATCH") view.valueField.text = ""
-        view.panel.openRuleForm()
+    RowLayout {
+      Layout.fillWidth: true
+      visible: ["GEOIP", "IP-ASN", "IP-CIDR", "IP-CIDR6", "IP-SUFFIX", "RULE-SET"].indexOf(view.panel.ruleType) !== -1
+      Repeater {
+        model: ["no-resolve", "src"]
+        SmallButton {
+          required property string modelData
+          theme: view.theme
+          text: modelData === "src" ? "Match source IP" : "Skip DNS lookup"
+          primary: view.panel.ruleParams.indexOf(modelData) !== -1
+          onClicked: {
+            var flags = view.panel.ruleParams.split(" ").filter(function(p) { return p !== "" && p !== modelData })
+            if (!primary) flags.push(modelData)
+            view.panel.ruleParams = flags.join(" ")
+          }
+        }
       }
     }
 
-    Item { Layout.fillWidth: true }
-
-    Selector {
-      id: categorySelectorControl
+    PanelField {
       panel: view.panel
-      section: "ruleCategory"
-      pickerHost: pickerDock
-      placeholderText: "Filter or create a category"
-      createLabel: "Create category"
-      onCreated: function(name) {
-        view.panel.newRuleCategory = name
-        view.panel.ruleCategory = "new"
-        view.panel.openRuleForm()
-      }
-      choices: view.panel.categoryChoices
-      value: view.panel.ruleCategory
-      Layout.maximumWidth: (view.width - Style.space(16)) / 3
-      onSelected: function(value) {
-        view.panel.ruleCategory = value
-        view.panel.openRuleForm()
-      }
+      id: ruleValueField
+      theme: view.theme
+      Layout.fillWidth: true
+      foreground: view.theme.foreground
+      placeholderText: view.panel.ruleType === "MATCH" ? "No value needed" : "Rule value"
+      hasCursor: view.panel.at("ruleValue")
+      verticalPadding: Style.space(4)
+      onHoveredChanged: if (hovered) view.panel.focusRow("ruleValue")
+      onAccepted: view.panel.submitRuleForm()
+      onActiveFocusChanged: view.panel.fieldFocusChanged(ruleValueField, activeFocus)
+      Keys.onEscapePressed: view.panel.handleEscape()
     }
 
-    Selector {
-      id: destination
-      panel: view.panel
-      section: "ruleTarget"
-      pickerHost: pickerDock
-      placeholderText: "Filter destinations"
-      choices: view.panel.ruleTargets
-      value: view.panel.ruleTarget
-      Layout.maximumWidth: (view.width - Style.space(16)) / 3
-      onSelected: function(value) {
-        view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
-        view.panel.openRuleForm()
+    RowLayout {
+      id: selectors
+      readonly property real maxSelectorWidth: (view.width - spacing * 4 - enabledToggle.implicitWidth) / 3
+      Layout.fillWidth: true
+      spacing: Style.space(8)
+
+      Selector {
+        id: ruleTypeSelector
+        panel: view.panel
+        section: "ruleType"
+        pickerHost: pickerDock
+        placeholderText: "Filter rule types"
+        choices: Model.RULE_TYPES.map(function(type) {
+          return { value: type, label: type, description: Model.ruleCategory(type) }
+        })
+        value: view.panel.ruleType
+        Layout.maximumWidth: selectors.maxSelectorWidth
+        onSelected: function(value) {
+          view.panel.ruleTypeIndex = Model.RULE_TYPES.indexOf(value)
+          view.panel.ruleParams = ""
+          if (value === "MATCH") view.valueField.text = ""
+          view.panel.openRuleForm()
+        }
+      }
+
+      Selector {
+        id: categorySelectorControl
+        panel: view.panel
+        section: "ruleCategory"
+        pickerHost: pickerDock
+        placeholderText: "Filter or create a category"
+        createLabel: "Create category"
+        onCreated: function(name) {
+          view.panel.newRuleCategory = name
+          view.panel.ruleCategory = "new"
+          view.panel.openRuleForm()
+        }
+        choices: view.panel.categoryChoices
+        value: view.panel.ruleCategory
+        Layout.maximumWidth: selectors.maxSelectorWidth
+        onSelected: function(value) {
+          view.panel.ruleCategory = value
+          view.panel.openRuleForm()
+        }
+      }
+
+      Item { Layout.fillWidth: true }
+
+      Selector {
+        id: destination
+        panel: view.panel
+        section: "ruleTarget"
+        pickerHost: pickerDock
+        placeholderText: "Filter destinations"
+        choices: view.panel.ruleTargets
+        value: view.panel.ruleTarget
+        Layout.maximumWidth: selectors.maxSelectorWidth
+        onSelected: function(value) {
+          view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
+          view.panel.openRuleForm()
+        }
+      }
+      RuleToggle {
+        id: enabledToggle
+        objectName: "ruleEnabled"
+        theme: view.theme
+        checked: view.panel.ruleEnabled
+        enabled: !view.service.ruleSaving
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: "Rule enabled"
+        Accessible.checked: checked
+        onToggled: { view.panel.ruleEnabled = !view.panel.ruleEnabled; view.panel.openRuleForm() }
       }
     }
   }

@@ -19,20 +19,6 @@ function ruleCategory(type) {
   return "other"
 }
 
-function ruleHint(type) {
-  if (type === "MATCH") return "Matches everything; later rules will not be reached."
-  if (type === "GEOSITE") return "Site category, e.g. youtube, google, category-ads-all, or cn. Supports @ attributes and ! negation."
-  if (type.indexOf("GEOIP") !== -1) return "Country code, e.g. CN, US, or private. Database downloads and updates automatically."
-  if (type.indexOf("ASN") !== -1) return "Autonomous system number, e.g. 13335. Database managed automatically."
-  if (type === "RULE-SET") return "Exact name of a rule provider in the active subscription."
-  if (["AND", "OR", "NOT"].indexOf(type) !== -1) return "Expression, e.g. ((DOMAIN,example.com),(NETWORK,UDP))"
-  if (type.indexOf("REGEX") !== -1) return "Go-compatible regular expression. Matching has a time limit."
-  if (type.indexOf("PORT") !== -1) return "Port or range, e.g. 443 or 8000-8080"
-  if (type.indexOf("CIDR") !== -1 || type.indexOf("SUFFIX") !== -1 && type.indexOf("IP") !== -1) return "IP prefix, e.g. 10.0.0.0/8 or 2001:db8::/32"
-  if (type === "NETWORK") return "TCP or UDP"
-  if (type.indexOf("PROCESS") === 0) return "Process name or path; wildcard selectors accept * and ?."
-  return "Value for " + type
-}
 var MODES = ["rule", "global", "direct"]
 
 function isSystemGroup(group) {
@@ -931,7 +917,7 @@ function emojiKey(emoji) {
 if (typeof module !== "undefined") {
   module.exports = {
     RULE_TYPES: RULE_TYPES,
- RULE_CATEGORIES: RULE_CATEGORIES, ruleCategory: ruleCategory, ruleHint: ruleHint,
+    RULE_CATEGORIES: RULE_CATEGORIES, ruleCategory: ruleCategory,
     MODES: MODES,
     isSystemGroup: isSystemGroup,
     text: text,

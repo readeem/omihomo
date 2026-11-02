@@ -28,6 +28,7 @@ Panel {
   property bool uninstallArmed: false
   property int ruleTypeIndex: 0
   property int editingRule: 0
+  property bool ruleFormOpen: false
   property string editingRuleOriginal: ""
   property string savedRuleTarget: ""
   property string ruleParams: ""
@@ -273,9 +274,9 @@ Panel {
       rows.push({ s: "subUrl" }, { s: "subSubmit" })
       break
     case "rules":
-      rows.push({ s: "ruleTest" }, { s: "toggleCategories" })
+      rows.push({ s: "ruleTest" }, { s: "toggleCategories" }, { s: "newRule" })
       for (i = 0; i < ruleEntries.length; i++) if (ruleEntries[i].s) rows.push({ s: ruleEntries[i].s, i: ruleEntries[i].i })
-      rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleCategory" }, { s: "ruleTarget" }, { s: "ruleEnabled" })
+      if (ruleFormOpen) rows.push({ s: "ruleValue" }, { s: "ruleType" }, { s: "ruleCategory" }, { s: "ruleTarget" }, { s: "ruleEnabled" })
       break
     case "conns":
       for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
@@ -363,6 +364,7 @@ Panel {
     case "subUrl": beginEdit(subscriptionsView.urlField); break
     case "subSubmit": submitSubForm(); break
     case "toggleCategories": toggleAllCategories(); break
+    case "newRule": newRule(); break
     case "category": expandCategory(ruleCategories[cursorRow.i].id); break
     case "ruleCategory": rulesView.categorySelector.openPicker(); break
     case "ruleEnabled": ruleEnabled = !ruleEnabled; openRuleForm(); break
@@ -417,7 +419,7 @@ Panel {
     case "t": omihomo.toggleTun(); return
     case "m": cycleMode(1); return
     case "c": openView("conns"); return
-    case "n": cancelRuleEdit(); openRuleForm(); return
+    case "n": newRule(); return
     case "r": omihomo.refresh(); omihomo.refreshTrace(); return
     }
     if (view === "configs") {
@@ -447,7 +449,7 @@ Panel {
   function handleEscape() {
     if (activeSelector) { activeSelector.cancel(); return }
     if (categoryEditing !== "") { categoryEditing = ""; rulesView.categoryField.text = ""; endEdit(); return }
-    if (editingRule > 0 || (view === "rules" && editing === rulesView.valueField)) {
+    if (ruleFormOpen) {
       cancelRuleEdit()
       return
     }
@@ -465,7 +467,7 @@ Panel {
     if (activeSelector) {
       activeSelector.pick(cursorRow && cursorRow.s === "choice" ? cursorRow.i : 0)
     } else if (view === "rules" && categoryEditing !== "") { saveCategory()
-    } else if (view === "rules" && (editingRule > 0 || editing === rulesView.valueField)) {
+    } else if (view === "rules" && ruleFormOpen) {
       submitRuleForm()
     } else if (editing) editing.accepted()
     else { cursorActive = true; activateCursor() }
@@ -486,7 +488,7 @@ Panel {
     if (activeSelector) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
-    if (editing !== null || editingRule > 0 || categoryEditing !== "") return [
+    if (editing !== null || ruleFormOpen || categoryEditing !== "") return [
       { keys: "↵", label: "save", key: "enter" }, { keys: "esc", label: "cancel", key: "esc" }]
     switch (name) {
     case "configs": return [
@@ -705,6 +707,7 @@ Panel {
 
   function cancelRuleEdit() {
     if (activeSelector && view === "rules") activeSelector.cancel()
+    ruleFormOpen = false
     editingRule = 0
     ruleCategory = ""
     newRuleCategory = ""
@@ -719,15 +722,24 @@ Panel {
 
   function openRuleForm() {
     if (view !== "rules") openView("rules")
+    categoryEditing = ""
+    ruleFormOpen = true
     omihomo.clearMessages()
     Qt.callLater(function() {
+      if (!root.ruleFormOpen) return
       root.focusRow("ruleValue")
       root.beginEdit(rulesView.valueField)
     })
   }
 
-  function submitRuleForm() {
+  function newRule() {
     if (omihomo.ruleSaving) return
+    cancelRuleEdit()
+    openRuleForm()
+  }
+
+  function submitRuleForm() {
+    if (!ruleFormOpen || omihomo.ruleSaving) return
     if (ruleFormError !== "") {
       focusRow("ruleValue")
       beginEdit(rulesView.valueField)
@@ -832,16 +844,7 @@ Panel {
       root.focusRow("rule", index - 1)
       root.scrollCursorIntoView()
     }
-    onRuleAdded: {
-      root.editingRule = 0
-      root.savedRuleTarget = ""
-      root.ruleParams = ""
-      root.ruleCategory = ""
-      root.newRuleCategory = ""
-      root.ruleEnabled = true
-      rulesView.valueField.text = ""
-      root.endEdit()
-    }
+    onRuleAdded: root.cancelRuleEdit()
   }
 
   Timer {

@@ -83,8 +83,13 @@ ShellRoot {
       { name: "panel ready", until: function() { return panel.service.proxiesLoaded && panel.service.rules.length === 4 }, then: function() {
           testRoot.type("3")
         } },
-      { then: function() { testRoot.type("n") } },
+      { then: function() {
+          t.check(testRoot.findObject(panel, "ruleForm"), null, "the rule form starts hidden")
+          t.check(panel.navRows.some(function(r) { return r.s === "ruleValue" }), false, "hidden rule fields are excluded from navigation")
+          t.check(testRoot.clickObject("newRule"), true, "the plus button opens a new rule")
+        } },
       { name: "new rule focused", until: function() { return panel.editing !== null }, then: function() {
+          t.check(panel.ruleFormOpen, true, "creating a rule reveals the form")
           t.check(panel.hintsFor("rules")[0].label, "save", "the footer offers save while editing")
           t.check(panel.hintsFor("rules")[1].label, "cancel", "the footer offers cancel while editing")
           testRoot.type("discard.example")
@@ -92,6 +97,7 @@ ShellRoot {
         } },
       { then: function() {
           t.check(panel.ruleFormValue, "", "Escape discards the draft")
+          t.check(panel.ruleFormOpen, false, "Escape hides the rule form")
           t.check(panel.view, "rules", "Escape stays on the rules tab")
           testRoot.type("n")
         } },
@@ -102,6 +108,7 @@ ShellRoot {
       { then: function() {
           t.check(panel.view, "conns", "Tab switches views while typing")
           t.check(panel.ruleFormValue, "", "switching views discards the draft")
+          t.check(panel.ruleFormOpen, false, "switching views hides the rule form")
           testRoot.type("3")
         } },
       { then: function() { testRoot.type("n") } },
@@ -116,6 +123,7 @@ ShellRoot {
         } },
       { then: function() { panel.focusRow("rule", 0); testRoot.key(Qt.Key_Return) } },
       { name: "owner rule focused", until: function() { return panel.editingRule === 1 && panel.editing !== null }, then: function() {
+          t.check(panel.ruleFormOpen, true, "editing reveals the rule form")
           t.check(panel.ruleFormValue, "github.com", "editing starts from the saved value")
           testRoot.key(Qt.Key_A, Qt.ControlModifier)
           testRoot.type("saved.example")
@@ -123,6 +131,7 @@ ShellRoot {
         } },
       { name: "saved rule", until: function() { return !panel.service.ruleSaving && panel.service.rules[0].value === "saved.example" }, then: function() {
           t.check(panel.editingRule, 0, "Enter finishes editing")
+          t.check(panel.ruleFormOpen, false, "saving hides the rule form")
           t.check(panel.service.rules.length, 4, "saving replaces the rule")
           testRoot.type("M")
         } },
@@ -156,9 +165,10 @@ ShellRoot {
           t.check(panel.service.effectiveDNSDestination, "Proxy", "Escape leaves DNS unchanged")
           testRoot.type("3")
         } },
-      { then: function() {
+      { then: function() { testRoot.type("n") } },
+      { until: function() { return panel.ruleFormOpen && panel.editing !== null }, then: function() {
           panel.focusRow("ruleTarget")
-          testRoot.key(Qt.Key_Return)
+          panel.activateCursor()
         } },
       { name: "rule picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
           t.check(panel.activeSelector.choices.some(function(c) { return c.value === "REJECT" }), true,
@@ -170,9 +180,10 @@ ShellRoot {
           t.check(panel.ruleTarget, "Streaming", "filtered selection changes the rule target")
           testRoot.key(Qt.Key_Escape)
         } },
-      { then: function() {
-          testRoot.key(Qt.Key_Up)
-          testRoot.key(Qt.Key_Return)
+      { then: function() { testRoot.type("n") } },
+      { until: function() { return panel.ruleFormOpen && panel.editing !== null }, then: function() {
+          panel.focusRow("ruleType")
+          panel.activateCursor()
         } },
       { name: "rule type picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
           t.check(panel.activeSelector.section, "ruleType", "rule types open through the shared picker")

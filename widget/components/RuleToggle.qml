@@ -10,9 +10,9 @@ Rectangle {
   implicitWidth: Style.space(16)
   implicitHeight: Style.space(16)
   radius: Math.min(theme.controlRadius, Style.space(3))
-  color: checked ? theme.accent : "transparent"
+  color: checked ? theme.foreground : "transparent"
   border.width: 1
-  border.color: mouse.containsMouse ? theme.foreground : checked ? theme.accent : theme.outline
+  border.color: mouse.containsMouse || checked ? theme.foreground : theme.outline
   opacity: enabled ? 1 : 0.4
   PanelText {
     theme: toggle.theme
