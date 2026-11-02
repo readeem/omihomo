@@ -27,9 +27,11 @@ import (
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
+	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/constant/features"
+	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/listener"
 	"github.com/metacubex/mihomo/listener/inner"
@@ -38,6 +40,7 @@ import (
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 // delayURL is what a delay test fetches, as the widget always has.
@@ -52,8 +55,9 @@ const (
 
 // Core is core.Core over the mihomo engine hosted in this process.
 type Core struct {
-	log *slog.Logger
-	tap *logTap
+	uplink uplink.Network
+	log    *slog.Logger
+	tap    *logTap
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
@@ -159,7 +163,14 @@ var afterRestoreStop = func() {}
 // run applies rt and commits it once everything it asks for came up.
 func (c *Core) run(rt *runtime) error {
 	stop := c.tap.watch()
+	// These bootstrap clients are installed before health checks can dial.
+	// Only this private adapter can discover or bind to uplink DNS.
+	bootstrap := &uplinkDNS{ProxyAdapter: rt.parsed.Proxies["DIRECT"], network: c.uplink}
+	servers := []dns.NameServer{{Net: "tcp", Addr: "0.0.0.0:53", ProxyAdapter: bootstrap}}
+	rt.parsed.DNS.DefaultNameserver = servers
+	rt.parsed.DNS.ProxyServerNameserver = servers
 	executor.ApplyConfig(rt.parsed, true)
+	resolver.ProxyServerHostResolver = newBootstrapResolver(resolver.DefaultResolver, resolver.ProxyServerHostResolver)
 	if err := started(rt.cfg, stop()); err != nil {
 		return err
 	}

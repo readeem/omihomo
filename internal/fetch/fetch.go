@@ -22,6 +22,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 // Limits and timeouts.
@@ -260,7 +262,7 @@ func knownCause(err error) bool {
 		invalid   x509.CertificateInvalidError
 		corrupt   flate.CorruptInputError
 	)
-	return errors.Is(err, ErrTooLarge) || errors.Is(err, ErrInsecure) || errors.Is(err, errResponse) ||
+	return errors.Is(err, uplink.ErrUnavailable) || errors.Is(err, ErrTooLarge) || errors.Is(err, ErrInsecure) || errors.Is(err, errResponse) ||
 		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) ||
 		errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &verify) || errors.As(err, &record) ||
 		errors.As(err, &alert) || errors.As(err, &unknownCA) || errors.As(err, &host) || errors.As(err, &invalid) ||

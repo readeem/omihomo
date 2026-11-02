@@ -309,3 +309,7 @@ func (c *Core) InstallGeodata(f core.GeodataFile, path string, p core.Profile) e
 	}
 	return os.Rename(path, f.Path)
 }
+
+func (c *Core) DialDownload(ctx context.Context, network, address string) (net.Conn, error) {
+	return c.DialContext(ctx, network, address)
+}

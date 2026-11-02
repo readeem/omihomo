@@ -15,7 +15,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,7 +29,9 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/fetch"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 // mihomo is process-global, so every test shares one core and leaves it
@@ -722,6 +726,12 @@ func TestHiddenPrimaryAgreesWithListedGroups(t *testing.T) {
 
 func TestDNSDestination(t *testing.T) {
 	var requests atomic.Int32
+	provider := providerDNS(t, "127.0.0.1")
+	previousNetwork := shared.uplink
+	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
+		return []uplink.Link{{Name: "lo", Addresses: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/8")}, DNS: []netip.AddrPort{provider}}}, nil
+	}}
+	t.Cleanup(func() { shared.uplink = previousNetwork })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if r.Method == http.MethodGet {
@@ -793,7 +803,7 @@ func TestDNSDestination(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	if _, err := resolver.LookupIPv4WithResolver(ctx, "bootstrap.example", resolver.ProxyServerHostResolver); err != nil {
+	if ips, err := resolver.LookupIPv4WithResolver(ctx, "bootstrap.example", resolver.ProxyServerHostResolver); err != nil || !slices.Contains(ips, netip.MustParseAddr("127.0.0.1")) {
 		t.Fatalf("proxy bootstrap depended on application DNS destination: %v", err)
 	}
 	before := requests.Load()
@@ -816,4 +826,221 @@ func TestDNSDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	lookup("restored.example", true)
+}
+
+func providerDNS(t *testing.T, address string) netip.AddrPort {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := net.ListenPacket("udp", listener.Addr().String())
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
+		reply := new(dns.Msg)
+		reply.SetReply(query)
+		if query.Question[0].Qtype == dns.TypeA {
+			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP(address)}}
+		}
+		w.WriteMsg(reply)
+	})
+	for _, server := range []*dns.Server{{Listener: listener, Net: "tcp", Handler: handler}, {PacketConn: packet, Net: "udp", Handler: handler}} {
+		ready, done := make(chan struct{}), make(chan error, 1)
+		server.NotifyStartedFunc = func() { close(ready) }
+		go func() { done <- server.ActivateAndServe() }()
+		<-ready
+		t.Cleanup(func() {
+			server.Shutdown()
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	return netip.MustParseAddrPort(listener.Addr().String())
+}
+
+func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) {
+	var providerCalls atomic.Int32
+	provider := providerDNS(t, "127.0.0.1")
+	previousNetwork, previousNameservers := shared.uplink, defaultNameservers
+	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
+		providerCalls.Add(1)
+		return []uplink.Link{{Name: "lo", Addresses: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/8")}, DNS: []netip.AddrPort{provider}}}, nil
+	}}
+	t.Cleanup(func() { shared.uplink, defaultNameservers = previousNetwork, previousNameservers })
+	var configuredQueries atomic.Int32
+	doh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method == http.MethodGet {
+			body, _ = base64.RawURLEncoding.DecodeString(r.URL.Query().Get("dns"))
+		}
+		var query dns.Msg
+		if err := query.Unpack(body); err != nil {
+			t.Error(err)
+			return
+		}
+		configuredQueries.Add(1)
+		reply := new(dns.Msg)
+		reply.SetReply(&query)
+		if query.Question[0].Qtype == dns.TypeA {
+			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP("127.0.0.1")}}
+		}
+		body, _ = reply.Pack()
+		w.Header().Set("Content-Type", "application/dns-message")
+		w.Write(body)
+	}))
+	defer doh.Close()
+	defaultNameservers = []string{doh.URL + "/dns-query"}
+	proxy := connectProxy(t)
+	_, port, _ := net.SplitHostPort(proxy.Listener.Addr().String())
+	portNumber, _ := strconv.Atoi(port)
+	cfg := testConfig()
+	cfg.DNSDestination = "Proxy"
+	cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: "Forward", Type: "http", Options: map[string]any{"server": "proxy.example", "port": portNumber}})
+	cfg.Profile.Groups[0].Members = []string{"Forward"}
+	cfg.Profile.Rules = []core.Rule{{Type: "MATCH", Target: "REJECT"}}
+	c := running(t, cfg)
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS.ServerName != "example.com" {
+			t.Error("download lost its TLS hostname")
+		}
+		io.WriteString(w, "subscription")
+	}))
+	defer origin.Close()
+	_, targetPort, _ := net.SplitHostPort(origin.Listener.Addr().String())
+	var directCalls atomic.Int32
+	transport := fetch.RoutedTransport(c.DialDownload, func(ctx context.Context, network, address string) (net.Conn, error) {
+		directCalls.Add(1)
+		return shared.uplink.DialContext(ctx, network, address)
+	})
+	transport.TLSClientConfig.RootCAs = origin.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	downloader := fetch.New(transport)
+	download := func() {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		result, err := downloader.Get(ctx, fetch.Request{URL: "https://example.com:" + targetPort + "/sub?token=private"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(result.Body) != "subscription" {
+			t.Fatal("wrong download")
+		}
+	}
+	download()
+	if providerCalls.Load() == 0 || configuredQueries.Load() == 0 || directCalls.Load() != 0 {
+		t.Fatalf("bootstrap/configured/direct calls = %d/%d/%d", providerCalls.Load(), configuredQueries.Load(), directCalls.Load())
+	}
+	// A new config with a dead primary must recover only the daemon's download.
+	cfg.Profile.Groups[0].Members = []string{"Dead"}
+	if err := c.Apply(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	download()
+	if directCalls.Load() != 1 {
+		t.Fatalf("download did not recover: %d", directCalls.Load())
+	}
+	cfg.Profile.Groups[0].Members = []string{"Forward"}
+	if err := c.Apply(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	download()
+	if directCalls.Load() != 1 {
+		t.Fatal("direct recovery remained sticky after the proxy recovered")
+	}
+}
+
+func connectProxy(t *testing.T) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	var active sync.WaitGroup
+	connections := map[net.Conn]struct{}{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		upstream, err := (&net.Dialer{Timeout: time.Second}).DialContext(r.Context(), "tcp", r.Host)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		client, buffer, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			upstream.Close()
+			return
+		}
+		mu.Lock()
+		connections[client], connections[upstream] = struct{}{}, struct{}{}
+		active.Add(1)
+		mu.Unlock()
+		defer func() {
+			client.Close()
+			upstream.Close()
+			mu.Lock()
+			delete(connections, client)
+			delete(connections, upstream)
+			mu.Unlock()
+			active.Done()
+		}()
+		client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		done := make(chan struct{})
+		go func() { io.Copy(upstream, buffer); upstream.Close(); close(done) }()
+		io.Copy(client, upstream)
+		client.Close()
+		<-done
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		mu.Lock()
+		for conn := range connections {
+			conn.Close()
+		}
+		mu.Unlock()
+		active.Wait()
+	})
+	return server
+}
+
+func TestDNSAuthenticationAndHTTPFailuresDoNotEnableProviderRecovery(t *testing.T) {
+	for _, secure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("TLS=%v", secure), func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+			server.Config.ErrorLog = slog.NewLogLogger(slog.NewTextHandler(io.Discard, nil), slog.LevelError)
+			if secure {
+				server.StartTLS()
+			} else {
+				server.Start()
+			}
+			defer server.Close()
+			previousNetwork, previousServers := shared.uplink, defaultNameservers
+			var providerCalls atomic.Int32
+			shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
+				providerCalls.Add(1)
+				return nil, errors.New("provider must not be used")
+			}}
+			defaultNameservers = []string{server.URL + "/dns-query"}
+			t.Cleanup(func() { shared.uplink, defaultNameservers = previousNetwork, previousServers })
+			cfg := testConfig()
+			cfg.DNSDestination = "Local"
+			c := running(t, cfg)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			if _, err := resolver.ProxyServerHostResolver.LookupIPv4(ctx, "proxy.example"); err == nil {
+				t.Fatal("bootstrap accepted a DNS authentication failure")
+			}
+			var directCalls atomic.Int32
+			transport := fetch.RoutedTransport(c.DialDownload, func(context.Context, string, string) (net.Conn, error) {
+				directCalls.Add(1)
+				return nil, errors.New("direct must not be used")
+			})
+			_, err := fetch.New(transport).Get(ctx, fetch.Request{URL: "https://example.com/sub?token=private"})
+			if err == nil || providerCalls.Load() != 0 || directCalls.Load() != 0 {
+				t.Fatalf("DNS auth/HTTP failure enabled recovery: %v %d/%d", err, providerCalls.Load(), directCalls.Load())
+			}
+		})
+	}
 }

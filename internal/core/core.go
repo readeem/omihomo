@@ -139,6 +139,9 @@ type Core interface {
 	// local application had made it through the proxy.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 
+	// DialDownload uses configured DNS and the primary exit, with synchronous failure reporting.
+	DialDownload(ctx context.Context, network, address string) (net.Conn, error)
+
 	// ParseLinks reads a list of share links, plain or base64, into proxies
 	// written the way a subscription's YAML writes them: "name", "type" and
 	// the protocol's fields. They are remote content, still to be
