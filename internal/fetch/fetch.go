@@ -174,7 +174,7 @@ func (f *Fetcher) get(ctx context.Context, r Request) (*Response, error) {
 		}
 	}
 	body, err := readBody(resp, limit)
-	if err != nil {
+	if err != nil || ctx.Err() != nil {
 		return nil, failure(ctx, err, req.URL)
 	}
 	return &Response{Body: body, Header: resp.Header}, nil

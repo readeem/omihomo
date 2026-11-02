@@ -317,6 +317,44 @@ func TestTimeout(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type cancelAtEOF struct {
+	io.Reader
+	cancel context.CancelCauseFunc
+	cause  error
+}
+
+func (b cancelAtEOF) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err == io.EOF {
+		b.cancel(b.cause)
+	}
+	return n, err
+}
+
+func TestCanceledAtBodyEOF(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			f := New(roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(cancelAtEOF{strings.NewReader("partial"), cancel, cause}),
+				}, nil
+			}))
+			resp, err := f.Get(ctx, Request{URL: "https://example.invalid/sub"})
+			if !errors.Is(err, cause) || resp != nil {
+				t.Fatalf("Get = %v, %v; want no response and %v", resp, err, cause)
+			}
+		})
+	}
+}
+
 func TestErrorsHideURL(t *testing.T) {
 	srv, f := server(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
