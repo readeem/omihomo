@@ -55,6 +55,7 @@ type Document struct {
 	links          Links
 	proxies        []map[string]any
 	groups         []map[string]any
+	subRules       map[string][]string
 	rules          []string
 	proxyProviders map[string]map[string]any
 	ruleProviders  map[string]map[string]any
@@ -64,11 +65,12 @@ type Document struct {
 }
 
 // The keys that make a YAML mapping a config rather than a list of links.
-var structural = []string{"proxies", "proxy-providers", "proxy-groups", "rules", "rule-providers", "dns", "tun"}
+var structural = []string{"proxies", "proxy-providers", "proxy-groups", "rules", "sub-rules", "rule-providers", "dns", "tun"}
 
 type document struct {
 	Proxies        []map[string]any          `yaml:"proxies"`
 	Groups         []map[string]any          `yaml:"proxy-groups"`
+	SubRules       map[string][]string       `yaml:"sub-rules"`
 	Rules          []string                  `yaml:"rules"`
 	ProxyProviders map[string]map[string]any `yaml:"proxy-providers"`
 	RuleProviders  map[string]map[string]any `yaml:"rule-providers"`
@@ -87,7 +89,7 @@ func Read(body []byte, links Links) (*Document, error) {
 		if err := yaml.Unmarshal(body, &doc); err != nil {
 			return nil, fmt.Errorf("%w: the YAML does not read as a config: %v", ErrInvalid, yamlError(err))
 		}
-		d := &Document{links: links, proxies: doc.Proxies, groups: doc.Groups, rules: doc.Rules,
+		d := &Document{links: links, proxies: doc.Proxies, groups: doc.Groups, rules: doc.Rules, subRules: doc.SubRules,
 			proxyProviders: doc.ProxyProviders, ruleProviders: doc.RuleProviders}
 		d.wrapped = len(d.groups) == 0 && len(d.rules) == 0
 		return d, nil
@@ -200,6 +202,20 @@ func (d *Document) Build(bodies map[string][]byte) (p core.Profile, dropped []st
 	p.Proxies, p.Groups = b.proxies, groups
 	if p.RuleSets, err = b.ruleSets(); err != nil {
 		return core.Profile{}, nil, err
+	}
+	p.SubRules = make(map[string][]core.Rule)
+	for name, lines := range b.doc.subRules {
+		if len(name) > 256 || len(lines) > maxRules || len(p.SubRules) >= 1000 {
+			return core.Profile{}, nil, fmt.Errorf("%w: sub-rules exceed limits", ErrInvalid)
+		}
+		for _, line := range lines {
+			r, err := ParseRule(line)
+			if err != nil || !slices.Contains(ruleTypes, r.Type) {
+				return core.Profile{}, nil, fmt.Errorf("%w: malformed sub-rule", ErrInvalid)
+			}
+			r.Source = protocol.SourceSubscription
+			p.SubRules[name] = append(p.SubRules[name], r)
+		}
 	}
 	p.Rules = b.rules(p.RuleSets)
 	if len(p.Groups) == 0 && len(p.Proxies) == 0 {
@@ -659,9 +675,6 @@ func (b *builder) ruleSets() ([]core.RuleSet, error) {
 			b.drop("rule provider %q: %v", name, err)
 			continue
 		}
-		if behavior == "classical" {
-			payload = slices.DeleteFunc(payload, hasRegex)
-		}
 		out = append(out, core.RuleSet{Name: name, Behavior: behavior, Payload: payload})
 	}
 	return out, nil
@@ -694,12 +707,15 @@ func (b *builder) rules(sets []core.RuleSet) []core.Rule {
 		case err != nil:
 			b.drop("rule %d: malformed", i+1)
 			continue
-		case !slices.Contains(ruleTypes, r.Type) || hasRegex(r.Type+","+r.Value):
+		case !slices.Contains(ruleTypes, r.Type):
 			b.drop("rule %d: type %s is not supported", i+1, r.Type)
 			continue
 		// The core always runs GLOBAL, on the primary group, though a
 		// subscription may not declare it.
-		case !b.names[r.Target] && r.Target != "GLOBAL":
+		case r.Type == "SUB-RULE" && b.doc.subRules[r.Target] == nil:
+			b.drop("rule %d: sub-rule %q does not exist", i+1, r.Target)
+			continue
+		case r.Type != "SUB-RULE" && !b.names[r.Target] && r.Target != "GLOBAL":
 			b.drop("rule %d: target %q does not exist", i+1, r.Target)
 			continue
 		case r.Type == "RULE-SET" && !slices.ContainsFunc(sets, func(s core.RuleSet) bool { return s.Name == r.Value }):

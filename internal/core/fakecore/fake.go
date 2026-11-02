@@ -203,7 +203,7 @@ func (c *Core) Rules(ctx context.Context) ([]protocol.Rule, error) {
 	var rules []protocol.Rule
 	for _, r := range c.cfg.Profile.Rules {
 		if r.Source == protocol.SourceUser {
-			rules = append(rules, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: r.Source})
+			rules = append(rules, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " "), Source: r.Source})
 		}
 	}
 	return append(rules,

@@ -16,11 +16,13 @@ NavRow {
   readonly property bool hit: testing && panel.ruleTest.hit >= 0 && entry.eff === panel.ruleTest.hit
   readonly property bool below: testing && panel.ruleTest.hit >= 0 && (entry.eff < 0 || entry.eff > panel.ruleTest.hit)
 
+  onActivated: if (own) panel.editRule(rule)
+
   section: entry.s || ""
   rowIndex: entry.i === undefined ? -1 : entry.i
   current: hit
   implicitHeight: Style.space(22)
-  opacity: below || (rule && rule.inactive) ? 0.5 : 1
+  opacity: !hasCursor && (below || (rule && rule.inactive)) ? 0.5 : 1
 
   RowLayout {
     anchors.fill: parent
@@ -83,6 +85,15 @@ NavRow {
 
     PanelText {
       theme: ruleRow.theme
+      visible: ruleRow.own
+      Layout.preferredWidth: Style.space(24)
+      text: ruleRow.rule ? String(ruleRow.rule.index) : ""
+      color: ruleRow.theme.faint
+      horizontalAlignment: Text.AlignRight
+    }
+
+    PanelText {
+      theme: ruleRow.theme
       Layout.preferredWidth: Style.space(56)
       text: ruleRow.panel.shortRuleType(ruleRow.rule ? ruleRow.rule.type : "")
       color: ruleRow.theme.dim
@@ -114,16 +125,33 @@ NavRow {
       color: ruleRow.hit ? ruleRow.theme.accent : ruleRow.theme.faint
     }
 
-    Item {
-      implicitWidth: Style.space(18)
-      implicitHeight: Style.space(18)
+    Row {
+      visible: ruleRow.own
+      spacing: Style.space(2)
+      opacity: ruleRow.hasCursor ? 1 : 0
+
+      Repeater {
+        model: [-1, 1]
+        InlineAction {
+          required property int modelData
+          theme: ruleRow.theme
+          iconText: modelData < 0 ? "↑" : "↓"
+          tooltipText: ruleRow.panel.editingRule > 0 ? "Save or cancel editing before reordering"
+            : (modelData < 0 ? "Higher priority · Ctrl+↑" : "Lower priority · Ctrl+↓")
+              + (ruleRow.panel.ruleCategory !== "" ? " · past the next visible rule" : "")
+          enabled: ruleRow.hasCursor && !ruleRow.panel.service.ruleSaving && ruleRow.panel.editingRule === 0
+            && ruleRow.rule && ruleRow.panel.ruleMoveTarget(ruleRow.rule.index, modelData) > 0
+          opacity: enabled ? 1 : 0.3
+          size: Style.space(18)
+          onClicked: ruleRow.panel.moveRule(ruleRow.rule.index, modelData)
+        }
+      }
 
       InlineAction {
         theme: ruleRow.theme
-        visible: ruleRow.own && ruleRow.hasCursor
-        anchors.fill: parent
         iconText: "×"
         tooltipText: "Delete · x"
+        enabled: ruleRow.hasCursor && !ruleRow.panel.service.ruleSaving
         foreground: ruleRow.theme.foreground
         hoverColor: ruleRow.theme.urgent
         size: Style.space(18)
@@ -133,9 +161,12 @@ NavRow {
   }
 
   PanelToolTip {
-    visible: ruleRow.hovered && ((ruleRow.rule && ruleRow.rule.inactive) || ruleRow.verdict === "unknown")
-    text: ruleRow.rule && ruleRow.rule.inactive ? "This subscription has no target named " + ruleRow.rule.target
-      : "Depends on a DNS answer, a rule set, or the app making the connection"
+    visible: ruleRow.hovered && ruleRow.rule !== null
+    text: ruleRow.rule ? ruleRow.rule.type + (ruleRow.rule.value ? ", " + ruleRow.rule.value : "")
+      + " → " + ruleRow.rule.target + (ruleRow.rule.params ? " · " + ruleRow.rule.params : "")
+      + (ruleRow.rule.inactive ? "\nUnavailable target or rule provider in this subscription"
+        : ruleRow.verdict === "unknown" ? "\nDepends on DNS, a rule set, or the app making the connection" : "")
+      + (ruleRow.own ? "\nClick or press Enter to edit" : "") : ""
     fontFamily: ruleRow.theme.fontFamily
   }
 }

@@ -483,3 +483,15 @@ test("DNS destination choices retain unavailable selections and exclude plumbing
   assert.equal(Model.readStatus({ dns_destination: "Proxy" }).dnsDestination, "Proxy")
   assert.equal(Model.readStatus({}).dnsDestination, "")
 })
+
+test("extended selectors keep parameters and do not guess source IP matches", () => {
+  for (const type of ["GEOSITE", "GEOIP", "SRC-IP-ASN", "RULE-SET", "AND", "SUB-RULE", "DOMAIN-REGEX", "MATCH"])
+    assert.ok(Model.RULE_TYPES.includes(type), type)
+  assert.equal(Model.validateRule("MATCH", "", "DIRECT"), "")
+  assert.equal(Model.validateRule("AND", "((DOMAIN,example.com),(NETWORK,UDP))", "DIRECT"), "")
+  assert.equal(Model.ruleCategory("GEOSITE"), "domains")
+  assert.equal(Model.ruleCategory("SRC-IP-ASN"), "addresses")
+  const rules = Model.readRules({rules: [{type: "IP-CIDR", value: "10.0.0.0/8", target: "DIRECT", source: "user", params: "src no-resolve"}]})
+  assert.equal(rules.own[0].params, "src no-resolve")
+  assert.equal(Model.ruleVerdict(rules.own[0], "10.1.1.1"), "unknown")
+})

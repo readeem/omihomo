@@ -127,7 +127,7 @@ ShellRoot {
         armed: panel.removeArmed || (panel.uninstallArmed ? "uninstall" : ""),
         link: service.link, core: service.coreState, mode: service.effectiveMode, tun: service.tunActive,
         group: panel.browsedGroup, config: service.currentConfig, subscription: service.activeSubscription,
-        rules: service.rules.length, busy: service.busy, status: service.actionStatus, error: service.lastError
+        ruleOrder: service.rules, rules: service.rules.length, busy: service.busy, status: service.actionStatus, error: service.lastError
       })
     }
   }

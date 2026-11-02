@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"maps"
 	"net/netip"
 	"slices"
+	"strings"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -63,15 +65,45 @@ func hasTarget(p core.Profile, name string) bool {
 		slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == name })
 }
 
+func ruleActive(p core.Profile, r protocol.UserRule) bool {
+	if r.Type == "SUB-RULE" {
+		_, ok := p.SubRules[r.Target]
+		return ok
+	}
+	if r.Type == "RULE-SET" && !slices.ContainsFunc(p.RuleSets, func(s core.RuleSet) bool { return s.Name == r.Value }) {
+		return false
+	}
+	return hasTarget(p, r.Target)
+}
+
 // runConfig is what the core runs for s and the active profile: the
 // owner's rules first, leaving out those whose target the profile lacks,
 // as one written for another subscription's group.
 func runConfig(s state.Settings, p core.Profile) core.Config {
 	var rules []core.Rule
 	for _, r := range s.Rules {
-		if hasTarget(p, r.Target) {
-			rules = append(rules, core.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: protocol.SourceUser})
+		if ruleActive(p, r) {
+			rules = append(rules, core.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Fields(r.Params), Source: protocol.SourceUser})
 		}
+	}
+	p.Rules = slices.Clone(p.Rules)
+	for i := range p.Rules {
+		r := &p.Rules[i]
+		target := *s.CategoryTargets.Field(protocol.RuleCategory(r.Type))
+		if r.Type != "SUB-RULE" && target != "" && hasTarget(p, target) {
+			r.Target = target
+		}
+	}
+	p.SubRules = maps.Clone(p.SubRules)
+	for name, sub := range p.SubRules {
+		sub = slices.Clone(sub)
+		for i := range sub {
+			target := *s.CategoryTargets.Field(protocol.RuleCategory(sub[i].Type))
+			if sub[i].Type != "SUB-RULE" && target != "" && hasTarget(p, target) {
+				sub[i].Target = target
+			}
+		}
+		p.SubRules[name] = sub
 	}
 	p.Rules = append(rules, p.Rules...)
 	return core.Config{
