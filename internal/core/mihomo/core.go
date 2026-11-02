@@ -78,8 +78,9 @@ type Core struct {
 	// stop it follows is over.
 	generation uint64
 
-	procMu sync.Mutex
-	procs  map[string]string
+	procMu      sync.Mutex
+	procs       map[string]processLookup
+	findProcess func(string, netip.Addr, int) (uint32, string, error)
 }
 
 var (
@@ -105,7 +106,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 		log = slog.Default()
 	}
 	constant.SetHomeDir(home)
-	return &Core{log: log, tap: startLogTap(log), current: &runtime{}}, nil
+	return &Core{log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName}, nil
 }
 
 func privateDir(dir string) error {
@@ -567,16 +568,18 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 	}
 	c.procMu.Lock()
 	defer c.procMu.Unlock()
-	procs := make(map[string]string, cap(out.Connections))
+	procs := make(map[string]processLookup, cap(out.Connections))
 	for _, info := range infos[:min(len(infos), core.MaxConnections)] {
 		conn := connection(info)
-		if conn.Process == "" {
-			name, ok := c.procs[conn.ID]
-			if !ok {
-				name = dualStackProcess(info.Metadata)
+		m := info.Metadata
+		if conn.Process == "" && m.Type != constant.INNER && m.SrcIP.IsValid() && m.SrcPort != 0 {
+			lookup := c.procs[conn.ID]
+			if lookup.name == "" && lookup.attempts < 3 {
+				lookup.attempts++
+				lookup.name = c.lookupProcess(m)
 			}
-			procs[conn.ID] = name
-			conn.Process = name
+			procs[conn.ID] = lookup
+			conn.Process = lookup.name
 		}
 		out.Connections = append(out.Connections, conn)
 	}
@@ -584,12 +587,22 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 	return out, nil
 }
 
-func dualStackProcess(m *constant.Metadata) string {
-	if m.NetWork != constant.UDP || !m.SrcIP.Is4() {
+type processLookup struct {
+	name     string
+	attempts int
+}
+
+func (c *Core) lookupProcess(m *constant.Metadata) string {
+	if m.NetWork != constant.TCP && m.NetWork != constant.UDP {
 		return ""
 	}
-	_, path, err := process.FindProcessName(process.UDP, netip.AddrFrom16(m.SrcIP.As16()), int(m.SrcPort))
-	if err != nil {
+	ip := m.SrcIP.Unmap()
+	_, path, err := c.findProcess(m.NetWork.String(), ip, int(m.SrcPort))
+	if err != nil && ip.Is4() {
+		// IPv4 traffic can originate from an IPv6 dual-stack socket.
+		_, path, err = c.findProcess(m.NetWork.String(), netip.AddrFrom16(ip.As16()), int(m.SrcPort))
+	}
+	if err != nil || path == "" {
 		return ""
 	}
 	return filepath.Base(path)

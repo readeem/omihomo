@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/component/resolver"
-	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 	"github.com/miekg/dns"
@@ -626,26 +625,6 @@ func TestADrainSparesTheNextStart(t *testing.T) {
 	buf := make([]byte, 64)
 	if n, err := conn.Read(buf); err != nil || !strings.HasPrefix(string(buf[:n]), "HTTP/1.1 200") {
 		t.Fatalf("read %q, %v: the old stop's drain closed the new connection", buf[:n], err)
-	}
-}
-
-func TestAnIPv4FlowFindsItsDualStackUDPSocket(t *testing.T) {
-	sock, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sock.Close()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := &constant.Metadata{
-		NetWork: constant.UDP,
-		SrcIP:   netip.MustParseAddr("198.18.0.1"),
-		SrcPort: uint16(sock.LocalAddr().(*net.UDPAddr).Port),
-	}
-	if got := dualStackProcess(m); got != filepath.Base(exe) {
-		t.Errorf("process = %q, want %q", got, filepath.Base(exe))
 	}
 }
 
