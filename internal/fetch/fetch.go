@@ -22,6 +22,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 // Limits and timeouts.
@@ -233,6 +235,9 @@ func scrub(err error, u *url.URL) error {
 			break
 		}
 		err = ue.Err
+	}
+	if errors.Is(err, uplink.ErrUnavailable) {
+		return uplink.ErrUnavailable
 	}
 	if !knownCause(err) {
 		return errWithheld

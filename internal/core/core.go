@@ -28,6 +28,8 @@ type Config struct {
 	// If all groups are hidden, they remain eligible. The chosen group is
 	// always visible for control.
 	PrimaryGroup string
+	// Empty follows GLOBAL; an unavailable explicit destination rejects the config.
+	DNSDestination string
 	// TUNBypass is the address space TUN routes around.
 	TUNBypass []netip.Prefix
 	Profile   Profile
@@ -136,6 +138,9 @@ type Core interface {
 	// DialContext opens a connection routed by the running config, as if a
 	// local application had made it through the proxy.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+
+	// DialDownload uses configured DNS and the primary exit, with synchronous failure reporting.
+	DialDownload(ctx context.Context, network, address string) (net.Conn, error)
 
 	// ParseLinks reads a list of share links, plain or base64, into proxies
 	// written the way a subscription's YAML writes them: "name", "type" and

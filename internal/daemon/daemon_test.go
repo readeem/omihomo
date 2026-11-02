@@ -826,3 +826,42 @@ func (c *settingsRollbackCore) Apply(ctx context.Context, cfg core.Config) error
 	}
 	return c.Core.Apply(ctx, cfg)
 }
+
+func TestDNSDestinationSettings(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	for _, name := range []string{"Proxy", "Tokyo"} {
+		st := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{DNSDestination: name}))
+		if st.DNSDestination != name {
+			t.Fatalf("status lost DNS destination: %+v", st)
+		}
+	}
+	h.restart(t)
+	c = h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	if cfg, _ := h.core.Config(); cfg.DNSDestination != "Tokyo" {
+		t.Fatalf("restart lost DNS destination: %+v", cfg)
+	}
+	for _, name := range []string{"Missing", "GLOBAL", "DIRECT"} {
+		err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{DNSDestination: name}))
+		if err.Code != protocol.CodeNotFound {
+			t.Fatalf("unavailable destination %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{"bad\nname", strings.Repeat("x", 4096)} {
+		err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{DNSDestination: name}))
+		if err.Code != protocol.CodeInvalid {
+			t.Fatalf("invalid destination: %v", err)
+		}
+	}
+	if st := call[protocol.Status](t, c, protocol.OpStatus, nil); st.DNSDestination != "Tokyo" {
+		t.Fatalf("rejection changed settings: %+v", st)
+	}
+	st := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{}))
+	if st.DNSDestination != "" {
+		t.Fatalf("could not restore default: %+v", st)
+	}
+}

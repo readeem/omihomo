@@ -115,10 +115,10 @@ const ops = {
     return { result: status }
   },
   "settings.apply": (args) => {
-    const { mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group } = args.settings
+    const { mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group, dns_destination } = args.settings
     if (!["rule", "global", "direct"].includes(mode)) return fail("invalid", `unknown mode ${mode}`)
     if (primary_group !== "" && !findGroup(primary_group)) return fail("not_found", `no group ${primary_group}`)
-    Object.assign(status, { mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group: primary_group || "Proxy" })
+    Object.assign(status, { dns_destination: dns_destination || "", mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group: primary_group || "Proxy" })
     userRules = args.rules
     push("status", "rules")
     return { result: status }

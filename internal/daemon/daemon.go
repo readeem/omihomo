@@ -19,6 +19,7 @@ import (
 	"github.com/readeem/omihomo/internal/peercred"
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/state"
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 // Daemon serves the protocol on its listeners until ctx is done, then
@@ -196,6 +197,10 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	store, err := state.Open(cfg.stateDir)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.transport == nil {
+		network := uplink.Network{}
+		cfg.transport = fetch.RoutedTransport(c.DialDownload, network.DialContext)
 	}
 	d := &server{
 		core:       c,

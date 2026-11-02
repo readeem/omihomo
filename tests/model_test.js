@@ -468,3 +468,18 @@ test("an emoji keys by its code points", () => {
   assert.equal(Model.emojiKey("☁️"), "2601-fe0f")
   assert.equal(Model.emojiKey("👍🏽"), "1f44d-1f3fd")
 })
+
+test("DNS destination choices retain unavailable selections and exclude plumbing", () => {
+  const groups = [{ name: "GLOBAL", system: true, all: ["Proxy"] },
+    { name: "Proxy", all: ["Node & one", "DIRECT", "Other"] },
+    { name: "Other", all: ["Node & one", "REJECT"] }]
+  assert.deepEqual(Model.dnsDestinations(groups, "Missing"), [
+    { value: "", label: "Follow primary group" },
+    { value: "Proxy", label: "Proxy" },
+    { value: "Node & one", label: "Node & one" },
+    { value: "Other", label: "Other" },
+    { value: "Missing", label: "Missing (unavailable)" }
+  ])
+  assert.equal(Model.readStatus({ dns_destination: "Proxy" }).dnsDestination, "Proxy")
+  assert.equal(Model.readStatus({}).dnsDestination, "")
+})

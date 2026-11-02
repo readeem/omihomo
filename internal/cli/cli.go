@@ -316,6 +316,13 @@ func (a *app) setCommand() *ffcli.Command {
 					return nil
 				}, nil
 			}),
+		setting("dns-destination", "<name>", `DoH destination; "" follows the primary group`,
+			func(v string) (change, error) {
+				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
+					s.Settings.DNSDestination = v
+					return nil
+				}, nil
+			}),
 		toggle("tun", "route all of the machine's traffic through the proxy",
 			func(s *protocol.Settings) *bool { return &s.TUN }),
 		toggle("tun-redirect", "accelerate TUN with auto-redirect",

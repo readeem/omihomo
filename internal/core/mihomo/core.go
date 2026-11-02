@@ -27,9 +27,11 @@ import (
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
+	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/constant/features"
+	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/listener"
 	"github.com/metacubex/mihomo/listener/inner"
@@ -38,6 +40,7 @@ import (
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 // delayURL is what a delay test fetches, as the widget always has.
@@ -52,8 +55,10 @@ const (
 
 // Core is core.Core over the mihomo engine hosted in this process.
 type Core struct {
-	log *slog.Logger
-	tap *logTap
+	downloadDNS resolver.Resolver
+	uplink      uplink.Network
+	log         *slog.Logger
+	tap         *logTap
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
@@ -159,7 +164,22 @@ var afterRestoreStop = func() {}
 // run applies rt and commits it once everything it asks for came up.
 func (c *Core) run(rt *runtime) error {
 	stop := c.tap.watch()
+	// These bootstrap clients are installed before health checks can dial.
+	// Only this private adapter can discover or bind to uplink DNS.
+	bootstrap := &uplinkDNS{ProxyAdapter: rt.parsed.Proxies["DIRECT"], network: c.uplink}
+	servers := []dns.NameServer{{Net: "tcp", Addr: "0.0.0.0:53", ProxyAdapter: bootstrap}}
+	rt.parsed.DNS.DefaultNameserver = servers
+	rt.parsed.DNS.ProxyServerNameserver = servers
 	executor.ApplyConfig(rt.parsed, true)
+	dnsProxy := rt.parsed.DNS.NameServer[0].ProxyAdapter
+	if dnsProxy == nil {
+		dnsProxy = rt.parsed.Proxies[globalGroup]
+	}
+	normalDNS := bootstrapResolver{client: downloadDNS{proxy: dnsProxy, magic: resolver.ProxyServerHostResolver}}
+	c.mu.Lock()
+	c.downloadDNS = normalDNS
+	c.mu.Unlock()
+	resolver.ProxyServerHostResolver = newBootstrapResolver(normalDNS, resolver.ProxyServerHostResolver)
 	if err := started(rt.cfg, stop()); err != nil {
 		return err
 	}
@@ -220,6 +240,20 @@ func prepare(cfg core.Config) (*runtime, error) {
 	parsed, err := parse(raw)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.DNSDestination != "" {
+		name := cfg.DNSDestination
+		exists := name != globalGroup && (slices.ContainsFunc(cfg.Profile.Groups, func(g core.Group) bool { return g.Name == name }) ||
+			slices.ContainsFunc(cfg.Profile.Proxies, func(p core.Proxy) bool { return p.Name == name }))
+		adapter := parsed.Proxies[name]
+		if !exists || adapter == nil {
+			return nil, fmt.Errorf("DNS destination %q is unavailable in the active subscription", name)
+		}
+		// Bind the adapter: mihomo treats an unknown DNS proxy name as an interface
+		// and may dial directly. Names also must not become DNS fragment parameters.
+		for i := range parsed.DNS.NameServer {
+			parsed.DNS.NameServer[i].ProxyAdapter = adapter
+		}
 	}
 	// A rule set keeps the lines it can read and only logs the others,
 	// which would let through what the rest should have matched.

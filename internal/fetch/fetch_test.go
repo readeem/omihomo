@@ -6,13 +6,16 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -431,5 +434,92 @@ func TestDefaultTransport(t *testing.T) {
 	}
 	if tr.DisableCompression {
 		t.Error("default transport does not ask for gzip")
+	}
+}
+
+func TestDownloadConnectivityRecovery(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS.ServerName != "example.com" {
+			t.Errorf("lost HTTPS hostname: %q", r.TLS.ServerName)
+		}
+		io.WriteString(w, "subscription")
+	}))
+	defer srv.Close()
+	var proxyCalls, directCalls int
+	healthy := false
+	proxy := func(ctx context.Context, network, address string) (net.Conn, error) {
+		proxyCalls++
+		if !healthy {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ECONNREFUSED}
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	direct := func(ctx context.Context, network, address string) (net.Conn, error) {
+		directCalls++
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	transport := RoutedTransport(proxy, direct)
+	transport.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	f := New(transport)
+	for _, up := range []bool{false, true, false, true} {
+		healthy = up
+		if _, err := get(f, "https://example.com/sub?token="+token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if proxyCalls != 4 || directCalls != 2 {
+		t.Fatalf("proxy/direct attempts = %d/%d", proxyCalls, directCalls)
+	}
+}
+
+func TestRecoveryDoesNotRetryTLSAuthenticationOrHTTPFailures(t *testing.T) {
+	for _, failure := range []error{
+		errors.New("proxy authentication failed"),
+		fmt.Errorf("proxy lookup: %w", fmt.Errorf("DNS lookup: %w", errors.Join(&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, &StatusError{Code: http.StatusUnauthorized}))),
+		&tls.CertificateVerificationError{Err: errors.New("certificate verification failed")},
+		tls.AlertError(42),
+	} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			directCalls := 0
+			transport := RoutedTransport(func(context.Context, string, string) (net.Conn, error) { return nil, failure },
+				func(context.Context, string, string) (net.Conn, error) {
+					directCalls++
+					return nil, errors.New("unexpected recovery")
+				})
+			_, err := get(New(transport), "https://example.com/sub?token="+token)
+			if err == nil || directCalls != 0 {
+				t.Fatalf("non-connectivity error allowed recovery: %v, %d", err, directCalls)
+			}
+		})
+	}
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+		directCalls := 0
+		transport := RoutedTransport(func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+		}, func(context.Context, string, string) (net.Conn, error) {
+			directCalls++
+			return nil, errors.New("unexpected recovery")
+		})
+		transport.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+		_, err := get(New(transport), srv.URL)
+		srv.Close()
+		var response *StatusError
+		if !errors.As(err, &response) || response.Code != status || directCalls != 0 {
+			t.Fatalf("HTTP failure retried: %v, %d", err, directCalls)
+		}
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("untrusted HTTPS was reached") }))
+	defer srv.Close()
+	directCalls := 0
+	transport := RoutedTransport(func(ctx context.Context, network, address string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}, func(context.Context, string, string) (net.Conn, error) {
+		directCalls++
+		return nil, errors.New("unexpected recovery")
+	})
+	_, err := get(New(transport), srv.URL)
+	if err == nil || directCalls != 0 {
+		t.Fatalf("TLS failure retried: %v, %d", err, directCalls)
 	}
 }
