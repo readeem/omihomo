@@ -18,7 +18,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 2
+	Version = 3
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -110,9 +110,11 @@ const (
 
 // Operations. Args and results are the types named beside each.
 const (
-	OpStatus      = "status"      // nil -> Status
-	OpSubscribe   = "subscribe"   // StreamsArgs -> Empty
-	OpUnsubscribe = "unsubscribe" // StreamsArgs -> Empty
+	OpDownloads        = "downloads.list"    // nil -> DownloadList
+	OpDownloadDecision = "downloads.respond" // DownloadDecisionArgs -> Empty
+	OpStatus           = "status"            // nil -> Status
+	OpSubscribe        = "subscribe"         // StreamsArgs -> Empty
+	OpUnsubscribe      = "unsubscribe"       // StreamsArgs -> Empty
 
 	OpStart = "start" // nil -> Status
 	OpStop  = "stop"  // nil -> Status
@@ -134,9 +136,10 @@ const (
 )
 
 // Streams a client can subscribe to. Subscribing to a state stream (status,
-// groups, rules, subscriptions) pushes its current value before the reply,
+// groups, rules, subscriptions, downloads) pushes its current value before the reply,
 // and then every change, whoever made it.
 const (
+	StreamDownloads   = "downloads"   // DownloadList, pending direct download approvals
 	StreamStatus      = "status"      // Status, whenever it changes
 	StreamGroups      = "groups"      // GroupList, on a selection, a delay test or a new config
 	StreamRules       = "rules"       // RuleList, whenever the runtime's rules change
@@ -388,4 +391,18 @@ type Traffic struct {
 type Egress struct {
 	IP      string `json:"ip"`
 	Latency int    `json:"latency"` // milliseconds
+}
+
+type PendingDownload struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type DownloadList struct {
+	Downloads []PendingDownload `json:"downloads"`
+}
+
+type DownloadDecisionArgs struct {
+	ID    string `json:"id"`
+	Allow bool   `json:"allow"`
 }

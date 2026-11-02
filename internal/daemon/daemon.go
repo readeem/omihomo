@@ -146,8 +146,9 @@ type server struct {
 	refreshMu sync.Mutex
 	addAsked  map[string]time.Time
 
-	store   *state.Store
-	fetcher *fetch.Fetcher
+	store     *state.Store
+	fetcher   *fetch.Fetcher
+	downloads map[string]*pendingDownload // guarded by mu
 
 	mu        sync.Mutex
 	state     string
@@ -208,6 +209,7 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 		log:        cfg.log,
 		store:      store,
 		fetcher:    fetch.New(cfg.transport),
+		downloads:  map[string]*pendingDownload{},
 		state:      protocol.StateStopped,
 		sessions:   map[*session]struct{}{},
 		addAsked:   map[string]time.Time{},

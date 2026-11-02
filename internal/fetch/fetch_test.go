@@ -7,6 +7,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/readeem/omihomo/internal/testdns"
+	"github.com/readeem/omihomo/internal/uplink"
 	"io"
 	"log"
 	"net"
@@ -41,7 +43,7 @@ func serverWith(t *testing.T, h http.HandlerFunc, tweak func(*http.Transport)) (
 }
 
 func get(f *Fetcher, url string) (*Response, error) {
-	return f.Get(context.Background(), Request{URL: url, Timeout: 5 * time.Second})
+	return f.Get(context.Background(), Request{URL: url, AllowDirect: true, Timeout: 5 * time.Second})
 }
 
 func gzipped(t *testing.T, data []byte) []byte {
@@ -559,5 +561,71 @@ func TestRecoveryDoesNotRetryTLSAuthenticationOrHTTPFailures(t *testing.T) {
 	_, err := get(New(transport), srv.URL)
 	if err == nil || directCalls != 0 {
 		t.Fatalf("TLS failure retried: %v, %d", err, directCalls)
+	}
+}
+
+func TestDefaultDownloadsCannotReachPrivateHTTPS(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	tr := defaultTransport()
+	tr.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	_, err := get(New(tr), srv.URL+"/"+token)
+	if err == nil || !strings.Contains(err.Error(), "public address") || hits.Load() != 0 {
+		t.Fatalf("private HTTPS reached: err=%v hits=%d", err, hits.Load())
+	}
+}
+
+func TestRedirectCannotRebindToPrivateAddress(t *testing.T) {
+	for _, target := range []string{"https://example.com/private?token=" + token, "https://127.0.0.1/private?token=" + token, "https://[::ffff:127.0.0.1]/private?token=" + token} {
+		t.Run(target, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/origin" {
+					t.Error("private redirect received HTTP")
+				}
+				w.Header().Set("Location", target)
+				w.WriteHeader(http.StatusFound)
+			}))
+			defer srv.Close()
+			server := testdns.Serve(t, "127.0.0.1:0", "127.0.0.1")
+			dialer := downloadDialer()
+			dialer.Resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, server.String())
+			}}
+			tr := defaultTransport()
+			tr.DisableKeepAlives = true
+			tr.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+			var calls atomic.Int32
+			tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				if calls.Add(1) == 1 {
+					return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+				}
+				return dialer.DialContext(ctx, network, address)
+			}
+			_, err := get(New(tr), "https://example.com/origin")
+			if !errors.Is(err, uplink.ErrDownloadAddress) || strings.Contains(err.Error(), token) {
+				t.Fatalf("redirect bypassed destination guard: %v", err)
+			}
+		})
+	}
+}
+
+func TestDirectDownloadNeedsPermissionForEachRequest(t *testing.T) {
+	var directCalls atomic.Int32
+	transport := RoutedTransport(func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	}, func(context.Context, string, string) (net.Conn, error) {
+		directCalls.Add(1)
+		return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	})
+	downloader := New(transport)
+	for _, allow := range []bool{false, true, false} {
+		_, err := downloader.Get(t.Context(), Request{URL: "https://example.com/sub?token=" + token, AllowDirect: allow})
+		if !allow && !errors.Is(err, ErrDirectRequired) {
+			t.Fatalf("missing approval error: %v", err)
+		}
+	}
+	if directCalls.Load() != 1 {
+		t.Fatalf("permission escaped its request: %d direct dials", directCalls.Load())
 	}
 }

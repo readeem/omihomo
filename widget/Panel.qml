@@ -105,7 +105,7 @@ Panel {
   // changes, so a reopened panel says it is under way. A cancelled run leaves
   // the link, and so this, as it was.
   property string setupStarted: ""
-  readonly property bool coreAlert: omihomo.link === "outdated" || omihomo.link === "newer"
+  readonly property bool coreAlert: omihomo.pendingDownloads.length > 0 || omihomo.link === "outdated" || omihomo.link === "newer"
     || omihomo.link === "refused"
 
   readonly property bool liveReady: omihomo.apiReady
@@ -804,7 +804,10 @@ Panel {
       rulesView.valueField.text = ""
       editing = null
       omihomo.clearMessages()
-      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      Qt.callLater(function() {
+        if (omihomo.pendingDownloads.length > 0) directPrompt.forceActiveFocus()
+        else keyCatcher.forceActiveFocus()
+      })
     }
   }
 
@@ -812,6 +815,13 @@ Panel {
 
   Connections {
     target: omihomo
+    function onPendingDownloadsChanged() {
+      if (omihomo.pendingDownloads.length > 0) root.open()
+      Qt.callLater(function() {
+        if (omihomo.pendingDownloads.length > 0) directPrompt.forceActiveFocus()
+        else keyCatcher.forceActiveFocus()
+      })
+    }
     function onErrorScopeChanged() {
       var scope = omihomo.errorScope
       if (root.view !== "subs" || scope.indexOf("sub:") !== 0 || scope === "sub:") return
@@ -898,7 +908,7 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
+    focusTarget: omihomo.pendingDownloads.length > 0 ? directPrompt : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
     // Setup is one card, so the panel fits it instead of the views' height.
     contentHeight: panel.cappedContentHeight(omihomo.installed ? Style.space(720) : body.implicitHeight)
@@ -1368,6 +1378,13 @@ Panel {
           }
         }
       }
+    }
+    DirectDownloadPrompt {
+      id: directPrompt
+      anchors.fill: parent
+      theme: root.theme
+      download: omihomo.pendingDownloads.length > 0 ? omihomo.pendingDownloads[0] : null
+      onDecided: function(allow) { omihomo.decideDownload(download.id, allow) }
     }
   }
 }

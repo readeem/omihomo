@@ -217,6 +217,9 @@ func (c *Core) DialDownload(ctx context.Context, network, address string) (net.C
 		}
 		metadata.DstIP = ips[0]
 	}
+	if err := uplink.CheckDownloadAddress(metadata.DstIP); err != nil {
+		return nil, err
+	}
 	// HTTP retains the original hostname for SNI, certificates and Host.
 	metadata.Host = ""
 	proxy := tunnel.Proxies()[globalGroup]

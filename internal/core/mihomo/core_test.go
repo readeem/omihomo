@@ -842,6 +842,7 @@ func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) 
 	}}
 	t.Cleanup(func() { shared.uplink, defaultNameservers = previousNetwork, previousNameservers })
 	var configuredQueries atomic.Int32
+	var privateAnswer atomic.Bool
 	doh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if r.Method == http.MethodGet {
@@ -856,7 +857,11 @@ func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) 
 		reply := new(dns.Msg)
 		reply.SetReply(&query)
 		if query.Question[0].Qtype == dns.TypeA {
-			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP("127.0.0.1")}}
+			ip := net.ParseIP("1.1.1.1")
+			if privateAnswer.Load() || query.Question[0].Name == "proxy.example." {
+				ip = net.ParseIP("127.0.0.1")
+			}
+			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: ip}}
 		}
 		body, _ = reply.Pack()
 		w.Header().Set("Content-Type", "application/dns-message")
@@ -884,7 +889,7 @@ func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) 
 	var directCalls atomic.Int32
 	transport := fetch.RoutedTransport(c.DialDownload, func(ctx context.Context, network, address string) (net.Conn, error) {
 		directCalls.Add(1)
-		return shared.uplink.DialContext(ctx, network, address)
+		return (&net.Dialer{}).DialContext(ctx, network, origin.Listener.Addr().String())
 	})
 	transport.TLSClientConfig.RootCAs = origin.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 	downloader := fetch.New(transport)
@@ -892,7 +897,7 @@ func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) 
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
-		result, err := downloader.Get(ctx, fetch.Request{URL: "https://example.com:" + targetPort + "/sub?token=private"})
+		result, err := downloader.Get(ctx, fetch.Request{AllowDirect: true, URL: "https://example.com:" + targetPort + "/sub?token=private"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -904,6 +909,16 @@ func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) 
 	if providerCalls.Load() == 0 || configuredQueries.Load() == 0 || directCalls.Load() != 0 {
 		t.Fatalf("bootstrap/configured/direct calls = %d/%d/%d", providerCalls.Load(), configuredQueries.Load(), directCalls.Load())
 	}
+	privateAnswer.Store(true)
+	for _, address := range []string{"example.com:" + targetPort, "127.0.0.1:" + targetPort, "[::ffff:127.0.0.1]:" + targetPort, "10.0.0.1:443", "[::1]:443"} {
+		if conn, err := c.DialDownload(t.Context(), "tcp", address); !errors.Is(err, uplink.ErrDownloadAddress) {
+			if conn != nil {
+				conn.Close()
+			}
+			t.Fatalf("private proxy target allowed: %s: %v", address, err)
+		}
+	}
+	privateAnswer.Store(false)
 	// A new config with a dead primary must recover only the daemon's download.
 	cfg.Profile.Groups[0].Members = []string{"Dead"}
 	if err := c.Apply(t.Context(), cfg); err != nil {
@@ -935,7 +950,12 @@ func connectProxy(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		upstream, err := (&net.Dialer{Timeout: time.Second}).DialContext(r.Context(), "tcp", r.Host)
+		address := r.Host
+		host, port, _ := net.SplitHostPort(address)
+		if host == "1.1.1.1" {
+			address = net.JoinHostPort("127.0.0.1", port)
+		}
+		upstream, err := (&net.Dialer{Timeout: time.Second}).DialContext(r.Context(), "tcp", address)
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			return

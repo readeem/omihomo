@@ -189,6 +189,7 @@ func (a *app) root() *ffcli.Command {
 		a.setCommand(),
 		a.applyCommand(),
 		a.subCommand(),
+		a.downloadCommand(),
 		a.ruleCommand(),
 		a.groupCommand(),
 		a.connCommand(),
@@ -455,13 +456,13 @@ func (a *app) versionCommand() *ffcli.Command {
 func (a *app) watchCommand() *ffcli.Command {
 	cmd := &ffcli.Command{Name: "watch", ShortUsage: "omihomo watch [<stream>...]",
 		ShortHelp: "print pushed events as JSON lines",
-		LongHelp: "Streams are status, groups, rules, subscriptions, traffic and connections; all of\nthem by default.\n" +
+		LongHelp: "Streams are status, groups, rules, subscriptions, downloads, traffic and connections; all of\nthem by default.\n" +
 			`Each event prints as {"stream","data"}, or {"stream","error"} when it could not be sent.`,
 		FlagSet: a.flags("watch")}
 	cmd.Exec = func(ctx context.Context, streams []string) error {
 		if len(streams) == 0 {
 			streams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules,
-				protocol.StreamSubscriptions, protocol.StreamTraffic, protocol.StreamConnections}
+				protocol.StreamSubscriptions, protocol.StreamDownloads, protocol.StreamTraffic, protocol.StreamConnections}
 		}
 		c, err := dial(ctx)
 		if err != nil {
@@ -541,4 +542,14 @@ func (a *app) print(result json.RawMessage, pretty bool) error {
 	buf.WriteByte('\n')
 	_, err = a.env.Stdout.Write(buf.Bytes())
 	return err
+}
+
+func (a *app) downloadCommand() *ffcli.Command {
+	decision := func(name string, allow bool) *ffcli.Command {
+		return a.call(name, "omihomo download "+name+" <id>", "respond to one pending direct download",
+			nargs(1, protocol.OpDownloadDecision, func(args []string) any { return protocol.DownloadDecisionArgs{ID: args[0], Allow: allow} }))
+	}
+	return a.group("download", "omihomo download <command>", "approve or decline direct downloads",
+		a.call("list", "omihomo download list [--pretty]", "list downloads waiting for approval", nargs(0, protocol.OpDownloads, nil)),
+		decision("allow", true), decision("deny", false))
 }

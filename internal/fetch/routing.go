@@ -2,11 +2,16 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 
 	"github.com/readeem/omihomo/internal/uplink"
 )
+
+var ErrDirectRequired = errors.New("direct download needs approval")
+
+type directPermission struct{}
 
 // RoutedTransport retries connection establishment once through the uplink.
 // TLS and HTTP run after dialing, so their failures cannot trigger recovery.
@@ -20,6 +25,9 @@ func RoutedTransport(proxy, direct func(context.Context, string, string) (net.Co
 		cancel()
 		if err == nil || ctx.Err() != nil || !uplink.Recoverable(err) {
 			return conn, err
+		}
+		if allowed, _ := ctx.Value(directPermission{}).(bool); !allowed {
+			return nil, ErrDirectRequired
 		}
 		return direct(ctx, network, address)
 	}

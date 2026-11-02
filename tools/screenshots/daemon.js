@@ -75,7 +75,21 @@ function ruleSnapshot() {
     subscription_disabled: status.subscription_rules_disabled === true }
 }
 
+let requireDirect = false
+let nextDownload = 0
+const pendingDownloads = new Map()
+
+function directApproval(label) {
+  return new Promise(resolve => {
+    const id = String(++nextDownload)
+    const timer = setTimeout(() => { pendingDownloads.delete(id); push("downloads"); resolve(false) }, 45000)
+    pendingDownloads.set(id, { id, label, decide: allow => { clearTimeout(timer); resolve(allow) } })
+    push("downloads")
+  })
+}
+
 const snapshots = {
+  downloads: () => ({ downloads: [...pendingDownloads.values()].map(({ id, label }) => ({ id, label })) }),
   status: () => status,
   groups: () => groups,
   rules: ruleSnapshot,
@@ -107,6 +121,16 @@ function findGroup(name) {
 
 // Each op answers { result } or { error }, or a promise of one.
 const ops = {
+  "test.direct-fallback": () => { requireDirect = true; return { result: {} } },
+  "downloads.list": () => ({ result: snapshots.downloads() }),
+  "downloads.respond": args => {
+    const pending = pendingDownloads.get(args.id)
+    if (!pending) return fail("not_found", "this download is no longer waiting for approval")
+    pendingDownloads.delete(args.id)
+    pending.decide(args.allow === true)
+    push("downloads")
+    return { result: {} }
+  },
   "test.stream-error": (args) => {
     for (const client of clients) {
       if (client.streams.has(args.stream)) send(client, { type: "event", stream: args.stream,
@@ -189,13 +213,19 @@ const ops = {
     push("subscriptions")
     return { result: sub }
   }),
-  "subscriptions.update": (args) => later(600, () => {
-    const sub = findSubscription(args.name)
-    if (!sub) return fail("not_found", `no subscription ${args.name}`)
-    sub.updated_at = Date.now()
-    push("subscriptions")
-    return { result: sub }
-  }),
+  "subscriptions.update": async (args) => {
+    if (requireDirect) {
+      requireDirect = false
+      if (!await directApproval("Subscription " + args.name)) return fail("fetch_failed", "direct download declined")
+    }
+    return later(600, () => {
+      const sub = findSubscription(args.name)
+      if (!sub) return fail("not_found", `no subscription ${args.name}`)
+      sub.updated_at = Date.now()
+      push("subscriptions")
+      return { result: sub }
+    })
+  },
   "subscriptions.activate": (args) => {
     const sub = findSubscription(args.name)
     if (!sub) return fail("not_found", `no subscription ${args.name}`)
@@ -236,7 +266,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 2, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 3, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk

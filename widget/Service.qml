@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 2
+  readonly property int protocolVersion: 3
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -89,6 +89,8 @@ Item {
   // One run of one subscription. Anything read from the core belongs to the
   // runtime it was read from, and is dropped when this changes.
   readonly property string runtimeKey: activeSubscription + "|" + startedMs
+
+  property var pendingDownloads: []
 
   property var subscriptions: []
   property var ruleSets: []
@@ -269,7 +271,7 @@ Item {
   readonly property var panelStreams: ["groups", "rules", "subscriptions", "traffic", "connections"]
 
   function wantedStreams() {
-    return panelOpen ? ["status"].concat(panelStreams) : ["status"]
+    return panelOpen ? ["status", "downloads"].concat(panelStreams) : ["status", "downloads"]
   }
 
   // Stream snapshots own displayed state; command replies only finish actions.
@@ -290,6 +292,7 @@ Item {
       break
     case "groups": applyGroups(data); break
     case "rules": applyRules(data); break
+    case "downloads": pendingDownloads = data && Array.isArray(data.downloads) ? data.downloads : []; break
     case "subscriptions": subscriptions = Model.readSubscriptions(data); break
     case "traffic": applyTraffic(data); break
     case "connections": applyConnections(data); break
@@ -315,6 +318,7 @@ Item {
   // a backoff. A daemon that turned this panel away is asked again too, but
   // more slowly: the owner may claim the install, or update it, meanwhile.
   function disconnected() {
+    pendingDownloads = []
     helloTimer.stop()
     if (link === "ready" || link === "connecting") link = "connecting"
     failPending()
@@ -402,7 +406,7 @@ Item {
   // Only newly subscribed streams receive snapshots from the daemon.
   function refresh() {
     if (!ready) return connect()
-    call("unsubscribe", { streams: ["status"].concat(panelStreams) }, function(result, error) {
+    call("unsubscribe", { streams: ["status", "downloads"].concat(panelStreams) }, function(result, error) {
       if (error) return root.reportError(error, "core")
       root.call("subscribe", { streams: root.wantedStreams() }, function(result, error) {
         if (error) root.reportError(error, "core")
@@ -503,6 +507,7 @@ Item {
 
   // Everything the daemon said, for when there is no daemon to talk to.
   function forgetAll() {
+    pendingDownloads = []
     streamErrors = ({})
     coreState = link === "absent" ? "not-installed" : "unknown"
     coreDetail = ""
@@ -755,6 +760,12 @@ Item {
   // and no list shows it again.
   function addSubscription(url) {
     subscriptionCall("subscriptions.add", { url: url }, "", "Fetching subscription…")
+  }
+
+  function decideDownload(id, allow) {
+    call("downloads.respond", { id: id, allow: allow }, function(result, error) {
+      if (error) root.reportError(error, "core")
+    })
   }
 
   function updateSubscription(name) {

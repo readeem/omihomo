@@ -38,3 +38,38 @@ depend on the proxy first: switching it can briefly interrupt connections.
 
 For a fresh-install test, use a disposable Omarchy installation: install and claim, check the
 widget starts empty, then add a subscription. Do not delete real daemon state to simulate one.
+
+## Direct download warning
+
+Use the real widget against the local fake daemon; this changes no installed state and makes no
+external requests:
+
+```sh
+tools/screenshots/drive start --visible
+tools/screenshots/drive fallback
+```
+
+The panel opens a warning at the bottom explaining the IP and destination exposure. Cancel is
+selected initially. Press Escape: the update fails without downloading. Run `drive fallback`
+again and click **Allow once** (or press `y`): the update completes. Run it again: permission
+must be requested again, and Enter must choose Cancel. Tab switches the selected button.
+Leaving a prompt unanswered for 45 seconds must cancel it. End the session:
+
+```sh
+tools/screenshots/drive stop
+```
+
+The daemon tests cover the first-subscription exception, separate approvals for providers,
+replayed decisions and address-policy refusals. To test bootstrap on an actual fresh install,
+use disposable state as described above: the first subscription and its providers may use
+direct recovery without prompting. Later adds and refreshes require approval for each download.
+
+All subscription, provider and geodata HTTPS destinations must resolve to public addresses,
+including after redirects. There is no private HTTPS exception, even for the first subscription
+or an approved retry. Locally configured DNS servers and proxy endpoints may be private;
+these endpoints cannot exempt a downloaded URL from address validation. DNS bootstrap can
+contact the configured resolver before the HTTPS fallback is approved.
+
+For CLI-driven downloads, keep the widget open to answer the prompt, or use
+`omihomo download list` and `omihomo download allow <id>` / `deny <id>` in another terminal.
+Approvals are never saved and pending requests expire if nobody answers.

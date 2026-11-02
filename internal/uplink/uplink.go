@@ -42,6 +42,9 @@ func (n Network) links(ctx context.Context) ([]Link, error) {
 // Recoverable only admits connectivity failures. In particular, a certificate,
 // TLS protocol, proxy authentication or HTTP error is never recovery permission.
 func Recoverable(err error) bool {
+	if errors.Is(err, ErrDownloadAddress) {
+		return false
+	}
 	for nested := err; nested != nil; nested = errors.Unwrap(nested) {
 		if joined, ok := nested.(interface{ Unwrap() []error }); ok {
 			for _, cause := range joined.Unwrap() {
@@ -218,6 +221,11 @@ func (n Network) DialContext(ctx context.Context, network, address string) (net.
 	ips, err := lookup(ctx, links, host)
 	if err != nil {
 		return nil, err
+	}
+	for _, ip := range ips {
+		if err := CheckDownloadAddress(ip); err != nil {
+			return nil, err
+		}
 	}
 	var last error = ErrUnavailable
 	for _, ip := range ips {

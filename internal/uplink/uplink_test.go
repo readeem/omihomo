@@ -23,7 +23,7 @@ import (
 	"github.com/readeem/omihomo/internal/uplink"
 )
 
-func TestInitialDownloadUsesFreshProviderDNS(t *testing.T) {
+func TestPrivateDownloadBlockedWhileProviderDNSStaysReachable(t *testing.T) {
 	first, second := testdns.Serve(t, "127.0.0.1:0", "127.0.0.1"), testdns.Serve(t, "127.0.0.1:0", "127.0.0.2")
 	current := first
 	var discoveries atomic.Int32
@@ -36,7 +36,7 @@ func TestInitialDownloadUsesFreshProviderDNS(t *testing.T) {
 		if r.TLS.ServerName != "example.com" || host != "example.com" {
 			t.Errorf("HTTPS hostname changed: %q", r.Host)
 		}
-		io.WriteString(w, "subscription")
+		t.Error("private HTTPS received a request")
 	}))
 	defer server.Close()
 	unavailable := func(context.Context, string, string) (net.Conn, error) {
@@ -46,9 +46,9 @@ func TestInitialDownloadUsesFreshProviderDNS(t *testing.T) {
 	transport.TLSClientConfig.RootCAs = server.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 	downloader := fetch.New(transport)
 	_, port, _ := net.SplitHostPort(server.Listener.Addr().String())
-	result, err := downloader.Get(t.Context(), fetch.Request{URL: "https://example.com:" + port + "/sub?token=private"})
-	if err != nil || string(result.Body) != "subscription" {
-		t.Fatalf("initial provider download: %v", err)
+	_, err := downloader.Get(t.Context(), fetch.Request{AllowDirect: true, URL: "https://example.com:" + port + "/sub?token=private"})
+	if !errors.Is(err, uplink.ErrDownloadAddress) {
+		t.Fatalf("private download allowed: %v", err)
 	}
 	current = second
 	query := new(dns.Msg)
@@ -73,10 +73,10 @@ func TestNoProviderDNSNeverUsesTheSystemResolver(t *testing.T) {
 func TestUplinkBypassesTunnelDNSInterception(t *testing.T) {
 	switch os.Getenv("OMIHOMO_UPLINK_TEST") {
 	case "provider":
-		testdns.Serve(t, "192.0.2.53:53", "192.0.2.53")
+		testdns.Serve(t, "192.0.2.53:53", "1.1.1.1")
 		testdns.Serve(t, "192.0.2.54:53", "192.0.2.54")
 		testdns.Serve(t, "100.64.0.53:53", "192.0.2.55")
-		listener, err := net.Listen("tcp", "192.0.2.53:443")
+		listener, err := net.Listen("tcp", "1.1.1.1:443")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ printf '%%s\n' '{"type":"a(iiay)","data":[[0,2,[192,0,2,99]],[%d,2,[198,18,0,1]]
 		}
 		network := uplink.Network{}
 		reply, err := network.ExchangeContext(ctx, query)
-		if err != nil || len(reply.Answer) != 1 || reply.Answer[0].(*dns.A).A.String() != "192.0.2.53" {
+		if err != nil || len(reply.Answer) != 1 || reply.Answer[0].(*dns.A).A.String() != "1.1.1.1" {
 			t.Fatalf("bound UDP bootstrap: %v %v", reply, err)
 		}
 		connection, err := network.DialDNS(ctx)
@@ -225,6 +225,7 @@ ip addr add 192.0.2.2/24 dev uplink0
 ip link set uplink0 up
 ip route add default dev uplink0
 ip route add 100.64.0.0/10 dev uplink0
+ip -n provider addr add 1.1.1.1/32 dev peer0
 ip -n provider addr add 192.0.2.53/24 dev peer0
 ip -n provider addr add 192.0.2.54/24 dev peer0
 ip -n provider addr add 100.64.0.53/32 dev peer0

@@ -451,6 +451,28 @@ ShellRoot {
           var list = testRoot.findObject(panel, "connectionList")
           var index = panel.service.connectionStacks.findIndex(function(c) { return c.key === testRoot.savedConnection })
           t.check(Math.round(list.itemAtIndex(index).y - list.contentY), Math.round(testRoot.savedScroll), "a new connection preserves the visible row's position")
+          panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
+        } },
+      { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
+          t.check(testRoot.findObject(panel, "directDownloadPrompt") !== null, true, "a failed proxy opens the direct warning")
+          key(Qt.Key_Escape)
+        } },
+      { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
+          t.check(panel.service.lastError.indexOf("declined") >= 0, true, "escape declines the pending download")
+          panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
+        } },
+      { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
+          type("y")
+        } },
+      { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
+          t.check(panel.service.lastError, "", "one approval completes the download")
+          panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
+        } },
+      { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
+          key(Qt.Key_Return)
+        } },
+      { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
+          t.check(panel.service.lastError.indexOf("declined") >= 0, true, "a later download asks again with cancel selected")
         } }
     ]
   }

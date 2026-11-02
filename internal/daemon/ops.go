@@ -81,6 +81,17 @@ func validNames(what string, names []string) *protocol.Error {
 
 func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (any, *protocol.Error) {
 	switch req.Op {
+	case protocol.OpDownloads:
+		if err := decode(req.Args, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return d.downloadList(), nil
+	case protocol.OpDownloadDecision:
+		var args protocol.DownloadDecisionArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		return d.decideDownload(ctx, args)
 	case protocol.OpStatus:
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
@@ -211,13 +222,15 @@ func (d *server) status() protocol.Status {
 }
 
 var (
-	stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions}
+	stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions, protocol.StreamDownloads}
 
 	allStreams = append(slices.Clone(stateStreams), protocol.StreamTraffic, protocol.StreamConnections)
 )
 
 func (d *server) snapshot(ctx context.Context, stream string) any {
 	switch stream {
+	case protocol.StreamDownloads:
+		return d.downloadList()
 	case protocol.StreamStatus:
 		return d.status()
 	case protocol.StreamGroups:

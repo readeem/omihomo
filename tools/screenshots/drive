@@ -8,6 +8,7 @@
 #   drive type TEXT          type TEXT into whatever has focus
 #   drive click X Y          click at a point in screenshot pixels
 #   drive shot FILE          save a PNG of the panel
+#   drive fallback            simulate a subscription download needing direct approval
 #   drive state              print the panel's state as JSON
 #   drive log                print the panel's log, where QML errors land
 #   drive stop               end the session
@@ -127,6 +128,7 @@ shot)
   ! grep -E "DRIVE_FAILED $n( |$)" "$log" >&2 || exit 1
   printf '%s\n' "$file"
   ;;
+fallback) need_session; ipc fallback ;;
 state) need_session; ipc state ;;
 log) cat "$log" ;;
 *) sed -n '2,18s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;

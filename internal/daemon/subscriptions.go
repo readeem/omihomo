@@ -132,7 +132,7 @@ func fetchFailed(err error, msg *protocol.Error) *downloadError {
 }
 
 func (d *server) download(ctx context.Context, name, url string) (*download, *downloadError) {
-	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: url, MaxBytes: d.cfg.downloadLimit})
+	resp, err := d.getDownload(ctx, "Subscription "+name, fetch.Request{URL: url, MaxBytes: d.cfg.downloadLimit})
 	if err != nil {
 		return nil, fetchFailed(err, fail(protocol.CodeFetch, "%v", err))
 	}
@@ -155,7 +155,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 		if left <= 0 {
 			return nil, &downloadError{err: fail(protocol.CodeFetch, "provider %q: %v", p.Name, fetch.ErrTooLarge), answered: true}
 		}
-		r, err := d.fetcher.Get(ctx, fetch.Request{URL: p.URL, MaxBytes: left})
+		r, err := d.getDownload(ctx, "Provider "+p.Name+" for "+name, fetch.Request{URL: p.URL, MaxBytes: left})
 		if err != nil {
 			// Without it the rules it feeds would be left out, and with them
 			// whatever they block: the content is incomplete, not new.
@@ -186,6 +186,7 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	d.refreshMu.Lock()
 	defer d.refreshMu.Unlock()
 	d.mu.Lock()
+	initial := len(d.subs.List) == 0
 	taken := slices.ContainsFunc(d.subs.List, func(s state.Subscription) bool { return s.URL == url })
 	d.mu.Unlock()
 	if taken {
@@ -200,6 +201,9 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	if at, ok := d.addAsked[url]; ok {
 		return nil, fail(protocol.CodeConflict, "this URL was asked %s ago; try again in %s",
 			now.Sub(at).Round(time.Second), at.Add(manualGap).Sub(now).Round(time.Second))
+	}
+	if initial {
+		ctx = context.WithValue(ctx, initialDownload{}, true)
 	}
 	d.addAsked[url] = now
 	dl, derr := d.download(ctx, "(new)", url)
@@ -523,7 +527,7 @@ func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
 func (d *server) downloadGeodata(ctx context.Context, f core.GeodataFile) (string, error) {
 	name := filepath.Base(f.Path)
 	d.log.Info("downloading geodata", "file", name)
-	resp, err := d.fetcher.Get(ctx, fetch.Request{URL: f.URL, Timeout: geodataTimeout})
+	resp, err := d.getDownload(ctx, "Geodata "+name, fetch.Request{URL: f.URL, Timeout: geodataTimeout})
 	if err != nil {
 		return "", fmt.Errorf("the rules need geodata %s, which did not download: %w", name, err)
 	}

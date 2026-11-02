@@ -118,10 +118,16 @@ ShellRoot {
       return drive.shots
     }
 
+    function fallback(): void {
+      panel.service.call("test.direct-fallback", null, function(result, error) {
+        if (!error) panel.service.updateSubscription(panel.service.activeSubscription)
+      })
+    }
+
     function state(): string {
       var service = panel.service
       return JSON.stringify({
-        view: panel.view, cursor: panel.cursorActive ? panel.cursorRow : null,
+        downloads: service.pendingDownloads, view: panel.view, cursor: panel.cursorActive ? panel.cursorRow : null,
         editing: panel.editing ? panel.editing.placeholderText || true : null,
         filter: panel.filterOpen, picking: panel.activeSelector !== null,
         ruleDraft: panel.ruleFormValue, editingRule: panel.editingRule,

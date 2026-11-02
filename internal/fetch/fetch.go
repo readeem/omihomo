@@ -16,9 +16,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -90,10 +92,7 @@ func New(transport http.RoundTripper) *Fetcher {
 // than cloned so nothing that changes http.DefaultTransport leaks in.
 func defaultTransport() *http.Transport {
 	return &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   connectTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext:           downloadDialer().DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   connectTimeout,
 		ResponseHeaderTimeout: headerTimeout,
@@ -101,6 +100,19 @@ func defaultTransport() *http.Transport {
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		ExpectContinueTimeout: time.Second,
+	}
+}
+
+func downloadDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout: connectTimeout, KeepAlive: 30 * time.Second,
+		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
+			remote, err := netip.ParseAddrPort(address)
+			if err != nil {
+				return uplink.ErrDownloadAddress
+			}
+			return uplink.CheckDownloadAddress(remote.Addr())
+		},
 	}
 }
 
@@ -119,9 +131,10 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 
 // Request is one download.
 type Request struct {
-	URL      string
-	MaxBytes int64         // 0 = MaxBytes
-	Timeout  time.Duration // 0 = DefaultTimeout
+	URL         string
+	MaxBytes    int64         // 0 = MaxBytes
+	Timeout     time.Duration // 0 = DefaultTimeout
+	AllowDirect bool          // permits recovery only for this request, including redirects
 }
 
 // Response is a successful download.
@@ -155,6 +168,7 @@ func (f *Fetcher) get(ctx context.Context, r Request) (*Response, error) {
 		fmt.Errorf("timed out after %s: %w", timeout, context.DeadlineExceeded))
 	defer cancel()
 
+	ctx = context.WithValue(ctx, directPermission{}, r.AllowDirect)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
 	if err != nil {
 		return nil, errors.New("not a valid URL") // the parse error quotes it
@@ -235,6 +249,12 @@ func scrub(err error, u *url.URL) error {
 			break
 		}
 		err = ue.Err
+	}
+	if errors.Is(err, uplink.ErrDownloadAddress) {
+		return uplink.ErrDownloadAddress
+	}
+	if errors.Is(err, ErrDirectRequired) {
+		return ErrDirectRequired
 	}
 	if errors.Is(err, uplink.ErrUnavailable) {
 		return uplink.ErrUnavailable
