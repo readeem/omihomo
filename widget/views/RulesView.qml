@@ -131,8 +131,9 @@ ColumnLayout {
       theme: view.theme
       objectName: "toggleCategories"
       Chevron {
+        theme: view.theme
         anchors.centerIn: parent
-        color: view.theme.foreground
+        color: parent.hasCursor ? parent.hoverColor : parent.foreground
         doubleArrow: true
         expanded: view.panel.allCategoriesExpanded
       }

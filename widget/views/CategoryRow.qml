@@ -25,6 +25,7 @@ NavRow {
       Layout.fillWidth: true
       spacing: Style.space(6)
       Chevron {
+        theme: row.theme
         color: row.theme.dim
         expanded: row.category && row.panel.expandedCategories[row.category.id] === true
       }
