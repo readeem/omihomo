@@ -121,7 +121,7 @@ function findGroup(name) {
 
 // Each op answers { result } or { error }, or a promise of one.
 const ops = {
-  "test.direct-fallback": () => { requireDirect = true; return { result: {} } },
+  "test.direct-fallback": args => { requireDirect = args.enabled !== false; return { result: {} } },
   "downloads.list": () => ({ result: snapshots.downloads() }),
   "downloads.respond": args => {
     const pending = pendingDownloads.get(args.id)
@@ -215,7 +215,6 @@ const ops = {
   }),
   "subscriptions.update": async (args) => {
     if (requireDirect) {
-      requireDirect = false
       if (!await directApproval("Subscription " + args.name)) return fail("fetch_failed", "direct download declined")
     }
     return later(600, () => {

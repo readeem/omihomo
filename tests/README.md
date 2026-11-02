@@ -50,9 +50,11 @@ tools/screenshots/drive fallback
 ```
 
 The panel opens a warning at the bottom explaining the IP and destination exposure. Cancel is
-selected initially. Press Escape: the update fails without downloading. Run `drive fallback`
-again and click **Allow once** (or press `y`): the update completes. Run it again: permission
-must be requested again, and Enter must choose Cancel. Tab switches the selected button.
+selected initially. Press Escape: the update fails without downloading. Open **Subs** and
+click **retry**: the warning must appear again. Click **Allow once** (or press `y`): the update
+completes. Press `u` to update again: permission must be requested again, and Enter must choose
+Cancel. The simulated proxy outage persists until the demo is restarted. Tab switches the
+selected button.
 Leaving a prompt unanswered for 45 seconds must cancel it. End the session:
 
 ```sh

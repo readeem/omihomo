@@ -38,6 +38,22 @@ ShellRoot {
     return true
   }
 
+  function clickButton(text) {
+    function find(item) {
+      if (!item.visible) return null
+      if (item.text === text && typeof item.clicked === "function") return item
+      for (var i = 0; i < item.children.length; i++) {
+        var found = find(item.children[i])
+        if (found) return found
+      }
+      return null
+    }
+    var button = find(panel)
+    if (!button) return false
+    events.mouseClick(button, button.width / 2, button.height / 2, Qt.LeftButton, 0, -1)
+    return true
+  }
+
   function findObject(item, name) {
     if (item.visible && item.objectName === name) return item
     for (var i = 0; i < item.children.length; i++) {
@@ -459,20 +475,27 @@ ShellRoot {
         } },
       { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
           t.check(panel.service.lastError.indexOf("declined") >= 0, true, "escape declines the pending download")
-          panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
+          panel.openView("subs")
         } },
-      { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
+      { then: function() {
+          t.check(testRoot.clickButton("retry"), true, "retry is available after declining direct recovery")
+        } },
+      { name: "retry asks for direct approval again", until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
           type("y")
         } },
       { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
           t.check(panel.service.lastError, "", "one approval completes the download")
-          panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
+          panel.service.updateSubscription(panel.service.activeSubscription)
         } },
       { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
           key(Qt.Key_Return)
         } },
       { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
           t.check(panel.service.lastError.indexOf("declined") >= 0, true, "a later download asks again with cancel selected")
+          panel.service.call("test.direct-fallback", { enabled: false }, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
+        } },
+      { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
+          t.check(panel.service.lastError, "", "a recovered proxy completes the update without requesting direct access")
         } }
     ]
   }
