@@ -439,6 +439,27 @@ func (a *app) ruleCommand() *ffcli.Command {
 					return nil
 				}, nil
 			}),
+		a.edit("move", "omihomo rule move [--pretty] <from> <to>", "move your rule to a 1-based priority position", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
+				if len(rest) != 2 {
+					return nil, usage(cmd, "rule move takes a source and destination index")
+				}
+				from, errFrom := strconv.Atoi(rest[0])
+				to, errTo := strconv.Atoi(rest[1])
+				if errFrom != nil || errTo != nil || from < 1 || to < 1 {
+					return nil, usage(cmd, "rule indices are positive numbers")
+				}
+				return func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs) error {
+					if from > len(v.Rules) || to > len(v.Rules) {
+						return &exitError{ExitNotFound, fmt.Errorf("source and destination must be within your %d rules", len(v.Rules))}
+					}
+					rule := v.Rules[from-1]
+					v.Rules = slices.Delete(v.Rules, from-1, from)
+					v.Rules = slices.Insert(v.Rules, to-1, rule)
+					return nil
+				}, nil
+			}),
+
 		a.edit("retarget", "omihomo rule retarget <category> <target>", "change every owner rule in a category atomically", protocol.OpRules,
 			func(cmd *ffcli.Command, rest []string) (change, error) {
 				if len(rest) != 2 || !slices.Contains(protocol.RuleCategories, rest[0]) {

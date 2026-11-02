@@ -413,6 +413,7 @@ Panel {
     else if (key === "x") { cursorActive = true; deleteCursorRow() }
     else if (key === "esc") handleEscape()
     else if (key === "j") moveCursor(0, 1)
+    else if (key === "reorder" && cursorRow && cursorRow.s === "rule") moveRule(cursorRow.i + 1, -1)
     else handleTextKey(key)
   }
 
@@ -432,9 +433,8 @@ Panel {
       { keys: "a", label: "add", key: "a" }, { keys: "x", label: "remove", key: "x" },
       { keys: "j k", label: "move", key: "j" }]
     case "rules": return [
-      { keys: "/", label: "test", key: "/" }, { keys: "n", label: "new", key: "n" },
-      { keys: "x", label: "delete", key: "x" }, { keys: "j k", label: "move", key: "j" },
-      { keys: "esc", label: "back", key: "esc" }]
+      { keys: "↵", label: "edit", key: "enter" }, { keys: "ctrl ↑↓", label: "reorder", key: "reorder" },
+      { keys: "/", label: "test", key: "/" }, { keys: "esc", label: "back", key: "esc" }]
     case "conns": return [
       { keys: "↵", label: "close", key: "enter" }, { keys: "A", label: "close all", key: "A" },
       { keys: "L", label: "clear log", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
@@ -631,6 +631,19 @@ Panel {
     endEdit()
   }
 
+  function ruleMoveTarget(index, delta) {
+    var own = ruleEntries.filter(function(entry) { return entry.kind === "own" })
+    var at = own.findIndex(function(entry) { return entry.rule.index === index })
+    var neighbor = at >= 0 ? own[at + delta] : null
+    return neighbor ? neighbor.rule.index : 0
+  }
+
+  function moveRule(index, delta) {
+    if (editingRule > 0 || omihomo.ruleSaving) return
+    var to = ruleMoveTarget(index, delta)
+    if (to > 0) omihomo.moveRule(index, to)
+  }
+
   function editRule(rule) {
     if (!rule || omihomo.ruleSaving) return
     editingRule = rule.index
@@ -768,6 +781,10 @@ Panel {
     id: omihomo
     panelOpen: root.opened
     onConfigChanged: omihomo.refreshTrace()
+    onRuleMoved: function(index) {
+      root.focusRow("rule", index - 1)
+      root.scrollCursorIntoView()
+    }
     onRuleAdded: {
       root.editingRule = 0
       root.savedRuleTarget = ""
@@ -837,6 +854,11 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.editing !== null
+      reorderable: root.view === "rules"
+      onReorderRequested: function(dy) {
+        if (root.cursorActive && root.cursorRow && root.cursorRow.s === "rule")
+          root.moveRule(root.cursorRow.i + 1, dy)
+      }
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)

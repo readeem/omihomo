@@ -95,6 +95,7 @@ Item {
   property var subscriptionRules: []   // the subscription's, read-only
   property var effectiveRules: []
   signal ruleAdded()
+  signal ruleMoved(int index)
   property var groups: []
   property var configEntries: ({})     // config name -> { name, type, alive, history }
   // Whether the groups stream has answered for this run of the core. An empty
@@ -706,6 +707,17 @@ Item {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")
       root.ruleAdded()
+    })
+  }
+
+  function moveRule(from, to) {
+    if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0
+        || from < 1 || to < 1 || from > rules.length || to > rules.length || from === to) return
+    reportDone("")
+    _ruleCall = edit(["rule", "move", "--", String(from), String(to)], function(result, error) {
+      root._ruleCall = 0
+      if (error) return root.reportError(error, "rules")
+      root.ruleMoved(to)
     })
   }
 
