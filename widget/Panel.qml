@@ -500,6 +500,7 @@ Panel {
       { keys: "a", label: "add", key: "a" }, { keys: "x", label: "remove", key: "x" },
       { keys: "j k", label: "move", key: "j" }]
     case "rules": return [
+      { keys: "n", label: "new rule", key: "n" },
       { keys: "↵", label: "edit", key: "enter" }, { keys: "ctrl ↑↓", label: "reorder", key: "reorder" },
       { keys: "/", label: "test", key: "/" }, { keys: "esc", label: "back", key: "esc" }]
     case "conns": return [

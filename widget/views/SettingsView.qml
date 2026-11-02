@@ -277,6 +277,7 @@ Item {
             title: "Release notes"
             subtitle: "what changed in " + view.updater.availableVersion.split("-")[0] + ", on GitHub"
             tag: "↗"
+            tagIcon: true
             onActivated: view.panel.openReleaseNotes()
           }
         }

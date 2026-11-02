@@ -130,6 +130,7 @@ ColumnLayout {
     InlineAction {
       theme: view.theme
       objectName: "toggleCategories"
+      Layout.leftMargin: Style.space(4) + (Style.space(14) - implicitWidth) / 2
       Chevron {
         theme: view.theme
         anchors.centerIn: parent
@@ -153,6 +154,9 @@ ColumnLayout {
       theme: view.theme
       objectName: "newRule"
       iconText: "+"
+      foreground: view.theme.accent
+      hoverColor: view.theme.accent
+      bordered: true
       tooltipText: "New rule · n"
       enabled: !view.service.ruleSaving
       hasCursor: view.panel.at("newRule")

@@ -15,6 +15,7 @@ NavRow {
   property bool modeControl: false
   // A row with a tag is an action, so it shows the tag instead of a switch.
   property string tag: ""
+  property bool tagIcon: false
   property color tagTint: theme.dim
   property bool tagFilled: false
 
@@ -60,6 +61,7 @@ NavRow {
       theme: settingRow.theme
       visible: text !== ""
       text: settingRow.tag
+      icon: settingRow.tagIcon
       tint: settingRow.tagTint
       strong: settingRow.tagFilled
       filled: settingRow.tagFilled
