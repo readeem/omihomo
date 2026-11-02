@@ -16,6 +16,8 @@ NavRow {
   readonly property bool hit: testing && panel.ruleTest.hit >= 0 && entry.eff === panel.ruleTest.hit
   readonly property bool below: testing && panel.ruleTest.hit >= 0 && (entry.eff < 0 || entry.eff > panel.ruleTest.hit)
 
+  onActivated: if (own) panel.editRule(rule)
+
   section: entry.s || ""
   rowIndex: entry.i === undefined ? -1 : entry.i
   current: hit
@@ -133,9 +135,12 @@ NavRow {
   }
 
   PanelToolTip {
-    visible: ruleRow.hovered && ((ruleRow.rule && ruleRow.rule.inactive) || ruleRow.verdict === "unknown")
-    text: ruleRow.rule && ruleRow.rule.inactive ? "This subscription has no target named " + ruleRow.rule.target
-      : "Depends on a DNS answer, a rule set, or the app making the connection"
+    visible: ruleRow.hovered && ruleRow.rule !== null
+    text: ruleRow.rule ? ruleRow.rule.type + (ruleRow.rule.value ? ", " + ruleRow.rule.value : "")
+      + " → " + ruleRow.rule.target + (ruleRow.rule.params ? " · " + ruleRow.rule.params : "")
+      + (ruleRow.rule.inactive ? "\nUnavailable target or rule provider in this subscription"
+        : ruleRow.verdict === "unknown" ? "\nDepends on DNS, a rule set, or the app making the connection" : "")
+      + (ruleRow.own ? "\nClick or press Enter to edit" : "") : ""
     fontFamily: ruleRow.theme.fontFamily
   }
 }

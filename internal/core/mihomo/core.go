@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dlclark/regexp2"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
@@ -42,6 +43,10 @@ import (
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/uplink"
 )
+
+// Mihomo compiles domain and process regexes through regexp2. Set this once,
+// before any core is constructed, including regexes nested in downloaded rules.
+func init() { regexp2.DefaultMatchTimeout = 25 * time.Millisecond }
 
 // delayURL is what a delay test fetches, as the widget always has.
 var delayURL = "http://www.gstatic.com/generate_204"

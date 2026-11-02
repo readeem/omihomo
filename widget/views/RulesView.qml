@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 import "../components"
+import "../Model.js" as Model
 
 ColumnLayout {
   id: view
@@ -9,6 +10,8 @@ ColumnLayout {
   required property var panel
   readonly property var service: panel.service
   readonly property Theme theme: panel.theme
+  readonly property alias typeField: typeSearch
+  readonly property alias typeList: typeListView
   readonly property alias testField: ruleTestField
   readonly property alias valueField: ruleValueField
   readonly property alias targetField: targetFilterField
@@ -107,6 +110,58 @@ ColumnLayout {
     }
   }
 
+  Flow {
+    Layout.fillWidth: true
+    spacing: Style.space(4)
+    Repeater {
+      model: [""].concat(Model.RULE_CATEGORIES)
+      SmallButton {
+        required property string modelData
+        theme: view.theme
+        text: modelData === "" ? "All" : modelData
+        primary: view.panel.ruleCategory === modelData
+        onClicked: view.panel.ruleCategory = modelData
+      }
+    }
+  }
+
+    PanelText {
+      theme: view.theme
+      Layout.fillWidth: true
+      text: view.panel.ruleCategory === "" ? "First match wins · select your rule to edit"
+        : view.panel.service.rules.filter(function(r) { return Model.ruleCategory(r.type) === view.panel.ruleCategory }).length + " owner rules · " + view.panel.ruleCategory
+      wrapMode: Text.WordWrap
+      color: view.theme.dim
+    }
+  RowLayout {
+    Layout.fillWidth: true
+    visible: view.panel.ruleCategory !== ""
+
+    SmallButton {
+      theme: view.theme
+      visible: view.panel.ruleCategory !== ""
+      text: "Reset subscription"
+      tooltipText: "Restore this category's subscription targets; owner rules keep their targets"
+      enabled: !view.service.ruleSaving
+      onClicked: view.service.retargetRules(view.panel.ruleCategory, "")
+    }
+    SmallButton {
+      theme: view.theme
+      visible: view.panel.ruleCategory !== ""
+      text: "Change targets…"
+      enabled: !view.service.ruleSaving
+      tooltipText: "Change owner and subscription targets; preserved across refreshes"
+      onClicked: view.panel.bulkRetarget()
+    }
+  }
+
+  PanelText {
+    theme: view.theme
+    visible: view.panel.targetPicking && view.panel.bulkCategory !== ""
+    text: "Choose the target for all " + view.panel.bulkCategory + " rules"
+    color: view.theme.accent
+  }
+
   PanelField {
     id: targetFilterField
     theme: view.theme
@@ -146,7 +201,7 @@ ColumnLayout {
   ScrollList {
     id: ruleListView
     theme: view.theme
-    visible: !view.panel.targetPicking
+    visible: !view.panel.targetPicking && !view.panel.typePicking
     Layout.fillWidth: true
     Layout.fillHeight: true
     model: view.panel.ruleEntries
@@ -179,32 +234,107 @@ ColumnLayout {
     }
   }
 
+  ColumnLayout {
+    visible: view.panel.typePicking
+    Layout.fillWidth: true
+    Layout.fillHeight: true
+    PanelField {
+      id: typeSearch
+      theme: view.theme
+      Layout.fillWidth: true
+      placeholderText: "Find a rule type"
+      onAccepted: view.panel.chooseRuleType(0)
+      onActiveFocusChanged: view.panel.fieldFocusChanged(typeSearch, activeFocus)
+      Keys.onEscapePressed: { view.panel.typePicking = false; view.panel.endEdit() }
+      Keys.onDownPressed: { view.panel.endEdit(); view.panel.focusRow("ruleTypeChoice", 0) }
+    }
+    ScrollList {
+      id: typeListView
+      theme: view.theme
+      Layout.fillWidth: true
+      Layout.fillHeight: true
+      Layout.minimumHeight: Style.space(120)
+      model: view.panel.visibleRuleTypes
+      delegate: SmallButton {
+        required property string modelData
+        theme: view.theme
+        text: Model.ruleCategory(modelData) + " · " + modelData
+        required property int index
+        hasCursor: view.panel.at("ruleTypeChoice", index)
+        onClicked: view.panel.chooseRuleType(index)
+      }
+    }
+  }
+
+  PanelText {
+    theme: view.theme
+    Layout.fillWidth: true
+    text: Model.ruleHint(view.panel.ruleType)
+    color: view.theme.dim
+    wrapMode: Text.WordWrap
+  }
+
+  Flow {
+    Layout.fillWidth: true
+    spacing: Style.space(4)
+    visible: view.panel.ruleType === "RULE-SET" || view.panel.ruleType === "GEOSITE" || view.panel.ruleType.indexOf("GEOIP") !== -1
+    Repeater {
+      model: view.panel.ruleType === "RULE-SET" ? view.service.ruleSets
+        : view.panel.ruleType === "GEOSITE" ? ["youtube", "google", "category-ads-all", "geolocation-!cn", "cn"]
+        : ["private", "CN", "US", "DE", "GB", "RU"]
+      SmallButton {
+        required property string modelData
+        theme: view.theme
+        text: modelData
+        onClicked: view.valueField.text = modelData
+      }
+    }
+  }
+
+  RowLayout {
+    Layout.fillWidth: true
+    visible: ["GEOIP", "IP-ASN", "IP-CIDR", "IP-CIDR6", "IP-SUFFIX", "RULE-SET"].indexOf(view.panel.ruleType) !== -1
+    Repeater {
+      model: ["no-resolve", "src"]
+      SmallButton {
+        required property string modelData
+        theme: view.theme
+        text: modelData === "src" ? "Match source IP" : "Skip DNS lookup"
+        primary: view.panel.ruleParams.indexOf(modelData) !== -1
+        onClicked: {
+          var flags = view.panel.ruleParams.split(" ").filter(function(p) { return p !== "" && p !== modelData })
+          if (!primary) flags.push(modelData)
+          view.panel.ruleParams = flags.join(" ")
+        }
+      }
+    }
+  }
+
+  PanelField {
+    id: ruleValueField
+    theme: view.theme
+    Layout.fillWidth: true
+    foreground: view.theme.foreground
+    placeholderText: view.panel.ruleType === "MATCH" ? "No value needed" : "Rule value"
+    hasCursor: view.panel.at("ruleValue")
+    verticalPadding: Style.space(4)
+    onHoveredChanged: if (hovered) view.panel.focusRow("ruleValue")
+    onAccepted: view.panel.submitRuleForm()
+    onActiveFocusChanged: view.panel.fieldFocusChanged(ruleValueField, activeFocus)
+    Keys.onEscapePressed: view.panel.endEdit()
+  }
+
   RowLayout {
     Layout.fillWidth: true
     spacing: Style.space(6)
 
     SmallButton {
       theme: view.theme
-      text: view.panel.shortRuleType(view.panel.ruleType) + " ▾"
+      text: view.panel.ruleType + " ▾"
       tooltipText: "Rule type · h l"
       hasCursor: view.panel.at("ruleType")
       onHovered: function(on) { if (on) view.panel.focusRow("ruleType") }
-      onClicked: view.panel.cycleRuleType(1)
-    }
-
-    PanelField {
-      id: ruleValueField
-      theme: view.theme
-      Layout.fillWidth: true
-      foreground: view.theme.foreground
-      placeholderText: view.panel.ruleType === "IP-CIDR" ? "10.0.0.0/8"
-        : (view.panel.ruleType === "PROCESS-NAME" ? "process name" : "example.com")
-      hasCursor: view.panel.at("ruleValue")
-      verticalPadding: Style.space(4)
-      onHoveredChanged: if (hovered) view.panel.focusRow("ruleValue")
-      onAccepted: view.panel.submitRuleForm()
-      onActiveFocusChanged: view.panel.fieldFocusChanged(ruleValueField, activeFocus)
-      Keys.onEscapePressed: view.panel.endEdit()
+      onClicked: view.panel.openTypePicker()
     }
 
     SmallButton {
@@ -218,12 +348,20 @@ ColumnLayout {
 
     SmallButton {
       theme: view.theme
-      text: view.service.ruleSaving ? "saving…" : "+ add"
+      text: view.service.ruleSaving ? "Saving…" : (view.panel.editingRule > 0 ? "Save rule " + view.panel.editingRule : "+ Add")
       enabled: !view.service.ruleSaving
       hasCursor: view.panel.at("ruleSubmit")
       onHovered: function(on) { if (on) view.panel.focusRow("ruleSubmit") }
       onClicked: view.panel.submitRuleForm()
     }
+  }
+
+  SmallButton {
+    theme: view.theme
+    visible: view.panel.editingRule > 0
+    enabled: !view.service.ruleSaving
+    text: "Cancel editing"
+    onClicked: view.panel.cancelRuleEdit()
   }
 
   PanelText {

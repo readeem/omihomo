@@ -1,6 +1,6 @@
 module github.com/readeem/omihomo
 
-go 1.27.2
+go 1.27.3
 
 // mihomo's own go.mod says go 1.20, which gives its releases Go 1.20's
 // runtime defaults (TLS, x509, timers). The embedded core behaves the same.
