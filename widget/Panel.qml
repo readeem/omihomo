@@ -735,6 +735,7 @@ Panel {
 
   function newRule() {
     if (omihomo.ruleSaving) return
+    if (ruleFormOpen) { cancelRuleEdit(); return }
     cancelRuleEdit()
     openRuleForm()
   }

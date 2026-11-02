@@ -21,18 +21,6 @@ ColumnLayout {
 
   spacing: Style.space(8)
 
-  PanelField {
-    id: categoryNameField
-    panel: view.panel
-    theme: view.theme
-    visible: view.panel.categoryEditing !== ""
-    Layout.fillWidth: true
-    placeholderText: "Category name"
-    onActiveFocusChanged: view.panel.fieldFocusChanged(categoryNameField, activeFocus)
-    onAccepted: view.panel.saveCategory()
-    Keys.onEscapePressed: view.panel.handleEscape()
-  }
-
   RowLayout {
     Layout.fillWidth: true
     spacing: Style.space(8)
@@ -60,32 +48,19 @@ ColumnLayout {
     }
   }
 
-  RowLayout {
+  PanelText {
+    objectName: "ruleTestResult"
+    theme: view.theme
     Layout.fillWidth: true
-    spacing: Style.space(6)
-
-    PanelText {
-      theme: view.theme
-      visible: view.panel.ruleTest.hit >= 0 || view.panel.ruleTest.bypassed
-      text: view.panel.ruleTest.bypassed ? "Outside VPN"
-        : (view.panel.ruleTest.certain ? "→ " : "possibly → ") + view.panel.ruleHitTarget
-      color: view.theme.accent
-      font.pixelSize: Style.font.body
-      font.bold: true
-    }
-
-    PanelText {
-      theme: view.theme
-      Layout.fillWidth: true
-      text: view.panel.ruleTest.host === "" ? "Type a domain or an IP to see which rule catches it."
-        : (view.panel.ruleTest.bypassed ? "Uses the system route · excluded by " + view.panel.ruleTest.bypassCidr
-          : view.panel.ruleTest.hit < 0 ? "No rule matches."
-          : "rule " + (view.panel.ruleTest.hit + 1) + " of " + view.panel.effectiveRules.length
-            + (view.panel.ruleTest.unknown > 0 ? " · " + view.panel.ruleTest.unknown + " above depend on DNS, rule sets, or the app" : ""))
-      color: view.theme.dim
-      elide: Text.ElideRight
-    }
+    text: view.panel.ruleTest.host === "" ? "Type a domain or an IP to see which rule catches it."
+      : view.panel.ruleTest.bypassed ? "Outside VPN"
+      : view.panel.ruleTest.hit < 0 ? "No rule matches."
+      : "→ " + view.panel.ruleHitTarget
+    color: view.panel.ruleTest.hit >= 0 || view.panel.ruleTest.bypassed ? view.theme.accent : view.theme.dim
+    font.bold: view.panel.ruleTest.hit >= 0 || view.panel.ruleTest.bypassed
+    wrapMode: Text.Wrap
   }
+
   Row {
     id: tallyBar
     visible: view.panel.ruleTally.length > 0
@@ -157,7 +132,7 @@ ColumnLayout {
       foreground: view.theme.accent
       hoverColor: view.theme.accent
       bordered: true
-      tooltipText: "New rule · n"
+      tooltipText: view.panel.ruleFormOpen ? "Cancel rule · Esc" : "New rule · n"
       enabled: !view.service.ruleSaving
       hasCursor: view.panel.at("newRule")
       onHovered: function(on) { if (on) view.panel.focusRow("newRule") }
@@ -196,6 +171,18 @@ ColumnLayout {
         entry: ruleEntry.entry
       }
     }
+  }
+
+  PanelField {
+    id: categoryNameField
+    panel: view.panel
+    theme: view.theme
+    visible: view.panel.categoryEditing !== ""
+    Layout.fillWidth: true
+    placeholderText: "Category name"
+    onActiveFocusChanged: view.panel.fieldFocusChanged(categoryNameField, activeFocus)
+    onAccepted: view.panel.saveCategory()
+    Keys.onEscapePressed: view.panel.handleEscape()
   }
 
   ColumnLayout {

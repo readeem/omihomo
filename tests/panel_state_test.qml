@@ -84,9 +84,30 @@ ShellRoot {
           testRoot.type("3")
         } },
       { then: function() {
+          panel.focusRow("ruleTest")
+          panel.activateCursor()
+          testRoot.type("unmatched.example")
+        } },
+      { then: function() {
+          t.check(panel.ruleTest.unknown > 0, true, "the query passes rules needing runtime context")
+          var result = testRoot.findObject(panel, "ruleTestResult")
+          t.check(result.text, "→ " + panel.ruleHitTarget, "the tester shows only the destination hit")
+          testRoot.key(Qt.Key_Escape)
+        } },
+      { then: function() {
           t.check(testRoot.findObject(panel, "ruleForm"), null, "the rule form starts hidden")
           t.check(panel.navRows.some(function(r) { return r.s === "ruleValue" }), false, "hidden rule fields are excluded from navigation")
           t.check(testRoot.clickObject("newRule"), true, "the plus button opens a new rule")
+        } },
+      { until: function() { return panel.editing !== null }, then: function() {
+          testRoot.type("discard.example")
+          t.check(testRoot.clickObject("newRule"), true, "the plus button can cancel a new rule")
+        } },
+      { then: function() {
+          t.check(panel.ruleFormOpen, false, "pressing plus again hides the rule form")
+          t.check(panel.ruleFormValue, "", "pressing plus again discards the draft")
+          t.check(panel.view, "rules", "pressing plus again stays on the rules tab")
+          testRoot.clickObject("newRule")
         } },
       { name: "new rule focused", until: function() { return panel.editing !== null }, then: function() {
           t.check(panel.ruleFormOpen, true, "creating a rule reveals the form")
@@ -291,6 +312,9 @@ ShellRoot {
           t.check(testRoot.clickObject("categoryRename-" + testRoot.categoryId), true, "the category rename action is clickable")
         } },
       { until: function() { return panel.categoryEditing === testRoot.categoryId && panel.editing !== null }, then: function() {
+          var list = testRoot.findObject(panel, "ruleList")
+          var fieldY = panel.editing.mapToItem(list.parent, 0, 0).y
+          t.check(fieldY >= list.y + list.height, true, "category renaming appears below the rules list")
           testRoot.key(Qt.Key_A, Qt.ControlModifier)
           testRoot.type("Renamed")
           testRoot.key(Qt.Key_Return)
