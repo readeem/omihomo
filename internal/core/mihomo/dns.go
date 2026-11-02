@@ -106,7 +106,22 @@ func (r bootstrapResolver) LookupIPv6(ctx context.Context, host string) ([]netip
 	return r.lookup(ctx, host, dns.TypeAAAA)
 }
 func (r bootstrapResolver) ResolveECH(ctx context.Context, host string) ([]byte, error) {
-	return nil, errors.New("bootstrap DNS does not resolve ECH")
+	query := new(dns.Msg)
+	query.SetQuestion(dns.Fqdn(host), dns.TypeHTTPS)
+	answer, err := r.ExchangeContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	for _, rr := range answer.Answer {
+		if resource, ok := rr.(*dns.HTTPS); ok {
+			for _, value := range resource.Value {
+				if config, ok := value.(*dns.SVCBECHConfig); ok {
+					return config.ECH, nil
+				}
+			}
+		}
+	}
+	return nil, errors.New("no ECH config found in DNS records")
 }
 func (r bootstrapResolver) ExchangeContext(ctx context.Context, query *dns.Msg) (*dns.Msg, error) {
 	if len(query.Question) != 1 {
@@ -226,7 +241,7 @@ func lookupIPs(ctx context.Context, host string, r resolver.Resolver) ([]netip.A
 		return ips, nil
 	}
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, errors.Join(first, ctx.Err())
 	}
 	ips, second := r.LookupIPv6(ctx, host)
 	if len(ips) > 0 {

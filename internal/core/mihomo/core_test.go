@@ -1098,3 +1098,29 @@ func TestConcurrentBootstrapLookupsUseConfiguredDNS(t *testing.T) {
 		t.Fatal("independent concurrent lookups used provider DNS")
 	}
 }
+
+func TestDNSDeadlinePreservesEarlierAuthenticationFailure(t *testing.T) {
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	defer denied.Close()
+	stalled := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { io.Copy(io.Discard, r.Body); <-r.Context().Done() }))
+	defer stalled.Close()
+	previousNetwork, previousServers := shared.uplink, defaultNameservers
+	var providers atomic.Int32
+	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) { providers.Add(1); return nil, uplink.ErrUnavailable }}
+	defaultNameservers = []string{denied.URL, stalled.URL}
+	t.Cleanup(func() { shared.uplink, defaultNameservers = previousNetwork, previousServers })
+	cfg := testConfig()
+	cfg.DNSDestination = "Local"
+	c := running(t, cfg)
+	var direct atomic.Int32
+	transport := fetch.RoutedTransport(c.DialDownload, func(context.Context, string, string) (net.Conn, error) {
+		direct.Add(1)
+		return nil, errors.New("unexpected recovery")
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	_, err := fetch.New(transport).Get(ctx, fetch.Request{URL: "https://example.com/sub"})
+	if err == nil || direct.Load() != 0 || providers.Load() != 0 {
+		t.Fatalf("DNS deadline allowed recovery after HTTP rejection: %v, %d/%d", err, direct.Load(), providers.Load())
+	}
+}
