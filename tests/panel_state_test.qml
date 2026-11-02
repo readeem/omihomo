@@ -15,19 +15,23 @@ ShellRoot {
   property string categoryId: ""
 
   function clickObject(name) {
-    function find(item) {
-      if (item.visible && item.objectName === name) return item
-      for (var i = 0; i < item.children.length; i++) {
-        var match = find(item.children[i])
-        if (match) return match
-      }
-      return null
-    }
-    var item = find(panel)
+    var item = findObject(panel, name)
     if (!item) return false
     events.mouseClick(item, item.width / 2, item.height / 2, Qt.LeftButton, 0, -1)
     return true
   }
+
+  function findObject(item, name) {
+    if (item.visible && item.objectName === name) return item
+    for (var i = 0; i < item.children.length; i++) {
+      var found = findObject(item.children[i], name)
+      if (found) return found
+    }
+    return null
+  }
+
+  property real savedScroll: 0
+  property string savedConnection: ""
 
   function settingsScroll(item) {
     if (item.visible && item.contentY !== undefined && item.flickableDirection !== undefined && item.model === undefined)
@@ -308,6 +312,54 @@ ShellRoot {
           t.check(panel.service.ruleDocument[4].category.name, "Moved", "editing saves the new category with the existing rule")
           t.check(panel.categoryChoices.some(function(c) { return c.value === testRoot.categoryId }), false, "moving the last rule removes the old category")
           t.check(panel.service.rules.length, 5, "moving between categories preserves the rule")
+          var state = panel.service.ruleState
+          var rules = state.own.slice(), document = state.document.slice()
+          for (var i = 0; i < 20; i++) {
+            var rule = Object.assign({}, rules[0], { index: rules.length + 1, value: "scroll-" + i + ".example", category: "" })
+            rules.push(rule)
+            document.push({ type: rule.type, value: rule.value, target: rule.target })
+          }
+          panel.service.ruleState = Object.assign({}, state, { own: rules, document: document })
+          panel.toggleAllCategories()
+        } },
+      { then: function() {
+          var list = testRoot.findObject(panel, "ruleList")
+          t.check(list.contentHeight > list.height + 45, true, "the rules fixture is scrollable")
+          list.contentY = 45
+          testRoot.savedScroll = list.contentY
+          panel.expandCategory(panel.service.ruleDocument[4].category.id)
+        } },
+      { then: function() {
+          var list = testRoot.findObject(panel, "ruleList")
+          t.check(Math.round(list.contentY), Math.round(testRoot.savedScroll), "category collapse retains the scrolled viewport")
+          panel.openView("conns")
+          var connections = panel.service.connectionLog.slice()
+          for (var i = 0; i < 15; i++) connections.push(Object.assign({}, connections[0], {
+            id: "scroll-" + i, host: "scroll-" + i + ".example", open: false, closedAtMs: Date.now()
+          }))
+          panel.service.connectionLog = connections
+        } },
+      { then: function() {
+          var list = testRoot.findObject(panel, "connectionList")
+          t.check(list.contentHeight > list.height + 40, true, "the connections fixture is scrollable")
+          list.contentY = 40
+          testRoot.savedScroll = list.contentY
+          panel.service.connectionLog = panel.service.connectionLog.map(function(c) { return Object.assign({}, c, { upload: c.upload + 1 }) })
+        } },
+      { then: function() {
+          var list = testRoot.findObject(panel, "connectionList")
+          t.check(Math.round(list.contentY), Math.round(testRoot.savedScroll), "connection refresh retains the scrolled viewport")
+          var index = list.indexAt(1, list.contentY + 1)
+          testRoot.savedConnection = panel.service.connectionStacks[index].key
+          testRoot.savedScroll = list.itemAtIndex(index).y - list.contentY
+          panel.service.connectionLog = panel.service.connectionLog.concat([Object.assign({}, panel.service.connectionLog[0], {
+            id: "new-connection", host: "new.example", startMs: Date.now(), open: true
+          })])
+        } },
+      { then: function() {
+          var list = testRoot.findObject(panel, "connectionList")
+          var index = panel.service.connectionStacks.findIndex(function(c) { return c.key === testRoot.savedConnection })
+          t.check(Math.round(list.itemAtIndex(index).y - list.contentY), Math.round(testRoot.savedScroll), "a new connection preserves the visible row's position")
         } }
     ]
   }

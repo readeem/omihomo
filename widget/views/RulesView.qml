@@ -130,7 +130,12 @@ ColumnLayout {
     InlineAction {
       theme: view.theme
       objectName: "toggleCategories"
-      iconText: view.panel.allCategoriesExpanded ? "⇈" : "⇊"
+      Chevron {
+        anchors.centerIn: parent
+        color: view.theme.foreground
+        doubleArrow: true
+        expanded: view.panel.allCategoriesExpanded
+      }
       tooltipText: view.panel.allCategoriesExpanded ? "Collapse all categories" : "Expand all categories"
       hasCursor: view.panel.at("toggleCategories")
       onHovered: function(on) { if (on) view.panel.focusRow("toggleCategories") }
@@ -146,32 +151,34 @@ ColumnLayout {
   }
 
   ScrollList {
+    objectName: "ruleList"
     id: ruleListView
     theme: view.theme
     Layout.fillWidth: true
     Layout.fillHeight: true
-    model: view.panel.ruleEntries
+    keyedEntries: view.panel.ruleEntries
+    entryKey: function(e) { return e.kind === "category" ? "category:" + e.category.id : e.kind + ":" + (e.rule.index || e.rule.type + ":" + e.rule.value) }
 
     delegate: Item {
       id: ruleEntry
-      required property var modelData
+      required property var entry
       width: ruleListView.rowWidth
-      height: modelData.kind === "category" ? categoryHead.implicitHeight : ruleBody.implicitHeight
+      height: entry.kind === "category" ? categoryHead.implicitHeight : ruleBody.implicitHeight
 
       CategoryRow {
         id: categoryHead
         panel: view.panel
-        visible: ruleEntry.modelData.kind === "category"
+        visible: ruleEntry.entry.kind === "category"
         width: parent.width
-        entry: ruleEntry.modelData
+        entry: ruleEntry.entry
       }
 
       RuleRow {
         id: ruleBody
         panel: view.panel
-        visible: ruleEntry.modelData.kind !== "category"
+        visible: ruleEntry.entry.kind !== "category"
         width: parent.width
-        entry: ruleEntry.modelData
+        entry: ruleEntry.entry
       }
     }
   }
@@ -185,7 +192,7 @@ ColumnLayout {
       color: view.theme.dim
     }
     PanelText { theme: view.theme; text: view.panel.ruleEnabled ? "Enabled" : "Disabled"; color: view.theme.dim }
-    PanelSwitch {
+    RuleToggle {
       objectName: "ruleEnabled"
       theme: view.theme
       checked: view.panel.ruleEnabled

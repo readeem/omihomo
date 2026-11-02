@@ -24,10 +24,9 @@ NavRow {
     RowLayout {
       Layout.fillWidth: true
       spacing: Style.space(6)
-      PanelText {
-        theme: row.theme
-        text: row.category && row.panel.expandedCategories[row.category.id] ? "▾" : "▸"
+      Chevron {
         color: row.theme.dim
+        expanded: row.category && row.panel.expandedCategories[row.category.id] === true
       }
       PanelText {
         theme: row.theme
@@ -42,14 +41,12 @@ NavRow {
         text: row.category ? String(row.category.rules.length) : ""
         color: row.theme.faint
       }
-      PanelSwitch {
+      RuleToggle {
         objectName: row.category ? "categoryToggle-" + row.category.id : ""
         theme: row.theme
         checked: row.category && !row.category.disabled
         busy: row.panel.service.ruleSaving
         enabled: row.panel.editingRule === 0 && row.panel.categoryEditing === ""
-        trackWidth: Style.space(32)
-        trackHeight: Style.space(18)
         onToggled: if (row.category) row.panel.toggleCategory(row.category)
       }
     }

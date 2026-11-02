@@ -63,18 +63,20 @@ ColumnLayout {
   }
 
   ScrollList {
+    objectName: "connectionList"
     id: connList
     theme: view.theme
     Layout.fillWidth: true
     Layout.fillHeight: true
     spacing: Style.space(2)
-    model: view.service.connectionStacks
+    keyedEntries: view.service.connectionStacks
+    entryKey: function(e) { return e.key }
 
     delegate: Item {
       id: connectionEntry
-      required property var modelData
+      required property var entry
       required property int index
-      readonly property bool closedHead: !modelData.open
+      readonly property bool closedHead: !entry.open
         && (index === 0 || view.service.connectionStacks[index - 1].open)
       width: connList.rowWidth
       height: connection.implicitHeight + (closedHead ? Style.space(28) : 0)
@@ -96,7 +98,7 @@ ColumnLayout {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: implicitHeight
-        stack: connectionEntry.modelData
+        stack: connectionEntry.entry
         rowIndex: connectionEntry.index
       }
     }
