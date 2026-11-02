@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -33,7 +34,7 @@ func discover(ctx context.Context) ([]Link, error) {
 	// Main-table defaults remain visible while TUN installs its policy table.
 	routes, err := netlink.RouteListFiltered(netlink.FAMILY_ALL, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
 	if err != nil {
-		return nil, unavailable("cannot discover default uplinks")
+		return nil, fmt.Errorf("%w: discover default uplinks: %w", ErrUnavailable, err)
 	}
 	slices.SortFunc(routes, func(a, b netlink.Route) int { return cmp.Compare(a.Priority, b.Priority) })
 	var links []Link
@@ -121,7 +122,10 @@ func resolvedLinks(data []byte, links []Link, indices map[int]int) ([]Link, erro
 		Type string              `json:"type"`
 		Data [][]json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil || result.Type != "a(iiay)" {
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("%w: decode resolved DNS: %w", ErrUnavailable, err)
+	}
+	if result.Type != "a(iiay)" {
 		return nil, unavailable("invalid resolved DNS response")
 	}
 	for _, record := range result.Data {
@@ -130,9 +134,10 @@ func resolvedLinks(data []byte, links []Link, indices map[int]int) ([]Link, erro
 		}
 		var index, family int
 		var octets []byte
-		if json.Unmarshal(record[0], &index) != nil || json.Unmarshal(record[1], &family) != nil || json.Unmarshal(record[2], &octets) != nil {
-			return nil, unavailable("invalid resolved DNS address")
+		if err := errors.Join(json.Unmarshal(record[0], &index), json.Unmarshal(record[1], &family), json.Unmarshal(record[2], &octets)); err != nil {
+			return nil, fmt.Errorf("%w: decode resolved DNS address: %w", ErrUnavailable, err)
 		}
+
 		position, ok := indices[index]
 		if !ok {
 			continue
@@ -149,7 +154,7 @@ func resolvedLinks(data []byte, links []Link, indices map[int]int) ([]Link, erro
 
 func addServer(links []Link, position int, ip netip.Addr) {
 	ip = ip.Unmap()
-	if !(ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast()) || netip.MustParsePrefix("100.64.0.0/10").Contains(ip) {
+	if !(ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast()) || ip == netip.MustParseAddr("100.100.100.100") {
 		return
 	}
 	for _, link := range links {
@@ -178,7 +183,7 @@ func commandOutput(ctx context.Context, path string, args ...string) ([]byte, er
 	var output boundedOutput
 	command.Stdout, command.Stderr, command.WaitDelay = &output, io.Discard, time.Second
 	if err := command.Run(); err != nil {
-		return nil, unavailable("cannot read uplink DNS")
+		return nil, fmt.Errorf("%w: read uplink DNS: %w", ErrUnavailable, err)
 	}
 	return output.Bytes(), nil
 }

@@ -1,17 +1,20 @@
 package mihomo
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/netip"
-	"sync"
+	"strings"
 
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
-	engineDNS "github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/tunnel"
 	"github.com/miekg/dns"
 
@@ -32,59 +35,148 @@ func (d *uplinkDNS) DialContext(ctx context.Context, _ *constant.Metadata) (cons
 	return outbound.NewConn(conn, d), nil
 }
 
+type bootstrapQuery struct{}
+
 type bootstrapDNS struct {
 	normal   resolver.Resolver
 	provider resolver.Resolver
-	mu       sync.Mutex
-	active   map[dns.Question]bool
 }
 
 func (d *bootstrapDNS) ExchangeContext(ctx context.Context, query *dns.Msg) (*dns.Msg, error) {
-	if len(query.Question) != 1 {
-		return nil, fmt.Errorf("bootstrap DNS needs one question")
-	}
-	question := query.Question[0]
-	d.mu.Lock()
-	if d.active[question] {
-		d.mu.Unlock()
+	if ctx.Value(bootstrapQuery{}) != nil {
 		return d.provider.ExchangeContext(ctx, query)
 	}
-	d.active[question] = true
-	d.mu.Unlock()
-	defer func() { d.mu.Lock(); delete(d.active, question); d.mu.Unlock() }()
-	// Mihomo resets contexts inside DNS singleflight. A repeated in-flight
-	// question must bootstrap independently rather than wait on its own proxy.
-	attempt, cancel := context.WithTimeout(ctx, uplink.Timeout)
-	answer, err := d.normal.ExchangeContext(attempt, query)
-	cancel()
+	answer, err := d.normal.ExchangeContext(context.WithValue(ctx, bootstrapQuery{}, true), query)
 	if err == nil || ctx.Err() != nil || !uplink.Recoverable(err) {
 		return answer, err
 	}
 	return d.provider.ExchangeContext(ctx, query)
 }
-func (d *bootstrapDNS) Address() string  { return "omihomo-bootstrap" }
-func (d *bootstrapDNS) ResetConnection() {}
 
-type bootstrapResolver struct{ client *bootstrapDNS }
+type questionClient interface {
+	ExchangeContext(context.Context, *dns.Msg) (*dns.Msg, error)
+}
+
+type bootstrapResolver struct{ client questionClient }
+
+var _ resolver.Resolver = bootstrapResolver{}
 
 func (r bootstrapResolver) LookupIP(ctx context.Context, host string) ([]netip.Addr, error) {
-	return lookupIPs(ctx, host, engineDNS.NewResolverFromClient(r.client))
+	return lookupIPs(ctx, host, r)
+}
+func (r bootstrapResolver) lookup(ctx context.Context, host string, typ uint16) ([]netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip.Is4() == (typ == dns.TypeA) {
+			return []netip.Addr{ip.Unmap()}, nil
+		}
+		return nil, resolver.ErrIPNotFound
+	}
+	query := new(dns.Msg)
+	query.SetQuestion(dns.Fqdn(host), typ)
+	answer, err := r.ExchangeContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	var ips []netip.Addr
+	for _, rr := range answer.Answer {
+		switch rr := rr.(type) {
+		case *dns.A:
+			if typ == dns.TypeA {
+				if ip, ok := netip.AddrFromSlice(rr.A); ok {
+					ips = append(ips, ip.Unmap())
+				}
+			}
+		case *dns.AAAA:
+			if typ == dns.TypeAAAA {
+				if ip, ok := netip.AddrFromSlice(rr.AAAA); ok {
+					ips = append(ips, ip)
+				}
+			}
+		}
+	}
+	if len(ips) == 0 {
+		return nil, resolver.ErrIPNotFound
+	}
+	return ips, nil
 }
 func (r bootstrapResolver) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
-	return engineDNS.NewResolverFromClient(r.client).LookupIPv4(ctx, host)
+	return r.lookup(ctx, host, dns.TypeA)
 }
 func (r bootstrapResolver) LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error) {
-	return engineDNS.NewResolverFromClient(r.client).LookupIPv6(ctx, host)
+	return r.lookup(ctx, host, dns.TypeAAAA)
 }
 func (r bootstrapResolver) ResolveECH(ctx context.Context, host string) ([]byte, error) {
-	return engineDNS.NewResolverFromClient(r.client).ResolveECH(ctx, host)
+	return nil, errors.New("bootstrap DNS does not resolve ECH")
 }
 func (r bootstrapResolver) ExchangeContext(ctx context.Context, query *dns.Msg) (*dns.Msg, error) {
+	if len(query.Question) != 1 {
+		return nil, errors.New("DNS needs one question")
+	}
 	return r.client.ExchangeContext(ctx, query)
 }
 func (r bootstrapResolver) Invalid() bool    { return true }
 func (r bootstrapResolver) ClearCache()      {}
 func (r bootstrapResolver) ResetConnection() {}
+
+// The engine's batch resolver discards all but its first endpoint error and
+// resets contexts. Recovery needs every failure and the recursive dial context.
+type downloadDNS struct {
+	proxy constant.ProxyAdapter
+	magic resolver.Resolver
+}
+
+func (d downloadDNS) ExchangeContext(ctx context.Context, query *dns.Msg) (*dns.Msg, error) {
+	if strings.HasSuffix(strings.ToLower(query.Question[0].Name), ".ts.net.") {
+		return d.magic.ExchangeContext(ctx, query)
+	}
+	wire, err := query.Pack()
+	if err != nil {
+		return nil, err
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, DisableKeepAlives: true}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		metadata := &constant.Metadata{NetWork: constant.TCP, Type: constant.INNER}
+		if err := metadata.SetRemoteAddress(address); err != nil {
+			return nil, err
+		}
+		return d.proxy.DialContext(ctx, metadata)
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: uplink.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	var failures []error
+	for _, endpoint := range defaultNameservers {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(wire))
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Content-Type", "application/dns-message")
+		response, err := client.Do(request)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(response.Body, 65536))
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			err = fmt.Errorf("DNS server answered HTTP %d", response.StatusCode)
+		}
+		if err == nil && len(body) >= 65536 {
+			err = errors.New("DNS response exceeds size limit")
+		}
+		answer := new(dns.Msg)
+		if err == nil {
+			err = answer.Unpack(body)
+		}
+		if err == nil && (answer.Id != query.Id || len(answer.Question) != 1 || answer.Question[0] != query.Question[0]) {
+			err = errors.New("DNS response does not match question")
+		}
+		if err == nil {
+			return answer, nil
+		}
+		failures = append(failures, err)
+	}
+	return nil, errors.Join(failures...)
+}
 
 // DialDownload resolves the destination locally with application DNS and uses
 // the primary exit, regardless of traffic rules. The synchronous dial exposes
@@ -101,7 +193,10 @@ func (c *Core) DialDownload(ctx context.Context, network, address string) (net.C
 		return nil, err
 	}
 	if !metadata.Resolved() {
-		ips, err := lookupIPs(ctx, metadata.Host, resolver.DefaultResolver)
+		c.mu.Lock()
+		dnsResolver := c.downloadDNS
+		c.mu.Unlock()
+		ips, err := lookupIPs(ctx, metadata.Host, dnsResolver)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +212,7 @@ func (c *Core) DialDownload(ctx context.Context, network, address string) (net.C
 }
 
 func newBootstrapResolver(normal, provider resolver.Resolver) bootstrapResolver {
-	return bootstrapResolver{client: &bootstrapDNS{normal: normal, provider: provider, active: map[dns.Question]bool{}}}
+	return bootstrapResolver{client: &bootstrapDNS{normal: normal, provider: provider}}
 }
 
 // Mihomo's combined LookupIP replaces both underlying failures with

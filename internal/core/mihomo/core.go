@@ -55,9 +55,10 @@ const (
 
 // Core is core.Core over the mihomo engine hosted in this process.
 type Core struct {
-	uplink uplink.Network
-	log    *slog.Logger
-	tap    *logTap
+	downloadDNS resolver.Resolver
+	uplink      uplink.Network
+	log         *slog.Logger
+	tap         *logTap
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
@@ -170,7 +171,15 @@ func (c *Core) run(rt *runtime) error {
 	rt.parsed.DNS.DefaultNameserver = servers
 	rt.parsed.DNS.ProxyServerNameserver = servers
 	executor.ApplyConfig(rt.parsed, true)
-	resolver.ProxyServerHostResolver = newBootstrapResolver(resolver.DefaultResolver, resolver.ProxyServerHostResolver)
+	dnsProxy := rt.parsed.DNS.NameServer[0].ProxyAdapter
+	if dnsProxy == nil {
+		dnsProxy = rt.parsed.Proxies[globalGroup]
+	}
+	normalDNS := bootstrapResolver{client: downloadDNS{proxy: dnsProxy, magic: resolver.ProxyServerHostResolver}}
+	c.mu.Lock()
+	c.downloadDNS = normalDNS
+	c.mu.Unlock()
+	resolver.ProxyServerHostResolver = newBootstrapResolver(normalDNS, resolver.ProxyServerHostResolver)
 	if err := started(rt.cfg, stop()); err != nil {
 		return err
 	}

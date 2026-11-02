@@ -31,6 +31,7 @@ import (
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/fetch"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/testdns"
 	"github.com/readeem/omihomo/internal/uplink"
 )
 
@@ -726,7 +727,7 @@ func TestHiddenPrimaryAgreesWithListedGroups(t *testing.T) {
 
 func TestDNSDestination(t *testing.T) {
 	var requests atomic.Int32
-	provider := providerDNS(t, "127.0.0.1")
+	provider := testdns.Serve(t, "127.0.0.1:0", "127.0.0.1")
 	previousNetwork := shared.uplink
 	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
 		return []uplink.Link{{Name: "lo", Addresses: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/8")}, DNS: []netip.AddrPort{provider}}}, nil
@@ -828,43 +829,33 @@ func TestDNSDestination(t *testing.T) {
 	lookup("restored.example", true)
 }
 
-func providerDNS(t *testing.T, address string) netip.AddrPort {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	packet, err := net.ListenPacket("udp", listener.Addr().String())
-	if err != nil {
-		listener.Close()
-		t.Fatal(err)
-	}
-	handler := dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
-		reply := new(dns.Msg)
-		reply.SetReply(query)
-		if query.Question[0].Qtype == dns.TypeA {
-			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP(address)}}
+func TestMagicDNSStaysSeparateFromApplicationAndProviderDNS(t *testing.T) {
+	magic := testdns.Serve(t, "127.0.0.1:0", "192.0.2.53")
+	previousDNS, previousNetwork := tailscaleDNS, shared.uplink
+	tailscaleDNS = magic.String()
+	var providerCalls atomic.Int32
+	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
+		providerCalls.Add(1)
+		return nil, uplink.ErrUnavailable
+	}}
+	t.Cleanup(func() { tailscaleDNS, shared.uplink = previousDNS, previousNetwork })
+	cfg := testConfig()
+	cfg.DNSDestination = "Dead"
+	running(t, cfg)
+	for _, r := range []resolver.Resolver{resolver.DefaultResolver, resolver.ProxyServerHostResolver} {
+		ips, err := r.LookupIPv4(t.Context(), "host.ts.net")
+		if err != nil || !slices.Contains(ips, netip.MustParseAddr("192.0.2.53")) {
+			t.Fatalf("MagicDNS lookup = %v, %v", ips, err)
 		}
-		w.WriteMsg(reply)
-	})
-	for _, server := range []*dns.Server{{Listener: listener, Net: "tcp", Handler: handler}, {PacketConn: packet, Net: "udp", Handler: handler}} {
-		ready, done := make(chan struct{}), make(chan error, 1)
-		server.NotifyStartedFunc = func() { close(ready) }
-		go func() { done <- server.ActivateAndServe() }()
-		<-ready
-		t.Cleanup(func() {
-			server.Shutdown()
-			if err := <-done; err != nil {
-				t.Error(err)
-			}
-		})
 	}
-	return netip.MustParseAddrPort(listener.Addr().String())
+	if providerCalls.Load() != 0 {
+		t.Fatal("MagicDNS used provider DNS")
+	}
 }
 
 func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) {
 	var providerCalls atomic.Int32
-	provider := providerDNS(t, "127.0.0.1")
+	provider := testdns.Serve(t, "127.0.0.1:0", "127.0.0.1")
 	previousNetwork, previousNameservers := shared.uplink, defaultNameservers
 	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
 		providerCalls.Add(1)
@@ -955,8 +946,10 @@ func TestDownloadsBootstrapAHostnameProxyWithoutResolverRecursion(t *testing.T) 
 
 func connectProxy(t *testing.T) *httptest.Server {
 	t.Helper()
-	var mu sync.Mutex
-	var active sync.WaitGroup
+	var (
+		mu     sync.Mutex
+		active sync.WaitGroup
+	)
 	connections := map[net.Conn]struct{}{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
@@ -1022,7 +1015,7 @@ func TestDNSAuthenticationAndHTTPFailuresDoNotEnableProviderRecovery(t *testing.
 				providerCalls.Add(1)
 				return nil, errors.New("provider must not be used")
 			}}
-			defaultNameservers = []string{server.URL + "/dns-query"}
+			defaultNameservers = []string{"http://127.0.0.1:1/dns-query", server.URL + "/dns-query"}
 			t.Cleanup(func() { shared.uplink, defaultNameservers = previousNetwork, previousServers })
 			cfg := testConfig()
 			cfg.DNSDestination = "Local"
@@ -1042,5 +1035,66 @@ func TestDNSAuthenticationAndHTTPFailuresDoNotEnableProviderRecovery(t *testing.
 				t.Fatalf("DNS auth/HTTP failure enabled recovery: %v %d/%d", err, providerCalls.Load(), directCalls.Load())
 			}
 		})
+	}
+}
+
+func TestConcurrentBootstrapLookupsUseConfiguredDNS(t *testing.T) {
+	previousNetwork, previousServers := shared.uplink, defaultNameservers
+	var providers atomic.Int32
+	shared.uplink = uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
+		providers.Add(1)
+		return nil, uplink.ErrUnavailable
+	}}
+	t.Cleanup(func() { shared.uplink, defaultNameservers = previousNetwork, previousServers })
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		var query dns.Msg
+		if err := query.Unpack(body); err != nil {
+			t.Error(err)
+			return
+		}
+		reply := new(dns.Msg)
+		reply.SetReply(&query)
+		reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("192.0.2.1")}}
+		body, _ = reply.Pack()
+		w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	defaultNameservers = []string{server.URL}
+	cfg := testConfig()
+	cfg.DNSDestination = "Local"
+	running(t, cfg)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { _, err := resolver.ProxyServerHostResolver.LookupIPv4(ctx, "same.example"); results <- err }()
+	}
+	for range 2 {
+		select {
+		case <-arrived:
+		case <-ctx.Done():
+			once.Do(func() { close(release) })
+			t.Fatal("concurrent request did not reach configured DNS")
+		}
+	}
+	once.Do(func() { close(release) })
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if providers.Load() != 0 {
+		t.Fatal("independent concurrent lookups used provider DNS")
 	}
 }

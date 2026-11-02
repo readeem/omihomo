@@ -19,45 +19,12 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/readeem/omihomo/internal/fetch"
+	"github.com/readeem/omihomo/internal/testdns"
 	"github.com/readeem/omihomo/internal/uplink"
 )
 
-func dnsServer(t *testing.T, listen, ip string) netip.AddrPort {
-	t.Helper()
-	listener, err := net.Listen("tcp", listen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	packet, err := net.ListenPacket("udp", listener.Addr().String())
-	if err != nil {
-		listener.Close()
-		t.Fatal(err)
-	}
-	handler := dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
-		reply := new(dns.Msg)
-		reply.SetReply(query)
-		if query.Question[0].Qtype == dns.TypeA {
-			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP(ip)}}
-		}
-		w.WriteMsg(reply)
-	})
-	for _, server := range []*dns.Server{{Listener: listener, Net: "tcp", Handler: handler}, {PacketConn: packet, Net: "udp", Handler: handler}} {
-		ready, done := make(chan struct{}), make(chan error, 1)
-		server.NotifyStartedFunc = func() { close(ready) }
-		go func() { done <- server.ActivateAndServe() }()
-		<-ready
-		t.Cleanup(func() {
-			server.Shutdown()
-			if err := <-done; err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	return netip.MustParseAddrPort(listener.Addr().String())
-}
-
 func TestInitialDownloadUsesFreshProviderDNS(t *testing.T) {
-	first, second := dnsServer(t, "127.0.0.1:0", "127.0.0.1"), dnsServer(t, "127.0.0.1:0", "127.0.0.2")
+	first, second := testdns.Serve(t, "127.0.0.1:0", "127.0.0.1"), testdns.Serve(t, "127.0.0.1:0", "127.0.0.2")
 	current := first
 	var discoveries atomic.Int32
 	network := uplink.Network{Discover: func(context.Context) ([]uplink.Link, error) {
@@ -106,8 +73,9 @@ func TestNoProviderDNSNeverUsesTheSystemResolver(t *testing.T) {
 func TestUplinkBypassesTunnelDNSInterception(t *testing.T) {
 	switch os.Getenv("OMIHOMO_UPLINK_TEST") {
 	case "provider":
-		dnsServer(t, "192.0.2.53:53", "192.0.2.53")
-		dnsServer(t, "192.0.2.54:53", "192.0.2.54")
+		testdns.Serve(t, "192.0.2.53:53", "192.0.2.53")
+		testdns.Serve(t, "192.0.2.54:53", "192.0.2.54")
+		testdns.Serve(t, "100.64.0.53:53", "192.0.2.55")
 		listener, err := net.Listen("tcp", "192.0.2.53:443")
 		if err != nil {
 			t.Fatal(err)
@@ -225,6 +193,13 @@ printf '%%s\n' '{"type":"a(iiay)","data":[[0,2,[192,0,2,99]],[%d,2,[198,18,0,1]]
 		if err != nil || len(reply.Answer) != 1 || reply.Answer[0].(*dns.A).A.String() != "192.0.2.54" {
 			t.Fatalf("changed uplink DNS: %v %v", reply, err)
 		}
+		if err := os.WriteFile(stub, fmt.Appendf(nil, "#!/bin/sh\nprintf '%%s\\n' '{\"type\":\"a(iiay)\",\"data\":[[%d,2,[100,64,0,53]]]}'\n", link.Index), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		reply, err = network.ExchangeContext(ctx, query)
+		if err != nil || len(reply.Answer) != 1 || reply.Answer[0].(*dns.A).A.String() != "192.0.2.55" {
+			t.Fatalf("shared-space uplink DNS rejected: %v %v", reply, err)
+		}
 	default:
 		for _, tool := range []string{"unshare", "ip", "mount", "nft"} {
 			if _, err := exec.LookPath(tool); err != nil {
@@ -249,8 +224,10 @@ ip link set peer0 netns provider
 ip addr add 192.0.2.2/24 dev uplink0
 ip link set uplink0 up
 ip route add default dev uplink0
+ip route add 100.64.0.0/10 dev uplink0
 ip -n provider addr add 192.0.2.53/24 dev peer0
 ip -n provider addr add 192.0.2.54/24 dev peer0
+ip -n provider addr add 100.64.0.53/32 dev peer0
 ip -n provider link set peer0 up
 ip -n provider link set lo up
 ip tuntap add dev omihomo mode tun

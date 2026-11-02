@@ -42,18 +42,36 @@ func (n Network) links(ctx context.Context) ([]Link, error) {
 // Recoverable only admits connectivity failures. In particular, a certificate,
 // TLS protocol, proxy authentication or HTTP error is never recovery permission.
 func Recoverable(err error) bool {
-	var verify *tls.CertificateVerificationError
-	var authority x509.UnknownAuthorityError
-	var hostname x509.HostnameError
-	var invalid x509.CertificateInvalidError
-	var record tls.RecordHeaderError
-	var alert tls.AlertError
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if !Recoverable(cause) {
+				return false
+			}
+		}
+		return len(joined.Unwrap()) > 0
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		if _, joined := wrapped.Unwrap().(interface{ Unwrap() []error }); joined {
+			return Recoverable(wrapped.Unwrap())
+		}
+	}
+
+	var (
+		verify    *tls.CertificateVerificationError
+		authority x509.UnknownAuthorityError
+		hostname  x509.HostnameError
+		invalid   x509.CertificateInvalidError
+		record    tls.RecordHeaderError
+		alert     tls.AlertError
+	)
 	if errors.As(err, &verify) || errors.As(err, &authority) || errors.As(err, &hostname) ||
 		errors.As(err, &invalid) || errors.As(err, &record) || errors.As(err, &alert) {
 		return false
 	}
-	var op *net.OpError
-	var lookup *net.DNSError
+	var (
+		op     *net.OpError
+		lookup *net.DNSError
+	)
 	if errors.As(err, &lookup) && lookup.IsNotFound {
 		return false
 	}

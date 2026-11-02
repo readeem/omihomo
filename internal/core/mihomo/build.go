@@ -25,7 +25,6 @@ const (
 	// TUN routes what Tailscale already handles; without the others,
 	// dns-hijack swallows the *.ts.net lookups only Tailscale can answer.
 	tailscaleInterface = "tailscale0"
-	tailscaleDNS       = "100.100.100.100"
 	tailscaleDomain    = "+.ts.net"
 	// Sending the tailnet through the proxy means TUN has to see it before
 	// Tailscale's peer routes do. Tailscale's ip rules sit at 5210-5250 and
@@ -44,6 +43,7 @@ const (
 )
 
 var (
+	tailscaleDNS = "100.100.100.100"
 	// The loopback proxy for applications that do not use TUN.
 	mixedPort = 7890
 	// The loopback proxy tailscaled dials when the Tailscale integration is
