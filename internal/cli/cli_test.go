@@ -415,3 +415,76 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+func TestRuleEditsPreservePositionAndFlags(t *testing.T) {
+	serve(t, os.Getuid())
+	for _, args := range [][]string{
+		{"rule", "add", "DOMAIN", "first.example", "DIRECT"},
+		{"rule", "add", "DOMAIN", "second.example", "DIRECT"},
+		{"rule", "update", "1", "IP-CIDR", "10.0.0.0/8", "REJECT", "no-resolve"},
+		{"rule", "retarget", "domains", "REJECT"},
+	} {
+		if code, _, stderr := run(t, "", args...); code != cli.ExitOK {
+			t.Fatalf("%v: %d %s", args, code, stderr)
+		}
+	}
+	code, out, stderr := run(t, "", "rule", "list")
+	var listed protocol.RuleList
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &listed) != nil {
+		t.Fatalf("list: %d %s", code, stderr)
+	}
+	if len(listed.Rules) != 2 || listed.Rules[0].Type != "IP-CIDR" || listed.Rules[0].Params != "no-resolve" ||
+		listed.Rules[1].Value != "second.example" || listed.Rules[1].Target != "REJECT" {
+		t.Fatalf("edited rules: %+v", listed.Rules)
+	}
+	if code, _, stderr := run(t, "", "rule", "update", "3", "MATCH", "", "DIRECT"); code != cli.ExitNotFound {
+		t.Fatalf("missing index: %d %s", code, stderr)
+	}
+	if code, _, stderr := run(t, "", "rule", "reset-target", "domains"); code != cli.ExitOK {
+		t.Fatalf("reset: %d %s", code, stderr)
+	}
+}
+
+func TestRuleMovesPreserveOrderAndContents(t *testing.T) {
+	serve(t, os.Getuid())
+	for _, args := range [][]string{
+		{"rule", "add", "DOMAIN", "first.example", "DIRECT"},
+		{"rule", "add", "IP-CIDR", "10.0.0.0/8", "REJECT", "no-resolve"},
+		{"rule", "add", "MATCH", "", "DIRECT"},
+		{"rule", "move", "3", "1"},
+	} {
+		if code, _, stderr := run(t, "", args...); code != cli.ExitOK {
+			t.Fatalf("%v: %d %s", args, code, stderr)
+		}
+	}
+	assertRules := func(wantFirst string, wantLast string) {
+		t.Helper()
+		code, out, stderr := run(t, "", "rule", "list")
+		var listed protocol.RuleList
+		if code != cli.ExitOK || json.Unmarshal([]byte(out), &listed) != nil {
+			t.Fatalf("list: %d %s", code, stderr)
+		}
+		if len(listed.Rules) != 3 || listed.Rules[0].Type != wantFirst || listed.Rules[2].Type != wantLast {
+			t.Fatalf("order: %+v", listed.Rules)
+		}
+		for _, rule := range listed.Rules {
+			if rule.Type == "IP-CIDR" && (rule.Params != "no-resolve" || rule.Target != "REJECT") {
+				t.Fatalf("move changed contents: %+v", rule)
+			}
+		}
+	}
+	assertRules("MATCH", "IP-CIDR")
+	if code, _, stderr := run(t, "", "rule", "move", "1", "3"); code != cli.ExitOK {
+		t.Fatalf("move down: %d %s", code, stderr)
+	}
+	assertRules("DOMAIN", "MATCH")
+	if code, _, stderr := run(t, "", "rule", "move", "2", "2"); code != cli.ExitOK {
+		t.Fatalf("same position: %d %s", code, stderr)
+	}
+	for _, indices := range [][]string{{"0", "1"}, {"1", "0"}, {"4", "1"}, {"1", "4"}, {"-1", "2"}, {"x", "1"}} {
+		if code, _, _ := run(t, "", append([]string{"rule", "move"}, indices...)...); code == cli.ExitOK {
+			t.Fatalf("accepted indices %v", indices)
+		}
+		assertRules("DOMAIN", "MATCH")
+	}
+}

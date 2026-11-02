@@ -1039,3 +1039,49 @@ func TestSubscriptionChangePushesIdenticalGroups(t *testing.T) {
 		t.Fatalf("groups changed: %s -> %s", initial, got)
 	}
 }
+
+func TestExtendedRulesAndCategoryTargets(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	rules := []protocol.UserRule{
+		{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT", Params: "no-resolve src"},
+		{Type: "PROCESS-PATH-WILDCARD", Value: "/usr/*/browser", Target: "Proxy"},
+		{Type: "DOMAIN-REGEX", Value: "^example[.]com$", Target: "DIRECT"},
+		{Type: "AND", Value: "((DOMAIN,example.com),(NETWORK,UDP))", Target: "REJECT"},
+		{Type: "DST-PORT", Value: "80/443/8000-8080", Target: "DIRECT"},
+		{Type: "UID", Value: "1000-1005/2000", Target: "DIRECT"},
+		{Type: "DSCP", Value: "4/8-10", Target: "DIRECT"},
+		{Type: "MATCH", Target: "Proxy"},
+	}
+	s := protocol.Settings{Mode: protocol.ModeRule, CategoryTargets: protocol.CategoryTargets{Domains: "REJECT"}}
+	call[protocol.Status](t, c, protocol.OpApply, owned(s, rules...))
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	cfg, _ := h.core.Config()
+	if len(cfg.Profile.Rules[0].Params) != 2 || cfg.Profile.Rules[2].Target != "DIRECT" {
+		t.Fatalf("owner rules changed unexpectedly: %+v", cfg.Profile.Rules)
+	}
+	for _, r := range cfg.Profile.Rules[len(rules):] {
+		if protocol.RuleCategory(r.Type) == "domains" && r.Target != "REJECT" {
+			t.Fatalf("subscription category target not applied: %+v", r)
+		}
+	}
+	listed := call[protocol.RuleList](t, c, protocol.OpRules, nil)
+	if listed.Rules[0].Params != "no-resolve src" {
+		t.Fatalf("lost flags: %+v", listed)
+	}
+	bad := append([]protocol.UserRule{}, rules...)
+	bad[0].Params = "path=/tmp/escape"
+	if err := callErr(t, c, protocol.OpApply, owned(s, bad...)); err.Code != protocol.CodeInvalid {
+		t.Fatalf("unknown flag accepted: %v", err)
+	}
+	h.restart(t)
+	cfg, _ = h.core.Config()
+	for _, r := range cfg.Profile.Rules[len(rules):] {
+		if protocol.RuleCategory(r.Type) == "domains" && r.Target != "REJECT" {
+			t.Fatalf("override lost after restart: %+v", r)
+		}
+	}
+}

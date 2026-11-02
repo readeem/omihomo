@@ -88,11 +88,14 @@ Item {
   readonly property string runtimeKey: activeSubscription + "|" + startedMs
 
   property var subscriptions: []
+  property var ruleSets: []
+  property var subRules: []
   property var rules: []               // the owner's, editable
   property var injectedRules: []       // Omihomo's, read-only
   property var subscriptionRules: []   // the subscription's, read-only
   property var effectiveRules: []
   signal ruleAdded()
+  signal ruleMoved(int index)
   property var groups: []
   property var configEntries: ({})     // config name -> { name, type, alive, history }
   // Whether the groups stream has answered for this run of the core. An empty
@@ -536,6 +539,8 @@ Item {
   }
 
   function applyRules(data) {
+    ruleSets = data && Array.isArray(data.rule_sets) ? data.rule_sets : []
+    subRules = data && Array.isArray(data.sub_rules) ? data.sub_rules : []
     var parsed = Model.readRules(data)
     rules = parsed.own
     injectedRules = parsed.injected
@@ -681,16 +686,39 @@ Item {
   }
 
   // Returns whether the write started; the form waits for `ruleAdded`.
-  function addRule(type, value, target) {
+  function addRule(type, value, target, params, index) {
     if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0) return false
     reportDone("")
-    _ruleCall = edit(["rule", "add", "--", type, value, target], function(result, error) {
+    var args = ["rule", index > 0 ? "update" : "add", "--"]
+    if (index > 0) args.push(String(index))
+    args.push(type, value, target, params || "")
+    _ruleCall = edit(args, function(result, error) {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")
       root.reportDone("")
       root.ruleAdded()
     })
     return _ruleCall !== 0
+  }
+
+  function retargetRules(category, target) {
+    if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0) return
+    _ruleCall = edit(target === "" ? ["rule", "reset-target", "--", category] : ["rule", "retarget", "--", category, target], function(result, error) {
+      root._ruleCall = 0
+      if (error) return root.reportError(error, "rules")
+      root.ruleAdded()
+    })
+  }
+
+  function moveRule(from, to) {
+    if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0
+        || from < 1 || to < 1 || from > rules.length || to > rules.length || from === to) return
+    reportDone("")
+    _ruleCall = edit(["rule", "move", "--", String(from), String(to)], function(result, error) {
+      root._ruleCall = 0
+      if (error) return root.reportError(error, "rules")
+      root.ruleMoved(to)
+    })
   }
 
   function removeRule(index) {

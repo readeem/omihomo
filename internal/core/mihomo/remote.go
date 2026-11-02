@@ -36,6 +36,14 @@ func (c *Core) ParseLinks(data []byte) ([]map[string]any, error) {
 	return convert.ConvertsV2Ray(data)
 }
 
+func geodataRules(p core.Profile) []core.Rule {
+	rules := slices.Clone(p.Rules)
+	for _, sub := range p.SubRules {
+		rules = append(rules, sub...)
+	}
+	return rules
+}
+
 // geoRule finds the rule types that load geodata, on their own or nested in
 // a logic rule: GEOIP and SRC-GEOIP read the MMDB, GEOSITE the site list,
 // and IP-ASN and SRC-IP-ASN the ASN database.
@@ -48,7 +56,7 @@ func (c *Core) Geodata(p core.Profile) []core.GeodataFile {
 			need[strings.ToUpper(m[1])] = true
 		}
 	}
-	for _, r := range p.Rules {
+	for _, r := range geodataRules(p) {
 		scan(r.Type + "," + r.Value)
 	}
 	for _, rs := range p.RuleSets {
@@ -88,7 +96,7 @@ func siteCategories(p core.Profile) []string {
 			}
 		}
 	}
-	for _, r := range p.Rules {
+	for _, r := range geodataRules(p) {
 		scan(r.Type + "," + r.Value)
 	}
 	for _, rs := range p.RuleSets {

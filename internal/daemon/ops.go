@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -564,6 +565,17 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 }
 
 func checkSettings(s protocol.Settings) *protocol.Error {
+	for _, category := range protocol.RuleCategories {
+		target := *s.CategoryTargets.Field(category)
+		if target != "" {
+			if err := validName("category target", target); err != nil {
+				return err
+			}
+			if strings.Contains(target, ",") {
+				return fail(protocol.CodeInvalid, "a category target cannot contain a comma")
+			}
+		}
+	}
 	switch s.Mode {
 	case protocol.ModeRule, protocol.ModeGlobal, protocol.ModeDirect:
 	default:
@@ -624,14 +636,18 @@ func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error)
 	// Retain unavailable targets so the displayed indices match rules.json.
 	for _, r := range d.settings.Rules {
 		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target,
-			Source: protocol.SourceUser, Inactive: !hasTarget(d.profile, r.Target)})
+			Params: r.Params, Source: protocol.SourceUser, Inactive: !ruleActive(d.profile, r)})
 	}
 	for _, r := range runtime {
 		if r.Source != protocol.SourceUser {
 			out = append(out, r)
 		}
 	}
-	return protocol.RuleList{Rules: out}, nil
+	sets := make([]string, 0, len(d.profile.RuleSets))
+	for _, set := range d.profile.RuleSets {
+		sets = append(sets, set.Name)
+	}
+	return protocol.RuleList{Rules: out, RuleSets: sets, SubRules: slices.Sorted(maps.Keys(d.profile.SubRules))}, nil
 }
 
 func (d *server) closeConnections(ctx context.Context, args protocol.CloseArgs) (any, *protocol.Error) {

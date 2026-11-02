@@ -398,20 +398,97 @@ func (a *app) ruleCommand() *ffcli.Command {
 	return a.group("rule", "omihomo rule <command>", "list and change your rules",
 		a.call("list", "omihomo rule list [--pretty]", "list the runtime's rules in match order",
 			nargs(0, protocol.OpRules, nil)),
-		a.edit("add", "omihomo rule add [--pretty] <type> <value> <target>", "add one of your rules", protocol.OpRules,
+		a.edit("add", "omihomo rule add [--pretty] <type> <value> <target> [params]", "add one of your rules", protocol.OpRules,
 			func(cmd *ffcli.Command, rest []string) (change, error) {
-				if len(rest) != 3 {
-					return nil, usage(cmd, "rule add takes a type, a value and a target")
+				if len(rest) < 3 || len(rest) > 4 {
+					return nil, usage(cmd, "rule add takes a type, a value, a target and optional parameters")
 				}
 				r := protocol.UserRule{Type: strings.ToUpper(strings.TrimSpace(rest[0])), Value: rest[1], Target: rest[2]}
+				if len(rest) == 4 {
+					r.Params = rest[3]
+				}
 				return func(ctx context.Context, c *client.Client, v *protocol.ApplyArgs) error {
-					if err := checkName(ctx, c, r.Target, false); err != nil {
+					if err := checkName(ctx, c, r.Target, false); r.Type != "SUB-RULE" && err != nil {
 						return err
 					}
 					v.Rules = append(v.Rules, r)
 					return nil
 				}, nil
 			}),
+		a.edit("update", "omihomo rule update <index> <type> <value> <target> [params]", "edit a rule without changing its position", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
+				if len(rest) < 4 || len(rest) > 5 {
+					return nil, usage(cmd, "rule update takes index, type, value, target and optional parameters")
+				}
+				n, err := strconv.Atoi(rest[0])
+				if err != nil || n < 1 {
+					return nil, usage(cmd, "a rule index is a positive number")
+				}
+				r := protocol.UserRule{Type: strings.ToUpper(rest[1]), Value: rest[2], Target: rest[3]}
+				if len(rest) == 5 {
+					r.Params = rest[4]
+				}
+				return func(ctx context.Context, c *client.Client, v *protocol.ApplyArgs) error {
+					if n > len(v.Rules) {
+						return &exitError{ExitNotFound, fmt.Errorf("there is no rule %d of yours", n)}
+					}
+					if err := checkName(ctx, c, r.Target, false); r.Type != "SUB-RULE" && r.Target != v.Rules[n-1].Target && err != nil {
+						return err
+					}
+					v.Rules[n-1] = r
+					return nil
+				}, nil
+			}),
+		a.edit("move", "omihomo rule move [--pretty] <from> <to>", "move your rule to a 1-based priority position", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
+				if len(rest) != 2 {
+					return nil, usage(cmd, "rule move takes a source and destination index")
+				}
+				from, errFrom := strconv.Atoi(rest[0])
+				to, errTo := strconv.Atoi(rest[1])
+				if errFrom != nil || errTo != nil || from < 1 || to < 1 {
+					return nil, usage(cmd, "rule indices are positive numbers")
+				}
+				return func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs) error {
+					if from > len(v.Rules) || to > len(v.Rules) {
+						return &exitError{ExitNotFound, fmt.Errorf("source and destination must be within your %d rules", len(v.Rules))}
+					}
+					rule := v.Rules[from-1]
+					v.Rules = slices.Delete(v.Rules, from-1, from)
+					v.Rules = slices.Insert(v.Rules, to-1, rule)
+					return nil
+				}, nil
+			}),
+
+		a.edit("retarget", "omihomo rule retarget <category> <target>", "change every owner rule in a category atomically", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
+				if len(rest) != 2 || !slices.Contains(protocol.RuleCategories, rest[0]) {
+					return nil, usage(cmd, "choose a category: %s", strings.Join(protocol.RuleCategories, ", "))
+				}
+				return func(ctx context.Context, c *client.Client, v *protocol.ApplyArgs) error {
+					if err := checkName(ctx, c, rest[1], false); err != nil {
+						return err
+					}
+					*v.Settings.CategoryTargets.Field(rest[0]) = rest[1]
+					for i := range v.Rules {
+						if v.Rules[i].Type != "SUB-RULE" && protocol.RuleCategory(v.Rules[i].Type) == rest[0] {
+							v.Rules[i].Target = rest[1]
+						}
+					}
+					return nil
+				}, nil
+			}),
+		a.edit("reset-target", "omihomo rule reset-target <category>", "restore subscription targets in a category", protocol.OpRules,
+			func(cmd *ffcli.Command, rest []string) (change, error) {
+				if len(rest) != 1 || !slices.Contains(protocol.RuleCategories, rest[0]) {
+					return nil, usage(cmd, "choose a rule category")
+				}
+				return func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs) error {
+					*v.Settings.CategoryTargets.Field(rest[0]) = ""
+					return nil
+				}, nil
+			}),
+
 		a.edit("remove", "omihomo rule remove [--pretty] <index>", "remove your rule at a 1-based index", protocol.OpRules,
 			func(cmd *ffcli.Command, rest []string) (change, error) {
 				if len(rest) != 1 {

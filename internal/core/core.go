@@ -39,6 +39,7 @@ type Config struct {
 type Profile struct {
 	Proxies  []Proxy
 	Groups   []Group
+	SubRules map[string][]Rule
 	Rules    []Rule
 	RuleSets []RuleSet
 }
