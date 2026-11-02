@@ -11,7 +11,7 @@ TextField {
   required property Theme theme
   property bool highlighted: false
   implicitWidth: Style.space(120)
-  implicitHeight: Style.space(26)
+  implicitHeight: Math.max(Style.space(26), contentHeight + topPadding + bottomPadding)
   renderType: Text.NativeRendering
   font.family: theme.fontFamily
   font.pixelSize: Style.font.bodySmall

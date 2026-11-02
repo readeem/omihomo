@@ -186,14 +186,23 @@ ShellRoot {
           t.check(panel.ruleFormValue, "", "switching back also discards the draft")
           testRoot.type("3")
         } },
-      { then: function() { panel.focusRow("newCategory"); testRoot.key(Qt.Key_Return) } },
-      { name: "category editor", until: function() { return panel.categoryEditing === "new" && panel.editing !== null }, then: function() {
-          testRoot.type("Work")
+      { then: function() { testRoot.type("n") } },
+      { until: function() { return panel.editing !== null }, then: function() {
+          testRoot.type("discard-category.example")
+          panel.focusRow("ruleCategory")
+          panel.activateCursor()
+        } },
+      { until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+          testRoot.type("Discarded")
           testRoot.key(Qt.Key_Return)
         } },
-      { name: "category saved", until: function() { return !panel.service.ruleSaving && panel.categoryEditing === "" && panel.categoryChoices.length === 2 }, then: function() {
-          testRoot.categoryId = panel.categoryChoices[1].value
-          t.check(panel.expandedCategories[testRoot.categoryId] === true, false, "new categories start collapsed")
+      { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
+          t.check(panel.newRuleCategory, "Discarded", "a new category stays in the rule draft")
+          t.check(panel.service.ruleDocument.length, 4, "selecting a new category does not persist an empty category")
+          testRoot.key(Qt.Key_Escape)
+        } },
+      { then: function() {
+          t.check(panel.newRuleCategory, "", "cancel discards the draft category")
           testRoot.type("n")
         } },
       { until: function() { return panel.editing !== null }, then: function() {
@@ -203,20 +212,29 @@ ShellRoot {
         } },
       { name: "category selector", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
           t.check(panel.activeSelector.section, "ruleCategory", "categories use the shared selector")
+          testRoot.type("tttttttooooppppAAAA")
+          var field = panel.activeSelector.field
+          t.check(field.height >= field.contentHeight + field.topPadding + field.bottomPadding, true,
+            "category search fits its text: height=" + field.height + ", content=" + field.contentHeight + ", padding=" + (field.topPadding + field.bottomPadding))
+          testRoot.key(Qt.Key_A, Qt.ControlModifier)
           testRoot.type("Work")
           testRoot.key(Qt.Key_Return)
         } },
       { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
-          t.check(panel.ruleCategory, testRoot.categoryId, "the draft has the chosen category")
+          t.check(panel.newRuleCategory, "Work", "Enter chooses the category creation option")
+          t.check(panel.service.ruleDocument.length, 4, "the category is saved together with its first rule")
           t.check(testRoot.clickObject("ruleEnabled"), true, "the individual rule toggle is clickable")
         } },
       { then: function() { testRoot.key(Qt.Key_Return) } },
       { name: "disabled categorized rule saved", until: function() { return !panel.service.ruleSaving && panel.service.rules.length === 5 }, then: function() {
           var rule = panel.service.rules[4]
+          testRoot.categoryId = rule.category
+          t.check(panel.categoryChoices[1].label, "Work", "saving creates the named category")
+          t.check(panel.expandedCategories[testRoot.categoryId] === true, false, "new categories start collapsed")
           t.check(rule.category, testRoot.categoryId, "the saved rule belongs to the category")
           t.check(rule.disabled, true, "the individual toggle is persisted")
           t.check(rule.inactive, true, "a disabled rule cannot match traffic")
-          panel.focusRow("expandCategories")
+          panel.focusRow("toggleCategories")
           testRoot.key(Qt.Key_Return)
         } },
       { then: function() {
@@ -235,7 +253,7 @@ ShellRoot {
         } },
       { until: function() { return !panel.service.ruleSaving && panel.service.rules[4].inactive }, then: function() {
           t.check(panel.service.rules[4].disabled, false, "disabling a category preserves the rule's own toggle")
-          panel.focusRow("collapseCategories")
+          panel.focusRow("toggleCategories")
           testRoot.key(Qt.Key_Return)
         } },
       { then: function() {
@@ -271,6 +289,25 @@ ShellRoot {
       { until: function() { return !panel.service.ruleSaving && panel.service.ruleDocument[3].category !== undefined }, then: function() {
           t.check(panel.service.ruleDocument[3].category.id, testRoot.categoryId, "Ctrl+Up reorders the category")
           t.check(panel.cursorRow.s, "category", "the cursor follows the moved category")
+          panel.expandCategory(testRoot.categoryId)
+        } },
+      { then: function() { panel.focusRow("rule", 3); testRoot.key(Qt.Key_Return) } },
+      { until: function() { return panel.editingRule === 4 && panel.editing !== null }, then: function() {
+          panel.focusRow("ruleCategory")
+          panel.activateCursor()
+        } },
+      { until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+          testRoot.type("Moved")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
+          t.check(panel.newRuleCategory, "Moved", "editing an existing rule can create a category")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.editingRule === 0 && panel.service.ruleDocument[4].category !== undefined }, then: function() {
+          t.check(panel.service.ruleDocument[4].category.name, "Moved", "editing saves the new category with the existing rule")
+          t.check(panel.categoryChoices.some(function(c) { return c.value === testRoot.categoryId }), false, "moving the last rule removes the old category")
+          t.check(panel.service.rules.length, 5, "moving between categories preserves the rule")
         } }
     ]
   }

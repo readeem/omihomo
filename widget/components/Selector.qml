@@ -14,15 +14,21 @@ Item {
   required property Item pickerHost
   property string placeholderText: "Filter choices"
   property bool picking: false
+  property string createLabel: ""
+  readonly property string createName: search.text.trim()
+  readonly property bool canCreate: createLabel !== "" && createName !== ""
+    && !choices.some(function(choice) { return choice.label.toLowerCase() === createName.toLowerCase() })
   readonly property alias field: search
   readonly property alias list: options
   readonly property string label: {
     var choice = choices.find(function(choice) { return choice.value === value })
     return choice ? choice.label : value
   }
-  readonly property var filtered: Model.filterChoices(choices, search.text)
+  readonly property var filtered: Model.filterChoices(choices, search.text).concat(canCreate
+    ? [{ value: null, label: createLabel + " “" + createName + "”", description: "+" }] : [])
 
   signal selected(string value)
+  signal created(string name)
 
   function openPicker() {
     if (panel.activeSelector && panel.activeSelector !== selector) panel.activeSelector.cancel()
@@ -42,8 +48,10 @@ Item {
   function pick(index) {
     var choice = filtered[index]
     if (!choice) return
+    var name = createName
     cancel()
-    selected(choice.value)
+    if (choice.value === null) created(name)
+    else selected(choice.value)
   }
 
   implicitWidth: trigger.implicitWidth

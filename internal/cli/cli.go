@@ -249,6 +249,7 @@ func (a *app) edit(name, shortUsage, help, show string, parse func(cmd *ffcli.Co
 		if err := ch(ctx, c, &v); err != nil {
 			return err
 		}
+		v.Rules = protocol.PruneCategories(v.Rules)
 		var result json.RawMessage
 		if err := c.Call(ctx, protocol.OpApply, v, &result); err != nil {
 			return err

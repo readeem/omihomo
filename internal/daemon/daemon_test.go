@@ -866,3 +866,22 @@ func TestDNSDestinationSettings(t *testing.T) {
 		t.Fatalf("could not restore default: %+v", st)
 	}
 }
+
+func TestEmptyUserCategoriesAreRemovedOnApply(t *testing.T) {
+	h := serve(t, os.Getuid())
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{},
+		protocol.RuleEntry{Category: &protocol.RuleCategory{ID: "11111111111111111111111111111111", Name: "Empty", Rules: []protocol.RuleEntry{}}},
+		protocol.RuleEntry{Type: "MATCH", Target: "DIRECT"},
+	))
+	listed := call[protocol.RuleList](t, c, protocol.OpRules, nil)
+	if len(listed.Entries) != 1 || listed.Entries[0].Type != "MATCH" {
+		t.Fatalf("empty category was kept: %+v", listed)
+	}
+	h.restart(t)
+	c = h.dial(t)
+	listed = call[protocol.RuleList](t, c, protocol.OpRules, nil)
+	if len(listed.Entries) != 1 || listed.Entries[0].Type != "MATCH" {
+		t.Fatalf("empty category returned after restart: %+v", listed)
+	}
+}

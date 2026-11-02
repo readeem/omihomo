@@ -22,6 +22,7 @@ import (
 	"github.com/readeem/omihomo/internal/core/fakecore"
 	"github.com/readeem/omihomo/internal/daemon"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/settings"
 )
 
 // TestMain keeps every test away from the account's own settings files.
@@ -508,9 +509,8 @@ func TestNamedCategoriesAndRuleToggles(t *testing.T) {
 		}
 		return listed
 	}
-	listed := command("rule", "category", "add", "Work")
+	listed := command("rule", "add", "DOMAIN", "first.example", "DIRECT", "", "", "true", "Work")
 	id := listed.Entries[0].Category.ID
-	command("rule", "add", "DOMAIN", "first.example", "DIRECT", "", id, "true")
 	command("rule", "add", "DOMAIN", "second.example", "DIRECT", "", id, "false")
 	command("rule", "category", "target", id, "REJECT")
 	listed = command("rule", "add", "DOMAIN", "third.example", "DIRECT", "", id, "true")
@@ -552,5 +552,46 @@ func TestNamedCategoriesAndRuleToggles(t *testing.T) {
 	listed = command("rule", "category", "remove", id)
 	if len(listed.Entries) != 4 || !listed.Rules[1].Disabled {
 		t.Fatalf("ungroup lost rules or toggle: %+v", listed)
+	}
+}
+
+func TestCategoriesAreCreatedWithRulesAndRemovedWhenEmpty(t *testing.T) {
+	serve(t, os.Getuid())
+	command := func(args ...string) protocol.RuleList {
+		t.Helper()
+		code, out, stderr := run(t, "", args...)
+		if code != cli.ExitOK {
+			t.Fatalf("%v: %d %s", args, code, stderr)
+		}
+		var listed protocol.RuleList
+		if err := json.Unmarshal([]byte(out), &listed); err != nil {
+			t.Fatal(err)
+		}
+		return listed
+	}
+	listed := command("rule", "add", "DOMAIN", "first.example", "DIRECT", "", "", "true", "First")
+	old := listed.Entries[0].Category.ID
+	listed = command("rule", "update", "1", "DOMAIN", "first.example", "DIRECT", "", "", "true", "Second")
+	if len(listed.Entries) != 1 || listed.Entries[0].Category.ID == old || listed.Entries[0].Category.Name != "Second" || len(listed.Entries[0].Category.Rules) != 1 {
+		t.Fatalf("move left an empty category: %+v", listed)
+	}
+	listed = command("rule", "remove", "1")
+	if len(listed.Entries) != 0 || len(listed.Rules) != 0 {
+		t.Fatalf("deleting the last rule kept its category: %+v", listed)
+	}
+	dir, err := settings.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := settings.Load(dir)
+	if err != nil || len(saved.Rules) != 0 {
+		t.Fatalf("saved empty categories: %+v, %v", saved, err)
+	}
+	if code, _, _ := run(t, "", "rule", "add", "IP-CIDR", "invalid", "DIRECT", "", "", "true", "Refused"); code == cli.ExitOK {
+		t.Fatal("an invalid rule created a category")
+	}
+	listed = command("rule", "list")
+	if len(listed.Entries) != 0 {
+		t.Fatalf("a refused rule left a category: %+v", listed)
 	}
 }

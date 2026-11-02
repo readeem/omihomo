@@ -2,7 +2,8 @@
 
 The rule editor and routing use the same order. User categories and standalone rules share one
 ordered list, with ordered rules inside each category. Categories cannot nest. Category IDs stay
-stable across renames. Existing flat rule arrays remain valid and retain their order.
+stable across renames. Existing flat rule arrays remain valid and retain their order. New categories
+are created with their first rule in one transaction; empty user categories are removed automatically.
 
 Disabling a category excludes its rules without changing their individual enabled states. A
 category target change is one bulk edit of its current rules, with no inherited destination.

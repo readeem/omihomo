@@ -695,12 +695,12 @@ Item {
   }
 
   // Returns whether the write started; the form waits for `ruleAdded`.
-  function addRule(type, value, target, params, index, category, enabled) {
+  function addRule(type, value, target, params, index, category, enabled, newCategory) {
     if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0) return false
     reportDone("")
     var args = ["rule", index > 0 ? "update" : "add", "--"]
     if (index > 0) args.push(String(index))
-    args.push(type, value, target, params || "", category || "", enabled === false ? "false" : "true")
+    args.push(type, value, target, params || "", category || "", enabled === false ? "false" : "true", newCategory || "")
     _ruleCall = edit(args, function(result, error) {
       root._ruleCall = 0
       if (error) return root.reportError(error, "rules")

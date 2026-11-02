@@ -21,40 +21,13 @@ ColumnLayout {
 
   spacing: Style.space(8)
 
-  RowLayout {
-    Layout.fillWidth: true
-    spacing: Style.space(6)
-    SmallButton {
-      theme: view.theme
-      text: "New category"
-      hasCursor: view.panel.at("newCategory")
-      onHovered: function(on) { if (on) view.panel.focusRow("newCategory") }
-      onClicked: view.panel.editCategory("")
-    }
-    Item { Layout.fillWidth: true }
-    SmallButton {
-      theme: view.theme
-      text: "Collapse all"
-      hasCursor: view.panel.at("collapseCategories")
-      onHovered: function(on) { if (on) view.panel.focusRow("collapseCategories") }
-      onClicked: view.panel.expandAllCategories(false)
-    }
-    SmallButton {
-      theme: view.theme
-      text: "Expand all"
-      hasCursor: view.panel.at("expandCategories")
-      onHovered: function(on) { if (on) view.panel.focusRow("expandCategories") }
-      onClicked: view.panel.expandAllCategories(true)
-    }
-  }
-
   PanelField {
     id: categoryNameField
     panel: view.panel
     theme: view.theme
     visible: view.panel.categoryEditing !== ""
     Layout.fillWidth: true
-    placeholderText: view.panel.categoryEditing === "new" ? "New category name" : "Category name"
+    placeholderText: "Category name"
     onActiveFocusChanged: view.panel.fieldFocusChanged(categoryNameField, activeFocus)
     onAccepted: view.panel.saveCategory()
     Keys.onEscapePressed: view.panel.handleEscape()
@@ -151,11 +124,25 @@ ColumnLayout {
     }
   }
 
-  PanelText {
-    theme: view.theme
+  RowLayout {
     Layout.fillWidth: true
-    text: "First match wins · categories run in order"
-    color: view.theme.dim
+    spacing: Style.space(6)
+    InlineAction {
+      theme: view.theme
+      objectName: "toggleCategories"
+      iconText: view.panel.allCategoriesExpanded ? "⇈" : "⇊"
+      tooltipText: view.panel.allCategoriesExpanded ? "Collapse all categories" : "Expand all categories"
+      hasCursor: view.panel.at("toggleCategories")
+      onHovered: function(on) { if (on) view.panel.focusRow("toggleCategories") }
+      onClicked: view.panel.toggleAllCategories()
+    }
+    PanelText {
+      theme: view.theme
+      Layout.fillWidth: true
+      text: "First match wins · categories run in order"
+      color: view.theme.dim
+      wrapMode: Text.WordWrap
+    }
   }
 
   ScrollList {
@@ -279,7 +266,13 @@ ColumnLayout {
       panel: view.panel
       section: "ruleCategory"
       pickerHost: pickerDock
-      placeholderText: "Filter categories"
+      placeholderText: "Filter or create a category"
+      createLabel: "Create category"
+      onCreated: function(name) {
+        view.panel.newRuleCategory = name
+        view.panel.ruleCategory = "new"
+        view.panel.openRuleForm()
+      }
       choices: view.panel.categoryChoices
       value: view.panel.ruleCategory
       Layout.maximumWidth: (view.width - Style.space(16)) / 3

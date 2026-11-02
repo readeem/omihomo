@@ -32,6 +32,7 @@ Panel {
   property string savedRuleTarget: ""
   property string ruleParams: ""
   property string ruleCategory: ""
+  property string newRuleCategory: ""
   property bool ruleEnabled: true
   property var expandedCategories: ({})
   property string categoryEditing: ""
@@ -39,7 +40,7 @@ Panel {
   readonly property var categoryChoices: [{ value: "", label: "No category" }].concat(
     omihomo.ruleDocument.filter(function(e) { return !!e.category }).map(function(e) {
       return { value: e.category.id, label: e.category.name }
-    }))
+    })).concat(newRuleCategory !== "" ? [{ value: "new", label: newRuleCategory }] : [])
   property int ruleTargetIndex: 0
   readonly property var activeSelector: rulesView.typeSelector.picking ? rulesView.typeSelector
     : rulesView.categorySelector.picking ? rulesView.categorySelector
@@ -155,9 +156,12 @@ Panel {
     expandedCategories = expanded
   }
 
-  function expandAllCategories(expand) {
+  readonly property bool allCategoriesExpanded: ruleCategories.length > 0
+    && ruleCategories.every(function(c) { return expandedCategories[c.id] === true })
+
+  function toggleAllCategories() {
     var expanded = {}
-    if (expand) ruleCategories.forEach(function(c) { expanded[c.id] = true })
+    if (!allCategoriesExpanded) ruleCategories.forEach(function(c) { expanded[c.id] = true })
     expandedCategories = expanded
   }
 
@@ -177,7 +181,7 @@ Panel {
 
   function editCategory(id) {
     cancelRuleEdit()
-    categoryEditing = id || "new"
+    categoryEditing = id
     var category = ruleCategories.find(function(c) { return c.id === id })
     rulesView.categoryField.text = category ? category.name : ""
     beginEdit(rulesView.categoryField)
@@ -186,12 +190,11 @@ Panel {
   function saveCategory() {
     var name = rulesView.categoryField.text.trim()
     if (name === "" || omihomo.ruleSaving) return
-    omihomo.categoryAction(categoryEditing === "new" ? "add" : "rename", categoryEditing === "new" ? name : categoryEditing,
-      categoryEditing === "new" ? undefined : name, function() {
-        root.categoryEditing = ""
-        rulesView.categoryField.text = ""
-        root.endEdit()
-      })
+    omihomo.categoryAction("rename", categoryEditing, name, function() {
+      root.categoryEditing = ""
+      rulesView.categoryField.text = ""
+      root.endEdit()
+    })
   }
 
   function retargetCategory(category) {
@@ -270,7 +273,7 @@ Panel {
       rows.push({ s: "subUrl" }, { s: "subSubmit" })
       break
     case "rules":
-      rows.push({ s: "newCategory" }, { s: "collapseCategories" }, { s: "expandCategories" }, { s: "ruleTest" })
+      rows.push({ s: "ruleTest" }, { s: "toggleCategories" })
       for (i = 0; i < ruleEntries.length; i++) if (ruleEntries[i].s) rows.push({ s: ruleEntries[i].s, i: ruleEntries[i].i })
       rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleCategory" }, { s: "ruleTarget" }, { s: "ruleEnabled" })
       break
@@ -359,9 +362,7 @@ Panel {
     case "sub": activateSubscriptionAt(cursorRow.i); break
     case "subUrl": beginEdit(subscriptionsView.urlField); break
     case "subSubmit": submitSubForm(); break
-    case "newCategory": editCategory(""); break
-    case "collapseCategories": expandAllCategories(false); break
-    case "expandCategories": expandAllCategories(true); break
+    case "toggleCategories": toggleAllCategories(); break
     case "category": expandCategory(ruleCategories[cursorRow.i].id); break
     case "ruleCategory": rulesView.categorySelector.openPicker(); break
     case "ruleEnabled": ruleEnabled = !ruleEnabled; openRuleForm(); break
@@ -696,6 +697,7 @@ Panel {
     rulesView.valueField.text = rule.value
     ruleParams = rule.params || ""
     ruleCategory = rule.category || ""
+    newRuleCategory = ""
     ruleEnabled = !rule.disabled
     ruleTargetIndex = Math.max(0, ruleTargets.findIndex(function(target) { return target.value === rule.target }))
     openRuleForm()
@@ -705,6 +707,7 @@ Panel {
     if (activeSelector && view === "rules") activeSelector.cancel()
     editingRule = 0
     ruleCategory = ""
+    newRuleCategory = ""
     ruleEnabled = true
     savedRuleTarget = ""
     ruleParams = ""
@@ -730,7 +733,7 @@ Panel {
       beginEdit(rulesView.valueField)
       return
     }
-    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget, ruleParams, editingRule, ruleCategory, ruleEnabled)
+    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget, ruleParams, editingRule, ruleCategory === "new" ? "" : ruleCategory, ruleEnabled, ruleCategory === "new" ? newRuleCategory : "")
   }
 
   function openFilter() {
@@ -834,6 +837,7 @@ Panel {
       root.savedRuleTarget = ""
       root.ruleParams = ""
       root.ruleCategory = ""
+      root.newRuleCategory = ""
       root.ruleEnabled = true
       rulesView.valueField.text = ""
       root.endEdit()

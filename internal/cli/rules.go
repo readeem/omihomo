@@ -138,6 +138,17 @@ func (a *app) ruleCommand() *ffcli.Command {
 					}
 				}
 			}
+			if len(args) > 6 && args[6] != "" {
+				if category != "" {
+					return fmt.Errorf("choose an existing category or a new name, not both")
+				}
+				var id [16]byte
+				if _, err := rand.Read(id[:]); err != nil {
+					return err
+				}
+				category = hex.EncodeToString(id[:])
+				v.Rules = append(v.Rules, protocol.RuleEntry{Category: &protocol.RuleCategory{ID: category, Name: args[6], Rules: []protocol.RuleEntry{}}})
+			}
 			return assignRule(v, r, index, category)
 		}
 	}
@@ -191,8 +202,8 @@ func (a *app) ruleCommand() *ffcli.Command {
 	}
 	return a.group("rule", "omihomo rule <command>", "manage ordered rules and named categories",
 		a.call("list", "omihomo rule list [--pretty]", "list rules and categories in match order", nargs(0, protocol.OpRules, nil)),
-		edit("add", "omihomo rule add <type> <value> <target> [params] [category-id] [enabled]", "add a rule", 3, 6, 0, save(false)),
-		edit("update", "omihomo rule update <index> <type> <value> <target> [params] [category-id] [enabled]", "edit or move a rule between categories", 4, 7, 1, save(true)),
+		edit("add", "omihomo rule add <type> <value> <target> [params] [category-id] [enabled] [new-category]", "add a rule", 3, 7, 0, save(false)),
+		edit("update", "omihomo rule update <index> <type> <value> <target> [params] [category-id] [enabled] [new-category]", "edit or move a rule between categories", 4, 8, 1, save(true)),
 		edit("enable", "omihomo rule enable <index>", "enable a rule", 1, 1, 1, toggleRule(true)),
 		edit("disable", "omihomo rule disable <index>", "disable a rule", 1, 1, 1, toggleRule(false)),
 		edit("move", "omihomo rule move <from> <to>", "reorder rules within their category", 2, 2, 2, func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs, args []string) error {
@@ -234,14 +245,6 @@ func (a *app) ruleCommand() *ffcli.Command {
 			return nil
 		}),
 		a.group("category", "omihomo rule category <command>", "manage named rule categories",
-			edit("add", "omihomo rule category add <name>", "create an empty category", 1, 1, 0, func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs, args []string) error {
-				var id [16]byte
-				if _, err := rand.Read(id[:]); err != nil {
-					return err
-				}
-				v.Rules = append(v.Rules, protocol.RuleEntry{Category: &protocol.RuleCategory{ID: hex.EncodeToString(id[:]), Name: args[0], Rules: []protocol.RuleEntry{}}})
-				return nil
-			}),
 			edit("rename", "omihomo rule category rename <id> <name>", "rename a category", 2, 2, 0, func(_ context.Context, _ *client.Client, v *protocol.ApplyArgs, args []string) error {
 				at, err := categoryAt(v.Rules, args[0])
 				if err != nil {

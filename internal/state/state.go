@@ -131,9 +131,7 @@ func (s *Store) Settings() (Settings, error) {
 	if err := s.read(settingsFile, &out); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Settings{}, err
 	}
-	if out.Rules == nil {
-		out.Rules = []protocol.RuleEntry{}
-	}
+	out.Rules = protocol.PruneCategories(out.Rules)
 	return out, nil
 }
 

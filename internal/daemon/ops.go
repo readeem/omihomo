@@ -567,7 +567,7 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	if (in.Tailscale && !next.Tailscale || in.TailnetProxy && !next.TailnetProxy) && !d.cfg.tailscalePresent() {
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
 	}
-	rules := append([]protocol.RuleEntry{}, args.Rules...)
+	rules := protocol.PruneCategories(args.Rules)
 	if in == next.Settings && reflect.DeepEqual(rules, next.Rules) {
 		return d.status(), nil
 	}

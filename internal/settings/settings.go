@@ -54,9 +54,7 @@ func Load(dir string) (protocol.ApplyArgs, error) {
 	if err := read(filepath.Join(dir, rulesFile), &out.Rules); err != nil {
 		return protocol.ApplyArgs{}, err
 	}
-	if out.Rules == nil {
-		out.Rules = []protocol.RuleEntry{}
-	}
+	out.Rules = protocol.PruneCategories(out.Rules)
 	return out, nil
 }
 
@@ -92,10 +90,7 @@ type File struct {
 // Encode is what Save writes for v: indented JSON without the settings at
 // their zero value.
 func Encode(v protocol.ApplyArgs) []File {
-	rules := v.Rules
-	if rules == nil {
-		rules = []protocol.RuleEntry{}
-	}
+	rules := protocol.PruneCategories(v.Rules)
 	return []File{{settingsFile, indent(v.Settings)}, {rulesFile, indent(rules)}}
 }
 
