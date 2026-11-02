@@ -3,6 +3,7 @@ import QtTest
 import Quickshell
 import qs.Ui
 import "omihomo/widget" as Omihomo
+import "omihomo/widget/components" as Components
 
 ShellRoot {
   id: testRoot
@@ -10,6 +11,12 @@ ShellRoot {
   function key(name, modifiers) { events.keyClick(name, modifiers || 0, -1) }
   function type(text) {
     for (var i = 0; i < text.length; i++) events.keyClickChar(text[i], 0, -1)
+  }
+
+  function checkNameFits(item) {
+    if (item.truncated !== undefined)
+      t.check(item.truncated, false, "fitting names retain all text: " + item.text)
+    for (var i = 0; i < item.children.length; i++) checkNameFits(item.children[i])
   }
 
   property string categoryId: ""
@@ -73,6 +80,19 @@ ShellRoot {
         open()
       }
     }
+    Column {
+      id: nameFixtures
+      x: -1000
+      Repeater {
+        model: ["DIRECT", "🇺🇸 Example 🦅LA", "🇯🇵Node🚀→ X", "👨‍💻 Dev👍🏽X"]
+        Components.NameText {
+          required property string modelData
+          theme: panel.theme
+          text: modelData
+          width: implicitWidth
+        }
+      }
+    }
     TestEvent { id: events }
   }
 
@@ -81,6 +101,7 @@ ShellRoot {
     name: "PANEL"
     steps: [
       { name: "panel ready", until: function() { return panel.service.proxiesLoaded && panel.service.rules.length === 4 }, then: function() {
+          testRoot.checkNameFits(nameFixtures)
           testRoot.type("3")
         } },
       { then: function() {

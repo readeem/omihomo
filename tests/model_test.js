@@ -449,18 +449,30 @@ test("the config filter matches case-insensitively anywhere in the name", () => 
   assert.deepEqual(Model.filterNames(names, ""), names)
 })
 
-test("leading and trailing emoji split off a name with their spaces", () => {
-  assert.deepEqual(Model.nameParts("🇯🇵 Node A 🚀"), { mark: "🇯🇵", rest: "Node A", tail: ["🚀"] })
-  assert.deepEqual(Model.nameParts("🚀  Fast"), { mark: "🚀", rest: "Fast", tail: [] })
-  assert.deepEqual(Model.nameParts("☁️ Cloud"), { mark: "☁️", rest: "Cloud", tail: [] })
-  assert.deepEqual(Model.nameParts("🇯🇵Node"), { mark: "", rest: "🇯🇵Node", tail: [] })
-  assert.deepEqual(Model.nameParts("DIRECT"), { mark: "", rest: "DIRECT", tail: [] })
-  assert.deepEqual(Model.nameParts("🇯🇵 Node B 🚀🔥 "), { mark: "🇯🇵", rest: "Node B", tail: ["🚀", "🔥"] })
-  assert.deepEqual(Model.nameParts("🇯🇵 Node B 🚀 🟢"), { mark: "🇯🇵", rest: "Node B", tail: ["🚀", "🟢"] })
-  assert.deepEqual(Model.nameParts("Node🚀"), { mark: "", rest: "Node🚀", tail: [] })
-  assert.deepEqual(Model.nameParts("👨‍💻 Dev 👍🏽"), { mark: "👨‍💻", rest: "Dev", tail: ["👍🏽"] })
-  // An emoji-only name keeps its emoji as the mark rather than as an empty name with a tail.
-  assert.deepEqual(Model.nameParts("🇯🇵 🚀"), { mark: "🇯🇵", rest: "🚀", tail: [] })
+test("name emoji are isolated even beside letters and symbols", () => {
+  assert.deepEqual(Model.nameParts("🇺🇸 Example 🦅LA"), [
+    { text: "🇺🇸", emoji: true }, { text: " Example ", emoji: false },
+    { text: "🦅", emoji: true }, { text: "LA", emoji: false }
+  ])
+  assert.deepEqual(Model.nameParts("🇷🇺 Node #1-3 🚀➜ 🇫🇮"), [
+    { text: "🇷🇺", emoji: true }, { text: " Node #1-3 ", emoji: false },
+    { text: "🚀", emoji: true }, { text: "➜", emoji: true },
+    { text: " ", emoji: false }, { text: "🇫🇮", emoji: true }
+  ])
+  assert.deepEqual(Model.nameParts("🇯🇵Node🚀"), [
+    { text: "🇯🇵", emoji: true }, { text: "Node", emoji: false }, { text: "🚀", emoji: true }
+  ])
+})
+
+test("name splitting preserves joined emoji, modifiers, and whitespace", () => {
+  for (const text of ["👨‍💻", "👍🏽", "☁️", "🏴\u{e0067}\u{e0062}\u{e007f}"]) {
+    assert.deepEqual(Model.nameParts(text), [{ text, emoji: true }])
+  }
+  for (const text of ["", "DIRECT", "  Node  ", "<b>Node</b>"]) {
+    assert.deepEqual(Model.nameParts(text), text === "" ? [] : [{ text, emoji: false }])
+  }
+  const text = " 🇯🇵 Node B 🚀🔥  "
+  assert.equal(Model.nameParts(text).map(part => part.text).join(""), text)
 })
 
 test("an emoji keys by its code points", () => {
