@@ -21,9 +21,10 @@ Item {
   readonly property bool checked: updater.availableVersion !== ""
 
   readonly property alias selector: dnsSelector
+  readonly property alias hosting: hostingSection
 
   function reveal(section, index) {
-    var item = rows[section]
+    var item = rows[section] || hostingSection.itemFor(section, index)
     if (!item) return
     Qt.callLater(function() {
       var top = item.mapToItem(settingsScroll.contentItem, 0, 0).y
@@ -45,7 +46,10 @@ Item {
     contentWidth: width
     contentHeight: settingsColumn.implicitHeight
     // Arming uninstall grows the last card with its warning; keep it in view.
-    onContentHeightChanged: if (panel.uninstallArmed) contentY = Math.max(0, contentHeight - height)
+    onContentHeightChanged: {
+      if (panel.uninstallArmed) contentY = Math.max(0, contentHeight - height)
+      else if (hostingSection.form !== "" && panel.cursorRow) view.reveal(panel.cursorRow.s, panel.cursorRow.i)
+    }
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     interactive: contentHeight > height
@@ -58,7 +62,7 @@ Item {
 
       PanelText {
         theme: view.theme
-        visible: view.panel.errorAt("settings")
+        visible: view.panel.errorAt("settings") && hostingSection.form === ""
         Layout.fillWidth: true
         text: "▲ " + view.service.lastError
         color: view.theme.urgent
@@ -212,6 +216,13 @@ Item {
         }
       }
 
+      HostingSection {
+        id: hostingSection
+        panel: view.panel
+        pickerHost: pickerDock
+        Layout.fillWidth: true
+      }
+
       SectionLine {
         theme: view.theme
         Layout.fillWidth: true
@@ -356,7 +367,7 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    visible: dnsSelector.picking
+    visible: dnsSelector.picking || hostingSection.protocolSelector.picking
     height: visible ? implicitHeight : 0
   }
 }

@@ -18,6 +18,10 @@ ListView {
   onKeyedEntriesChanged: syncEntries()
   onEntryKeyChanged: syncEntries()
 
+  function entryAt(index) {
+    return index >= 0 && index < stableRows.count ? stableRows.get(index).entry : null
+  }
+
   function syncEntries() {
     if (keyedEntries === null || !entryKey) return
     var oldY = contentY
@@ -45,7 +49,6 @@ ListView {
       stableRows.remove(keyedEntries.length, stableRows.count - keyedEntries.length)
       structural = true
     }
-    // Delegate heights settle after the model signals; retain the visible row and its offset.
     if (structural && anchorKey !== "") Qt.callLater(function() {
       scrollList.forceLayout()
       var at = -1

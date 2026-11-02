@@ -245,9 +245,13 @@ func (s *Store) write(name string, v any) error {
 	if err != nil {
 		return fmt.Errorf("write %s: %w", name, err)
 	}
-	if d, err := os.Open(filepath.Dir(path)); err == nil {
-		d.Sync()
-		d.Close()
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("sync %s: %w", name, err)
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", name, err)
 	}
 	return nil
 }

@@ -33,8 +33,11 @@ description = "Scan the release build for reachable vulnerabilities"
 run = "govulncheck -tags with_gvisor,no_easytier ./..."
 
 [tasks.hosting-experiment]
-description = "Qualify the pinned reverse helper; requires dist/hosting/xray (see tests/hosting)"
-run = "python3 -u tests/hosting/experiment.py --xray dist/hosting/xray"
+description = "Qualify the embedded adapter against pinned Xray (see tests/hosting)"
+run = [
+  "go build -o dist/hosting/publisher ./tests/hosting/publisher",
+  "python3 -u tests/hosting/experiment.py --xray dist/hosting/xray --adapter dist/hosting/publisher",
+]
 
 [tasks.security]
 description = "Signed bootstrap/release tests and isolated privileged package adapter tests"

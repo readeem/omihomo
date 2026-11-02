@@ -1,14 +1,8 @@
-# Native VLESS reverse experiment
+# Embedded hosting acceptance
 
-This is the first adapter qualification gate for hosting, **not a shipped
-hosting feature**. It demonstrates TCP and concurrent UDP interoperability,
-then reproduces two blockers in the unmodified Xray helper. Exit status zero
-means the experiment completed; `RESULT` explicitly reports that the helper
-fails qualification. It does not claim the complete hosting acceptance suite.
-
-No daemon, CLI, widget, package dependency, system service or installed setting
-is changed. There is no exposure on a clean install. The experiment needs no
-external relay, production credentials, container runtime or control service.
+The primary gate runs the real standalone Xray relay against the embedded
+adapter and real Manager admission/lifecycle state. Native Xray publisher mode
+(`--adapter` omitted) is an optional comparison and is not the production gate.
 
 ## Reproduce
 
@@ -46,7 +40,8 @@ with (directory / 'xray').open('xb') as output:
     output.write(binary)
 (directory / 'xray').chmod(0o700)
 PY
-python3 -u tests/hosting/experiment.py --xray dist/hosting/xray
+go build -o dist/hosting/publisher ./tests/hosting/publisher
+python3 -u tests/hosting/experiment.py --xray dist/hosting/xray --adapter dist/hosting/publisher
 ```
 
 If the pinned executable already exists, run only the last command. The
@@ -58,7 +53,7 @@ with `0600` files, and are removed on success, failure and cancellation.
 Raw engine output stays in bounded in-memory queues and is never printed:
 Xray's rejection messages can include UUIDs.
 
-The global deadline is 60 seconds, readiness follows engine events and actual
+The global deadline is 180 seconds, readiness follows engine events and actual
 round trips, and every child is terminated and reaped in cleanup. No service
 is left running. All listeners bind IPv4 loopback and request ephemeral ports;
 Xray's JSON requires releasing its reserved port immediately before start, so
@@ -77,9 +72,8 @@ are no checked-in secrets or static operational profiles.
   against the generated certificate. The Python clients send real VLESS TCP
   and length-prefixed UDP requests. They are protocol test peers, not a claim
   that a particular third-party TUN client or game has been qualified.
-- Publisher has **no listeners**. Exact virtual IPv4 `/32`, network and exposed
-  port rules select fixed numeric loopback redirects. Every other route is
-  blackholed; each redirect also has an exact final destination allow rule.
+- Publisher has **no listeners**. Manager matches exact virtual IPv4, protocol
+  and exposed port before dialing the configured numeric loopback target.
   Sniffing, PROXY headers, DNS routing and ordinary proxy outbounds are absent.
 - The fixture deliberately routes **all authenticated consumer destinations**
   into the reverse connection, simulating a relay that ignores destination
@@ -87,49 +81,96 @@ are no checked-in secrets or static operational profiles.
   An independently configured real relay must additionally restrict consumers
   to the operator-assigned virtual address, require authentication, and reject
   everything else with no public game listener or internet fallback.
-- `192.0.2.77` is documentation-only test data, never assigned to an interface.
+- `10.254.198.31` is documentation-only test data, never assigned to an interface.
   It is not a recommended production subnet. An operator must allocate a
   private address after checking host/client LAN, Tailscale, fake-DNS and other
   routing conflicts. Friends must capture and route that address to the same
   authenticated relay before private-address bypass rules.
 
-## Observed result
+## Expanded acceptance
 
-On Xray 26.10.31 (`a4a3dff`, Go 1.27.3, linux/amd64):
+The embedded run verifies two TCP consumers; concurrent UDP identity and payload
+boundaries; negative authentication/address/port/protocol cases; established TCP
+and UDP revocation on disable, remove, target edit, pause and master off;
+unaffected TCP preservation across another share's disable and disabled edit;
+enable before target start and target restart without relay reload; relay loss
+and recovery; TCP and UDP admission budgets; shutdown; Reality verification failure latch,
+explicit retry, registration-close backoff and credential replacement. Success is printed only after actual
+round trips or observed session closure. Temporary credential values are checked
+absent from control acknowledgements.
 
-```text
-PASS: Reality native reverse; two authenticated TCP consumers
-PASS: 128 concurrent UDP datagrams, 1/73/1200/4096 bytes, independent reply paths
-PASS: unauthorized UUID, wrong address/port/protocol, loopback/LAN/domain destinations denied
-BLOCKER: unmodified publisher admits 257 active TCP sessions, exceeding the 256 budget
-PASS: stopping publisher closes all 257 forwarded TCP sessions
-BLOCKER: rejected publisher credential automatically retried; intervals (s): [1.99, 2.0]
-RESULT: interoperability demonstrated; unmodified helper fails retry and session-budget contracts
+Fixture control is newline-delimited typed JSON on stdin, bounded to 16 KiB per
+line, with unknown and trailing fields rejected. Updates call Manager.Apply
+synchronously, with a ten-second deadline. `ack` lines contain a sequence, success
+flag and credential-free Manager snapshot; `hosting` lines signal state events.
+No control listener is added. The publisher dials via real uplink.Network with
+injected loopback link discovery and IPv4/IPv6 source prefixes. This exercises
+socket/device binding, but does not itself prove TUN exemption or DNS bootstrap.
+
+## Performance
+
+```sh
+python3 -u tests/hosting/experiment.py --xray dist/hosting/xray --adapter dist/hosting/publisher --performance
+unshare -Urn sh -eu -c 'ip link set lo up; tc qdisc add dev lo root netem loss 1%; python3 -u tests/hosting/experiment.py --xray dist/hosting/xray --adapter dist/hosting/publisher --performance'
 ```
 
-UDP peers use the same exposed port concurrently, with distinct loopback
-associations and byte-for-byte replies. The payload lengths above are tested
-sizes, **not a verified maximum** or a game compatibility guarantee. Timing
-varies slightly between runs. The retry test matches relay rejection events
-to each publisher attempt, so duplicate log lines do not count as retries.
+The second command changes only its private namespace. Namespace destruction
+removes the qdisc. Never run that tc command directly in the host namespace.
+The performance mode sends 200 independently verified datagrams from two
+consumers, rotating through 1/73/1200/4096/8190-byte payloads while another task
+repeatedly exchanges 64 KiB TCP payloads. It reports verified count, failures,
+per-size results, median/p95 elapsed time and mean absolute successive RTT delta.
+Timing includes TLS/VLESS session establishment for each datagram; these are
+transaction measurements, not steady-state game ping. It exits after measurement,
+so intentional loss does not invalidate the strict lossless acceptance checks.
+Loopback netem affects target UDP as well as the reverse TCP path. Report that
+scope with measurements; it does not simulate loss exclusively on a WAN link.
 
-## Stop decision
+See [compatibility status](../../docs/hosting-compatibility.md) for measured
+results, application sessions and scope limits. Echo tests do not qualify games.
 
-Mihomo has no native VLESS reverse publisher. Xray's unmodified executable is
-rejected as the production adapter: no enforceable reverse-session budget and
-no authentication rejection stop or cancellable jittered backoff. Killing and
-restarting a helper on an opaque connection close would not distinguish a
-rejected credential from a transient network failure.
+## Networking boundary checks
 
-An embedded Xray adapter may be a future option, but has not passed this gate.
-It needs a separate dependency decision and verified hooks for admission,
-credential failure, live reverse status, cancellation, bounded UDP queues,
-revocation, and direct dialing through the networking boundary. An unprivileged
-helper would additionally need a privilege model compatible with the service
-sandbox. See the [source and dependency assessment](../../docs/research/2026-11-02-hosting-adapter.md).
+The embedded gate uses a local authoritative DNS fixture for endpoint.example,
+changes its A/AAAA answer between real relay restarts, and requires a verified
+round trip within 12 seconds. Transport.Run counters in credential-free acks
+check no overlapping runs and no restart on unchanged updates. running=false
+simulates suspend; it does not exercise actual machine sleep. An 8193-byte UDP
+target reply must increase the oversized counter without preventing subsequent
+normal datagrams.
 
-Until an adapter passes these requirements, daemon state and credential
-import, CLI/widget controls, runtime packaging, a real operator setup guide,
-the full lifecycle/TUN/DNS acceptance suite, controlled-loss measurements and
-TCP/UDP game compatibility tests remain blocked. No gaming suitability is
-claimed and no hosting dependency or sandbox relaxation is approved here.
+```sh
+go test -race ./tests/hosting/publisher
+python3 tests/hosting/network_namespace.py
+```
+
+The first command observes an unanswered DNS query and cancels its uplink dial,
+requiring return within one second. The second creates its own `unshare -Urn`
+namespace, loopback documentation addresses and a TUN capture sink. An unbound
+TCP control must fail under capture policy; the real uplink.Network must reach
+the local DNS and TCP server through an explicit device-bound exemption.
+All route/rule/link mutations occur only inside that namespace. This tests a
+synthetic policy; the additional check below runs actual Mihomo TUN rules.
+Native-frame tests exercise queue overflow and inbound oversized frames.
+
+`./tools/test-hosting` automates the pinned test-only download and primary gate.
+For additional private network policy and actual Mihomo TUN checks:
+
+```sh
+python3 tests/hosting/network_namespace.py
+go build -tags with_gvisor,no_easytier -o dist/hosting/tun-check ./tests/hosting/tun
+python3 tests/hosting/mihomo_namespace.py
+```
+
+The latter creates a separate peer namespace and a real Mihomo TUN, checks that
+ordinary connections encounter rejection, and verifies the hosting uplink's
+source/device-bound DNS and TCP path in global, direct and rule modes. It does
+not alter the host network. SIGSTOP/SIGCONT in the primary fixture tests recovery
+from a stopped publisher process while its relay is replaced; no test suspends
+the machine. Native-frame tests cover blocked target writes, UDP queue overflow,
+oversized relay frames, target replacement and cancellation without bypassing
+the real manager's authorization tests.
+
+[Real-game sessions](../../docs/hosting-games.md) cover OpenTTD and Luanti with
+actual clients and selected TCP/UDP ports. They complement the transport and
+performance checks; none constitutes a universal gaming-ready guarantee.

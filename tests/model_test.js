@@ -85,7 +85,7 @@ test("subscription usage shows quota and expiry", () => {
     upload: 12000000000,
     download: 130000000000,
     total: 500000000000,
-    expire: Date.parse("2027-03-12T00:00:00Z") / 1000
+    expire: new Date(2027, 2, 12).getTime() / 1000
   })
   assert.equal(usage.fraction, 0.284)
   assert.match(usage.text, /142 GB of 500 GB/)
@@ -521,4 +521,62 @@ test("selector filtering puts exact choices before partial matches", () => {
   const choices = ["REMATCH-NAME", "MATCH", "DOMAIN"].map(label => ({value: label, label}))
   assert.deepEqual(Model.filterChoices(choices, " match ").map(c => c.value), ["MATCH", "REMATCH-NAME"])
   assert.deepEqual(Model.filterChoices(choices, "").map(c => c.value), choices.map(c => c.value))
+})
+
+test("hosting snapshots read without credential material", () => {
+  const hosting = Model.readHosting({
+    config: { relay: { version: 1, label: "R", host: "relay.example.net", port: 443, address: "10.77.0.2",
+      reality: { server_name: "cdn.example.com", public_key: "k", short_id: "6ba8" } }, paused: false,
+      shares: [] },
+    state: "connected", changed_at: 5, active: 2, refused: 1, dropped: 0, oversized: 0,
+    shares: [{ id: "a", label: "Game", local_address: "127.0.0.1", local_port: 25565, exposed_port: 25565,
+      protocol: "tcp", enabled: true, active: 2 }],
+    credential_present: true, credential_id: "ref"
+  })
+  assert.equal(hosting.relay.serverName, "cdn.example.com")
+  assert.equal(hosting.shares[0].active, 2)
+  assert.equal(Model.publicEndpoint(hosting.relay, hosting.shares[0]), "10.77.0.2:25565")
+  assert.equal(Model.hostingStatus(hosting, true).tag, "connected")
+  assert.equal(Model.readHosting(null).loaded, false)
+})
+
+test("hosting status explains paused and proxy-off as kept but not exposed", () => {
+  const base = Model.readHosting({ config: { relay: { version: 1, label: "R", host: "relay.example.net", port: 443,
+    address: "10.77.0.2", reality: {} }, paused: false, shares: [] }, state: "idle",
+    shares: [{ id: "a", label: "G", local_port: 1, exposed_port: 1, protocol: "tcp", enabled: true }],
+    credential_present: true })
+  const off = Model.hostingStatus(base, false)
+  assert.equal(off.tag, "proxy off")
+  assert.match(off.text, /kept, nothing is exposed/)
+  const paused = Model.hostingStatus(Object.assign({}, base, { paused: true }), true)
+  assert.equal(paused.tag, "paused")
+  assert.match(paused.text, /nothing is exposed/)
+  assert.equal(Model.hostingStatus(Object.assign({}, base, { state: "error", reason: "auth refused" }), true).tone, "bad")
+  assert.equal(Model.hostingStatus(Object.assign({}, base, { credentialPresent: false }), true).tag, "no credential")
+  assert.equal(Model.hostingStatus(Model.defaultHosting(), true).tag, "…")
+})
+
+test("hosting forms validate locally and build typed requests", () => {
+  assert.equal(Model.validateShareForm({ label: "G", localAddress: "127.0.0.1", localPort: "25565", exposedPort: "" }), null)
+  assert.equal(Model.validateShareForm({ label: "G", localAddress: "0.0.0.0", localPort: "1", exposedPort: "" }).field, 1)
+  assert.equal(Model.validateShareForm({ label: "G", localAddress: "::1", localPort: "70000", exposedPort: "" }).field, 2)
+  const share = Model.shareFromForm({ label: " G ", localAddress: "", localPort: "25565", exposedPort: "", protocol: "both" }, null)
+  assert.deepEqual(share, { id: "", label: "G", local_address: "127.0.0.1", local_port: 25565, exposed_port: 25565,
+    protocol: "both", enabled: false })
+  assert.equal(Model.shareFromForm({ label: "G", localAddress: "::1", localPort: "1", exposedPort: "2", protocol: "udp" },
+    { id: "x", enabled: true }).enabled, true)
+  const form = { label: "R", host: "relay.example.net", port: "443", address: "10.77.0.2",
+    serverName: "cdn.example.com", publicKey: "k", shortId: "6ba85179e30d4fc2" }
+  assert.equal(Model.validateRelayForm(form), null)
+  assert.equal(Model.validateRelayForm(Object.assign({}, form, { shortId: "abc" })).field, 6)
+  assert.equal(Model.validateRelayForm(Object.assign({}, form, { address: "10.77.0" })).field, 3)
+  assert.deepEqual(Object.keys(Model.relayFromForm(form)).sort(), ["address", "host", "label", "port", "reality", "version"])
+})
+
+test("the credential travels as ASCII bytes and is validated as a UUID", () => {
+  assert.equal(Model.validateCredential("0f8fad5b-d9cb-469f-a165-70867728950e"), "")
+  assert.notEqual(Model.validateCredential("not-a-uuid"), "")
+  const bytes = Model.credentialBytes(" 0F8FAD5B-D9CB-469F-A165-70867728950E \n")
+  assert.equal(bytes.length, 36)
+  assert.equal(String.fromCharCode.apply(null, bytes), "0f8fad5b-d9cb-469f-a165-70867728950e")
 })

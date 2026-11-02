@@ -1,0 +1,21 @@
+{
+  "relay": {
+    "version": 1,
+    "label": "Friends relay",
+    "host": "relay.example.net",
+    "port": 443,
+    "address": "10.77.0.2",
+    "credential_ref": "hosting-credential",
+    "reality": {
+      "server_name": "cdn.example.com",
+      "public_key": "Zm9yLXNjcmVlbnNob3RzLW9ubHktbm90LWEtcmVhbC1rZXk",
+      "short_id": "6ba85179e30d4fc2"
+    }
+  },
+  "credential_id": "hosting-credential",
+  "shares": [
+    { "id": "share-1", "label": "Minecraft", "local_address": "127.0.0.1", "local_port": 25565, "exposed_port": 25565, "protocol": "tcp", "enabled": true, "active": 2 },
+    { "id": "share-2", "label": "Voice chat", "local_address": "127.0.0.1", "local_port": 9987, "exposed_port": 9987, "protocol": "udp", "enabled": true, "active": 1 },
+    { "id": "share-3", "label": "Test server", "local_address": "127.0.0.1", "local_port": 7777, "exposed_port": 17777, "protocol": "both", "enabled": false, "active": 0 }
+  ]
+}

@@ -18,7 +18,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 2
+	Version = 3
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20

@@ -914,6 +914,184 @@ function emojiKey(emoji) {
   return out.join("-")
 }
 
+// ---------------------------------------------------------------- hosting
+//
+// `hosting.*` replies and the `hosting` stream carry one snapshot of the
+// owner's relay, shares and tunnel state. It never holds the credential, only
+// whether one is stored and its identifier.
+
+var HOSTING_PROTOCOLS = ["tcp", "udp", "both"]
+
+function defaultHosting() {
+  return {
+    loaded: false, relay: null, shares: [], paused: false, state: "idle", reason: "", changedMs: 0,
+    active: 0, refused: 0, dropped: 0, oversized: 0, credentialPresent: false, credentialId: ""
+  }
+}
+
+function readShare(entry) {
+  return {
+    id: text(entry.id), label: text(entry.label),
+    localAddress: text(entry.local_address) || "127.0.0.1",
+    localPort: number(entry.local_port, 0), exposedPort: number(entry.exposed_port, 0),
+    protocol: HOSTING_PROTOCOLS.indexOf(text(entry.protocol)) >= 0 ? text(entry.protocol) : "tcp",
+    enabled: entry.enabled === true, active: number(entry.active, 0)
+  }
+}
+
+function readHosting(data) {
+  if (!data || typeof data !== "object") return defaultHosting()
+  var config = data.config && typeof data.config === "object" ? data.config : {}
+  var relay = config.relay && typeof config.relay === "object" ? config.relay : null
+  var reality = relay && relay.reality && typeof relay.reality === "object" ? relay.reality : {}
+  var entries = Array.isArray(data.shares) ? data.shares : (Array.isArray(config.shares) ? config.shares : [])
+  return {
+    loaded: true,
+    relay: relay ? {
+      label: text(relay.label), host: text(relay.host), port: number(relay.port, 0), address: text(relay.address),
+      serverName: text(reality.server_name), publicKey: text(reality.public_key), shortId: text(reality.short_id)
+    } : null,
+    shares: entries.filter(function(entry) { return entry && typeof entry === "object" }).map(readShare),
+    paused: config.paused === true,
+    state: ["idle", "connecting", "connected", "reconnecting", "error"].indexOf(text(data.state)) >= 0 ? text(data.state) : "idle",
+    reason: text(data.reason),
+    changedMs: number(data.changed_at, 0),
+    active: number(data.active, 0),
+    refused: number(data.refused, 0), dropped: number(data.dropped, 0), oversized: number(data.oversized, 0),
+    credentialPresent: data.credential_present === true,
+    credentialId: text(data.credential_id)
+  }
+}
+
+// What the Hosting row and its status card say. `tone` is "off", "ok", "wait"
+// or "bad"; "connected" only means the relay's control connection is live.
+function hostingStatus(hosting, proxyRunning) {
+  var enabled = hosting.shares.filter(function(share) { return share.enabled }).length
+  var kept = enabled === 1 ? "1 selected share is kept" : enabled + " selected shares are kept"
+  if (!hosting.loaded) return { tone: "off", tag: "…", text: "Waiting for the core." }
+  if (!hosting.relay) return { tone: "off", tag: "set up", text: "No relay yet. Add the one your operator gave you." }
+  if (!hosting.credentialPresent) return { tone: "wait", tag: "no credential", text: "Relay saved. Add its hosting credential to connect." }
+  if (hosting.paused) return { tone: "off", tag: "paused", text: "Paused: " + kept + ", nothing is exposed." }
+  if (!proxyRunning) return { tone: "off", tag: "proxy off", text: "The proxy is off: " + kept + ", nothing is exposed until it starts." }
+  if (enabled === 0) return { tone: "off", tag: "idle", text: "No share is enabled, so nothing is exposed." }
+  switch (hosting.state) {
+  case "connected": return { tone: "ok", tag: "connected", text: "Relay connected. This is the relay control link, not a check that your game works." }
+  case "connecting": return { tone: "wait", tag: "connecting", text: "Connecting to the relay…" }
+  case "reconnecting": return { tone: "wait", tag: "reconnecting", text: "Relay lost, reconnecting. " + hosting.reason }
+  case "error": return { tone: "bad", tag: "error", text: hosting.reason !== "" ? hosting.reason : "The relay refused or could not be reached." }
+  }
+  return { tone: "off", tag: "idle", text: "Starting…" }
+}
+
+function hostingRetryable(hosting, proxyRunning) {
+  return hosting.relay !== null && hosting.credentialPresent && !hosting.paused && proxyRunning
+    && (hosting.state === "error" || hosting.state === "reconnecting")
+}
+
+function hostingCounters(hosting) {
+  var parts = []
+  if (hosting.refused > 0) parts.push(hosting.refused + " refused")
+  if (hosting.dropped > 0) parts.push(hosting.dropped + " dropped")
+  if (hosting.oversized > 0) parts.push(hosting.oversized + " oversized")
+  return parts.join(" · ")
+}
+
+// The address friends use. IPv6 literals would need brackets.
+function publicEndpoint(relay, share) {
+  if (!relay || !share || relay.address === "") return ""
+  var host = relay.address.indexOf(":") >= 0 ? "[" + relay.address + "]" : relay.address
+  return host + ":" + share.exposedPort
+}
+
+function shareProtocolLabel(protocol) {
+  return protocol === "both" ? "TCP+UDP" : text(protocol).toUpperCase()
+}
+
+function shareSummary(share) {
+  return shareProtocolLabel(share.protocol) + " · " + share.localAddress + ":" + share.localPort
+    + (share.exposedPort !== share.localPort ? " → :" + share.exposedPort : "")
+}
+
+function utf8Length(value) {
+  return unescape(encodeURIComponent(text(value))).length
+}
+
+function validPortText(value) {
+  var v = text(value).trim()
+  return /^[0-9]{1,5}$/.test(v) && number(v, 0) >= 1 && number(v, 0) <= 65535
+}
+
+function validateLabel(value) {
+  var v = text(value).trim()
+  if (v === "") return "Label is required"
+  if (utf8Length(v) > 64) return "Label is at most 64 bytes"
+  if (/[\x00-\x1f\x7f]/.test(v)) return "Label has control characters"
+  return ""
+}
+
+// Local checks only; the core re-validates everything, including that the
+// virtual address avoids this machine's networks.
+function validateRelayForm(f) {
+  var label = validateLabel(f.label)
+  if (label !== "") return { field: 0, message: label }
+  if (text(f.host).trim() === "" || /[\s\/]/.test(f.host.trim())) return { field: 1, message: "Relay host is a DNS name or IP address" }
+  if (!validPortText(f.port)) return { field: 2, message: "Relay port is 1–65535" }
+  var address = text(f.address).trim()
+  var parts = address.split(".")
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(address) || parts.some(function(p) { return number(p, 256) > 255 || String(number(p, 0)) !== p }))
+    return { field: 3, message: "Private address is an IPv4 address like 10.77.0.2" }
+  if (text(f.serverName).trim() === "") return { field: 4, message: "Reality server name is required" }
+  if (text(f.publicKey).trim() === "") return { field: 5, message: "Reality public key is required" }
+  var sid = text(f.shortId).trim()
+  if (!/^([0-9a-fA-F]{2}){1,8}$/.test(sid)) return { field: 6, message: "Short ID is 2–16 hex digits, in pairs" }
+  return null
+}
+
+function relayFromForm(f) {
+  return {
+    version: 1, label: text(f.label).trim(), host: text(f.host).trim(), port: number(f.port, 0),
+    address: text(f.address).trim(),
+    reality: { server_name: text(f.serverName).trim(), public_key: text(f.publicKey).trim(), short_id: text(f.shortId).trim() }
+  }
+}
+
+function validateShareForm(f) {
+  var label = validateLabel(f.label)
+  if (label !== "") return { field: 0, message: label }
+  var address = text(f.localAddress).trim()
+  if (address !== "127.0.0.1" && address !== "::1") return { field: 1, message: "Local address is 127.0.0.1 or ::1" }
+  if (!validPortText(f.localPort)) return { field: 2, message: "Local port is 1–65535" }
+  if (text(f.exposedPort).trim() !== "" && !validPortText(f.exposedPort)) return { field: 3, message: "Exposed port is 1–65535" }
+  return null
+}
+
+// A new share has no id, which the core picks, and is always saved disabled.
+// An edit keeps the share's enabled state.
+function shareFromForm(f, existing) {
+  return {
+    id: existing ? existing.id : "", label: text(f.label).trim(),
+    local_address: text(f.localAddress).trim() || "127.0.0.1",
+    local_port: number(f.localPort, 0),
+    exposed_port: text(f.exposedPort).trim() === "" ? number(f.localPort, 0) : number(f.exposedPort, 0),
+    protocol: HOSTING_PROTOCOLS.indexOf(f.protocol) >= 0 ? f.protocol : "tcp",
+    enabled: existing ? existing.enabled : false
+  }
+}
+
+function validateCredential(value) {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(text(value).trim())
+    ? "" : "The hosting credential is a UUID"
+}
+
+// The daemon takes the credential as raw bytes, which JSON carries as a list
+// of integers; it never travels as a command argument.
+function credentialBytes(value) {
+  var v = text(value).trim().toLowerCase()
+  var bytes = []
+  for (var i = 0; i < v.length; i++) bytes.push(v.charCodeAt(i))
+  return bytes
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     RULE_TYPES: RULE_TYPES,
@@ -970,6 +1148,21 @@ if (typeof module !== "undefined") {
     relativeSince: relativeSince,
     filterNames: filterNames,
     nameParts: nameParts,
-    emojiKey: emojiKey
+    emojiKey: emojiKey,
+    HOSTING_PROTOCOLS: HOSTING_PROTOCOLS,
+    defaultHosting: defaultHosting,
+    readHosting: readHosting,
+    hostingStatus: hostingStatus,
+    hostingRetryable: hostingRetryable,
+    hostingCounters: hostingCounters,
+    publicEndpoint: publicEndpoint,
+    shareProtocolLabel: shareProtocolLabel,
+    shareSummary: shareSummary,
+    validateRelayForm: validateRelayForm,
+    relayFromForm: relayFromForm,
+    validateShareForm: validateShareForm,
+    shareFromForm: shareFromForm,
+    validateCredential: validateCredential,
+    credentialBytes: credentialBytes
   }
 }

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -47,7 +48,8 @@ Panel {
     : rulesView.categorySelector.picking ? rulesView.categorySelector
     : rulesView.bulkSelector.picking ? rulesView.bulkSelector
     : rulesView.selector.picking ? rulesView.selector
-    : (settingsView.selector.picking ? settingsView.selector : null)
+    : settingsView.selector.picking ? settingsView.selector
+    : (settingsView.hosting.protocolSelector.picking ? settingsView.hosting.protocolSelector : null)
 
   readonly property string subFormUrl: subscriptionsView.urlField.text.trim()
   readonly property string ruleFormValue: rulesView.valueField.text
@@ -285,6 +287,7 @@ Panel {
       rows.push({ s: "mode" }, { s: "dns" })
       rows.push({ s: "tun" }, { s: "tunRedirect" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
+      rows = rows.concat(settingsView.hosting.navRows())
       rows.push({ s: "checkUpdates" })
       if (updater.updateAvailable) rows.push({ s: "update" })
       if (updater.releaseUrl !== "") rows.push({ s: "releaseNotes" })
@@ -349,6 +352,8 @@ Panel {
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
+    case "hostPause":
+    case "hostShare": settingsView.hosting.adjust(cursorRow); break
     case "ruleType": cycleRuleType(delta); break
     case "ruleTarget": cycleRuleTarget(delta); break
     }
@@ -382,6 +387,9 @@ Panel {
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
     case "checkUpdates": checkUpdates(); break
+    case "hosting": case "hostPause": case "hostRetry": case "hostRelay": case "hostCredential": case "hostShare":
+    case "hostNewShare": case "hostField": case "hostProtocol": case "hostCopy": case "hostSubmit": case "hostRemove":
+      settingsView.hosting.activate(cursorRow); break
     case "update": updateOmihomo(); break
     case "releaseNotes": openReleaseNotes(); break
     case "uninstall": uninstallCore(); break
@@ -398,6 +406,8 @@ Panel {
       if (rule) omihomo.removeRule(rule.index)
     } else if (cursorRow.s === "conn") {
       activateConnectionAt(cursorRow.i)
+    } else if (cursorRow.s === "hostShare" || cursorRow.s === "hostRemove") {
+      settingsView.hosting.removeRow(cursorRow)
     }
   }
 
@@ -449,6 +459,7 @@ Panel {
   function handleEscape() {
     if (activeSelector) { activeSelector.cancel(); return }
     if (categoryEditing !== "") { categoryEditing = ""; rulesView.categoryField.text = ""; endEdit(); return }
+    if (view === "settings" && settingsView.hosting.cancel()) return
     if (ruleFormOpen) {
       cancelRuleEdit()
       return
@@ -488,7 +499,8 @@ Panel {
     if (activeSelector) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
-    if (editing !== null || ruleFormOpen || categoryEditing !== "") return [
+    if (editing !== null || ruleFormOpen || categoryEditing !== ""
+      || (view === "settings" && settingsView.hosting.form !== "")) return [
       { keys: "↵", label: "save", key: "enter" }, { keys: "esc", label: "cancel", key: "esc" }]
     switch (name) {
     case "configs": return [
@@ -526,6 +538,7 @@ Panel {
     editing = null
     endEdit()
     categoryEditing = ""
+    settingsView.hosting.reset()
     view = name
     cursor = 0
     cursorActive = false
@@ -633,6 +646,11 @@ Panel {
     bar.run("omarchy-launch-floating-terminal-with-presentation "
       + Util.shellQuote(Util.shellQuote(installerPath) + " update"))
     close()
+  }
+
+  function copyText(text) {
+    Quickshell.clipboardText = text
+    omihomo.reportDone("Copied " + text)
   }
 
   function openReleaseNotes() {
@@ -803,6 +821,8 @@ Panel {
       editing = null
       omihomo.clearMessages()
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    } else {
+      settingsView.hosting.reset()
     }
   }
 
@@ -903,7 +923,7 @@ Panel {
     padding: 0
     borderSpec: Border.flat(root.theme.outline, 1)
 
-    PanelKeyCatcher {
+    PanelKeys {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.editing !== null

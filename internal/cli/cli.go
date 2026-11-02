@@ -192,6 +192,7 @@ func (a *app) root() *ffcli.Command {
 		a.ruleCommand(),
 		a.groupCommand(),
 		a.connCommand(),
+		a.hostingCommand(),
 		a.call("egress", "omihomo egress [--pretty]", "show where traffic leaves the proxy",
 			nargs(0, protocol.OpEgress, nil)),
 		a.watchCommand(),

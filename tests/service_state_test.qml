@@ -35,6 +35,12 @@ ShellRoot {
     onRuleAdded: testRoot.failedRules++
   }
 
+  Omihomo.Service {
+    id: hosted
+    socketPath: t.socket("ok")
+    panelOpen: true
+  }
+
   property double reconnectedAt: 0
 
   Component.onCompleted: t.steps = [
@@ -165,6 +171,40 @@ ShellRoot {
     { name: "a failed add", until: function() { return !failing.busy }, then: function() {
         t.check(failing.errorScope, "sub:", "a failed add's error sits under the add field")
         t.check(failing.pendingSubscription, "", "a failed add is no longer pending")
+      } },
+    { name: "hosting arrives with the panel", until: function() { return hosted.hosting.loaded }, then: function() {
+        t.check(hosted.hosting.relay, null, "an unconfigured daemon has no relay")
+        t.check(hosted.hosting.credentialPresent, false, "an unconfigured daemon has no credential")
+        t.check(hosted.setHostingRelay({ version: 1, label: "Relay", host: "relay.example.net", port: 443,
+          address: "10.77.0.2", reality: { server_name: "cdn.example.com", public_key: "k", short_id: "6ba8" } }), true,
+          "a relay change starts")
+        t.check(hosted.setHostingRelay({}), false, "a second hosting change waits for the first")
+      } },
+    { name: "relay saved", until: function() { return !hosted.hostingBusy && hosted.hosting.relay !== null }, then: function() {
+        t.check(hosted.hosting.relay.address, "10.77.0.2", "the stream carries the private address")
+        hosted.setHostingCredential("0f8fad5b-d9cb-469f-a165-70867728950e")
+      } },
+    { name: "credential stored", until: function() { return !hosted.hostingBusy && hosted.hosting.credentialPresent }, then: function() {
+        t.check(JSON.stringify(hosted.hosting).indexOf("d9cb"), -1, "the credential never reaches widget state")
+        hosted.saveHostingShare({ id: "", label: "Game", local_address: "127.0.0.1", local_port: 25565,
+          exposed_port: 25565, protocol: "tcp", enabled: true })
+      } },
+    { name: "share saved disabled", until: function() { return !hosted.hostingBusy && hosted.hosting.shares.length === 1 }, then: function() {
+        t.check(hosted.hosting.shares[0].enabled, false, "a new share is never saved enabled")
+        hosted.enableHostingShare(hosted.hosting.shares[0].id, true)
+      } },
+    { name: "share enabled", until: function() { return !hosted.hostingBusy && hosted.hosting.shares[0].enabled }, then: function() {
+        hosted.pauseHosting(true)
+      } },
+    { name: "paused", until: function() { return !hosted.hostingBusy && hosted.hosting.paused }, then: function() {
+        hosted.call("test.hosting", { state: "error", reason: "relay refused authentication", paused: false })
+      } },
+    { name: "transport error", until: function() { return hosted.hosting.state === "error" }, then: function() {
+        t.check(hosted.hosting.reason, "relay refused authentication", "the sanitized reason is kept")
+        t.check(hosted.hosting.shares.length, 1, "selected shares survive an error")
+        hosted.receive(JSON.stringify({ type: "event", stream: "hosting", error: { code: "too_large", message: "hosting too large" } }))
+        t.check(hosted.streamsReady(["hosting"]), false, "a hosting stream error makes hosting unavailable")
+        t.check(hosted.setHostingRelay({}), false, "nothing is sent while hosting is unavailable")
       } }
   ]
 }

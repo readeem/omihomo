@@ -43,6 +43,13 @@ jobs:
           version=$(go list -m -f '{{.Version}}' github.com/metacubex/mihomo)
           upstream=$(go mod download -json "github.com/metacubex/mihomo@$version" | jq -r .GoMod)
           diff <(go mod edit -json "$upstream" | jq -S .Replace) <(go mod edit -json | jq -S .Replace)
+      - name: native reverse interoperability
+        timeout-minutes: 5
+        run: |
+          ./tools/test-hosting
+          go build -tags with_gvisor,no_easytier -o dist/hosting/tun-check ./tests/hosting/tun
+          python3 tests/hosting/network_namespace.py
+          python3 tests/hosting/mihomo_namespace.py
       - run: mise run vulncheck
 
   package:

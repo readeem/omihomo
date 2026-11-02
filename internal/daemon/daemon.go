@@ -15,6 +15,7 @@ import (
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/fetch"
+	"github.com/readeem/omihomo/internal/hosting"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/peercred"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -33,6 +34,7 @@ type Daemon interface {
 type ConfigOpt func(*config)
 
 type config struct {
+	hostingTransport hosting.Transport
 	ownerFile        string
 	version          string
 	log              *slog.Logger
@@ -132,9 +134,13 @@ const (
 )
 
 type server struct {
-	core core.Core
-	cfg  config
-	log  *slog.Logger
+	core          core.Core
+	hosting       *hosting.Manager
+	hostingState  state.Hosting
+	hostingEvents chan struct{}
+	hostingError  string
+	cfg           config
+	log           *slog.Logger
 
 	clients sync.WaitGroup
 
@@ -227,6 +233,23 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 		}
 	}
 
+	record, err := store.Hosting()
+	if err != nil {
+		return nil, err
+	}
+	d.hostingState = record
+	d.hostingEvents = make(chan struct{}, 1)
+	transport := cfg.hostingTransport
+	if transport == nil {
+		transport = unavailableHosting{}
+	}
+	d.hosting = hosting.New(transport, func() {
+		select {
+		case d.hostingEvents <- struct{}{}:
+		default:
+		}
+	})
+	d.syncHosting(context.Background())
 	d.restorePending = d.settings.Running
 	if active := d.activeSub(); active != nil {
 		p, err := d.loadProfile(*active)
@@ -258,8 +281,21 @@ func (d *server) Run(ctx context.Context, listeners ...net.Listener) error {
 	}
 	wg.Go(func() { d.tick(ctx) })
 	wg.Go(func() { d.refreshLoop(ctx) })
+	wg.Go(func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-d.hostingEvents:
+				d.pubMu.Lock()
+				d.publishLocked(ctx, protocol.StreamHosting, nil)
+				d.pubMu.Unlock()
+			}
+		}
+	})
 
 	<-ctx.Done()
+	d.hosting.Close()
 	for _, l := range listeners {
 		l.Close()
 	}

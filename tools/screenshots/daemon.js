@@ -37,6 +37,30 @@ const traffic = lines("traffic.jsonl")
 const allConnections = lines("connections.jsonl")
 const running = () => status.state !== "stopped"
 
+// Hosting stands in for the real adapter: a relay whose host starts with
+// "down." is unreachable, any other one is connected while the proxy is on, a
+// credential is stored and a share is enabled. Only the share and relay
+// fields are checked here; the daemon owns the real validation.
+const hostingData = json("hosting.json")
+const hosting = { relay: hostingData.relay, credentialId: hostingData.credential_id, paused: false,
+  shares: hostingData.shares, nextShare: hostingData.shares.length + 1, changedAt: Date.now() }
+const shareFields = ({ active, ...share }) => share
+let lastHostingState = ""
+function hostingSnapshot() {
+  const live = hosting.relay && hosting.credentialId !== "" && !hosting.paused && running()
+    && hosting.shares.some((share) => share.enabled)
+  const down = live && hosting.relay.host.startsWith("down.")
+  const state = !live ? "idle" : down ? "error" : "connected"
+  if (state !== lastHostingState) { lastHostingState = state; hosting.changedAt = Date.now() }
+  const shares = hosting.shares.map((share) => ({ ...shareFields(share), active: live && !down && share.enabled ? share.active || 0 : 0 }))
+  const out = { config: { ...(hosting.relay ? { relay: hosting.relay } : {}), shares: shares.map(shareFields), paused: hosting.paused },
+    state, changed_at: hosting.changedAt, active: shares.reduce((sum, share) => sum + share.active, 0), shares,
+    refused: down ? 0 : 3, dropped: 0, oversized: 0,
+    credential_present: hosting.credentialId !== "", credential_id: hosting.credentialId }
+  if (down) out.reason = "relay unavailable: connection refused"
+  return out
+}
+
 // The first push also lists the connections that close, so the panel's log
 // keeps them as closed from the second push on.
 const closed = new Set()
@@ -79,7 +103,8 @@ const snapshots = {
   status: () => status,
   groups: () => groups,
   rules: ruleSnapshot,
-  subscriptions: () => ({ subscriptions })
+  subscriptions: () => ({ subscriptions }),
+  hosting: hostingSnapshot
 }
 
 const clients = new Set()
@@ -131,12 +156,12 @@ const ops = {
   },
   start: () => later(400, () => {
     Object.assign(status, { state: "on", detail: "", started_at: Date.now() })
-    push("status", "rules")
+    push("status", "rules", "hosting")
     return { result: status }
   }),
   stop: () => {
     status.state = "stopped"
-    push("status", "rules")
+    push("status", "rules", "hosting")
     return { result: status }
   },
   "settings.apply": (args) => {
@@ -150,6 +175,7 @@ const ops = {
     push("status", "rules")
     return { result: status }
   },
+  ...hostingOps(),
   "rules.list": () => ({ result: snapshots.rules() }),
   "groups.list": () => running() ? { result: groups } : fail("not_running", "the proxy is stopped"),
   "groups.select": (args) => {
@@ -217,6 +243,67 @@ const ops = {
   }
 }
 
+function hostingOps() {
+  const done = () => { push("hosting"); return { result: hostingSnapshot() } }
+  const port = (value) => Number.isInteger(value) && value >= 1 && value <= 65535
+  const text = (value, max) => typeof value === "string" && value.trim() !== "" && Buffer.byteLength(value) <= max
+  const find = (id) => hosting.shares.find((share) => share.id === id)
+  const overlaps = (share) => hosting.shares.some((other) => other.id !== share.id && other.exposed_port === share.exposed_port
+    && (other.protocol === "both" || share.protocol === "both" || other.protocol === share.protocol))
+  return {
+    "hosting.status": () => ({ result: hostingSnapshot() }),
+    "hosting.relay.set": ({ relay }) => {
+      const reality = relay && relay.reality
+      if (!relay || relay.version !== 1 || !text(relay.label, 64) || !text(relay.host, 253) || !port(relay.port)
+        || !/^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(String(relay.address)) || !reality
+        || !text(reality.server_name, 253) || !text(reality.public_key, 64) || !/^([0-9a-f]{2}){1,8}$/i.test(String(reality.short_id)))
+        return fail("invalid", "invalid: relay")
+      hosting.relay = { ...relay, credential_ref: "hosting-credential" }
+      return done()
+    },
+    "hosting.relay.remove": () => {
+      hosting.relay = null
+      hosting.credentialId = ""
+      hosting.shares.forEach((share) => { share.enabled = false })
+      return done()
+    },
+    "hosting.credential.set": ({ credential }) => {
+      if (!Array.isArray(credential) || credential.length !== 36 || !credential.every((b) => Number.isInteger(b) && b >= 0 && b < 128)
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String.fromCharCode(...credential)))
+        return fail("invalid", "invalid: credential")
+      hosting.credentialId = "hosting-credential"
+      return done()
+    },
+    "hosting.credential.remove": () => { hosting.credentialId = ""; return done() },
+    "hosting.share.save": ({ share }) => {
+      if (!share || !text(share.label, 64) || !["127.0.0.1", "::1"].includes(share.local_address) || !port(share.local_port)
+        || !port(share.exposed_port) || !["tcp", "udp", "both"].includes(share.protocol)) return fail("invalid", "invalid: share")
+      const existing = share.id === "" ? null : find(share.id)
+      if (share.id !== "" && !existing) return fail("not_found", "no such share")
+      const saved = { id: existing ? existing.id : "share-" + hosting.nextShare++, label: share.label, local_address: share.local_address,
+        local_port: share.local_port, exposed_port: share.exposed_port, protocol: share.protocol,
+        enabled: existing ? existing.enabled : false, active: existing ? existing.active : 0 }
+      if (overlaps(saved)) return fail("invalid", "invalid: duplicate exposed port")
+      if (existing) Object.assign(existing, saved)
+      else hosting.shares.push(saved)
+      return done()
+    },
+    "hosting.share.remove": ({ id }) => {
+      if (!find(id)) return fail("not_found", "no such share")
+      hosting.shares = hosting.shares.filter((share) => share.id !== id)
+      return done()
+    },
+    "hosting.share.enable": ({ id, enabled }) => {
+      const share = find(id)
+      if (!share) return fail("not_found", "no such share")
+      share.enabled = enabled === true
+      return done()
+    },
+    "hosting.pause": ({ paused }) => { hosting.paused = paused === true; return done() },
+    "hosting.retry": () => done()
+  }
+}
+
 async function handle(client, request) {
   const op = ops[request.op]
   const answer = op ? await op(request.args || {}, client) : fail("unsupported", `${request.op} is not faked`)
@@ -236,7 +323,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 2, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 3, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk

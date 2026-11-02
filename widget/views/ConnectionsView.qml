@@ -77,7 +77,7 @@ ColumnLayout {
       required property var entry
       required property int index
       readonly property bool closedHead: !entry.open
-        && (index === 0 || view.service.connectionStacks[index - 1].open)
+        && (index === 0 || (connList.entryAt(index - 1) || {}).open === true)
       width: connList.rowWidth
       height: connection.implicitHeight + (closedHead ? Style.space(28) : 0)
 

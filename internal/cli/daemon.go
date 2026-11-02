@@ -19,10 +19,12 @@ import (
 	"github.com/readeem/omihomo/internal/core/fakecore"
 	"github.com/readeem/omihomo/internal/core/mihomo"
 	"github.com/readeem/omihomo/internal/daemon"
+	"github.com/readeem/omihomo/internal/hosting/xray"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/state"
 	"github.com/readeem/omihomo/internal/systemd"
 	"github.com/readeem/omihomo/internal/tailscale"
+	"github.com/readeem/omihomo/internal/uplink"
 )
 
 func (a *app) daemonCommand() *ffcli.Command {
@@ -82,7 +84,7 @@ func serve(ctx context.Context, log *slog.Logger, c core.Core, socket, ownerFile
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	opts = append([]daemon.ConfigOpt{daemon.WithOwnerFile(ownerFile), daemon.WithVersion(Version), daemon.WithLogger(log)}, opts...)
-	d, err := daemon.New(c, opts...)
+	d, err := daemon.New(c, append(opts, daemon.WithHostingTransport(xray.New((uplink.Network{}).DialContext)))...)
 	if err != nil {
 		return fmt.Errorf("read the state: %w", err)
 	}

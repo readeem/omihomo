@@ -47,3 +47,11 @@ A condition and destination checked in order against traffic; the first matching
 A named block of rules that share a position in routing order and can be enabled or disabled together.
 Rules keep their order within the category and their individual enabled states.
 _Avoid_: Group, tag, display mode
+
+**Relay**:
+The owner's approved connection through which authorized friends reach shared services at an assigned private address.
+_Avoid_: Subscription, gateway
+
+**Share**:
+A named selection of a local service's port and protocols that the owner can expose through the relay.
+_Avoid_: Open port, peer

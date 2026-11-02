@@ -80,6 +80,9 @@ func validNames(what string, names []string) *protocol.Error {
 }
 
 func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (any, *protocol.Error) {
+	if isHostingOperation(req.Op) {
+		return d.hostingOperation(ctx, req)
+	}
 	switch req.Op {
 	case protocol.OpStatus:
 		if err := decode(req.Args, &struct{}{}); err != nil {
@@ -211,13 +214,15 @@ func (d *server) status() protocol.Status {
 }
 
 var (
-	stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions}
+	stateStreams = []string{protocol.StreamStatus, protocol.StreamGroups, protocol.StreamRules, protocol.StreamSubscriptions, protocol.StreamHosting}
 
 	allStreams = append(slices.Clone(stateStreams), protocol.StreamTraffic, protocol.StreamConnections)
 )
 
 func (d *server) snapshot(ctx context.Context, stream string) any {
 	switch stream {
+	case protocol.StreamHosting:
+		return d.hostingSnapshot()
 	case protocol.StreamStatus:
 		return d.status()
 	case protocol.StreamGroups:
@@ -376,6 +381,7 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 	}
 	d.log.Info("proxy started")
 	d.setState(protocol.StateOn, "")
+	d.syncHosting(ctx)
 	d.publish(ctx)
 	return nil
 }
@@ -386,6 +392,12 @@ func (d *server) stop(ctx context.Context) (any, *protocol.Error) {
 	d.mu.Lock()
 	d.restorePending = false
 	d.mu.Unlock()
+	if err := d.saveRunning(false); err != nil {
+		return nil, err
+	}
+	if err := d.hosting.Stop(ctx); err != nil {
+		return nil, fail(protocol.CodeCore, "hosting could not stop")
+	}
 	if err := d.core.Stop(ctx); err != nil {
 		d.log.Error("stop the proxy", "err", err)
 		return nil, coreError(err)
@@ -517,6 +529,7 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 		d.log.Error("apply a change", "err", err)
 		if errors.Is(err, core.ErrStopped) {
 			d.setState(protocol.StateStopped, err.Error())
+			d.hosting.Stop(ctx)
 			d.publish(ctx)
 		}
 		return coreError(err)

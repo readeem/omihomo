@@ -121,7 +121,9 @@ ShellRoot {
           testRoot.key(Qt.Key_Tab)
           testRoot.key(Qt.Key_Backtab)
         } },
-      { then: function() { panel.focusRow("rule", 0); testRoot.key(Qt.Key_Return) } },
+      { name: "rules view ready", until: function() { return panel.view === "rules" && panel.editing === null },
+        then: function() { panel.focusRow("rule", 0) } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
       { name: "owner rule focused", until: function() { return panel.editingRule === 1 && panel.editing !== null }, then: function() {
           t.check(panel.ruleFormOpen, true, "editing reveals the rule form")
           t.check(panel.ruleFormValue, "github.com", "editing starts from the saved value")
@@ -163,8 +165,9 @@ ShellRoot {
           testRoot.type("Streaming")
           testRoot.key(Qt.Key_Escape)
           t.check(panel.service.effectiveDNSDestination, "Proxy", "Escape leaves DNS unchanged")
-          testRoot.type("3")
         } },
+      { name: "DNS picker closed", until: function() { return panel.activeSelector === null && panel.editing === null },
+        then: function() { testRoot.type("3") } },
       { then: function() { testRoot.type("n") } },
       { until: function() { return panel.ruleFormOpen && panel.editing !== null }, then: function() {
           panel.focusRow("ruleTarget")
@@ -371,6 +374,72 @@ ShellRoot {
           var list = testRoot.findObject(panel, "connectionList")
           var index = panel.service.connectionStacks.findIndex(function(c) { return c.key === testRoot.savedConnection })
           t.check(Math.round(list.itemAtIndex(index).y - list.contentY), Math.round(testRoot.savedScroll), "a new connection preserves the visible row's position")
+        } },
+      { name: "hosting lives in settings", then: function() { panel.openView("settings") } },
+      { until: function() { return panel.service.hosting.loaded && panel.service.hosting.relay !== null }, then: function() {
+          t.check(panel.navRows.some(function(r) { return r.s === "hosting" }), true, "Settings offers Hosting")
+          t.check(panel.tabViews.indexOf("hosting"), -1, "Hosting adds no tab")
+          t.check(panel.navRows.some(function(r) { return r.s === "hostShare" }), false, "its controls stay closed until opened")
+          panel.focusRow("hosting")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
+      { until: function() { return panel.navRows.some(function(r) { return r.s === "hostShare" }) }, then: function() {
+          t.check(panel.navRows.filter(function(r) { return r.s === "hostShare" }).length, 3, "every share is listed")
+          panel.focusRow("hostNewShare")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
+      { name: "share form", until: function() { return panel.editing !== null }, then: function() {
+          t.check(panel.hintsFor("settings")[0].label, "save", "the share form offers save")
+          testRoot.type("Game")
+          testRoot.key(Qt.Key_Down)
+        } },
+      { until: function() { return panel.editing !== null && panel.cursorRow.s === "hostField" && panel.cursorRow.i === 1 }, then: function() {
+          testRoot.key(Qt.Key_Down)
+        } },
+      { until: function() { return panel.editing !== null && panel.cursorRow.s === "hostField" && panel.cursorRow.i === 2 }, then: function() {
+          testRoot.type("30000")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { name: "share saved", until: function() { return panel.service.hosting.shares.length === 4 }, then: function() {
+          var share = panel.service.hosting.shares[3]
+          t.check(share.enabled, false, "a new share is saved disabled")
+          t.check(share.localAddress, "127.0.0.1", "the local address defaults to loopback")
+          t.check(share.exposedPort, 30000, "the exposed port defaults to the local port")
+          t.check(panel.navRows.some(function(r) { return r.s === "hostField" }), false, "saving closes the form")
+          panel.focusRow("hostCredential")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
+      { name: "credential form", until: function() { return panel.editing !== null }, then: function() {
+          testRoot.type("not-a-uuid")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return panel.editing !== null }, then: function() {
+          var field = testRoot.findObject(panel, "credentialField").field
+          t.check(field.echoMode, TextInput.Password, "the credential is not echoed")
+          t.check(field.text, "not-a-uuid", "a rejected credential stays for correction")
+          testRoot.key(Qt.Key_A, Qt.ControlModifier)
+          testRoot.type("0f8fad5b-d9cb-469f-a165-70867728950e")
+          testRoot.key(Qt.Key_Return)
+          t.check(field.text, "", "the credential field clears on submission")
+        } },
+      { name: "credential stored", until: function() { return !panel.navRows.some(function(r) { return r.s === "hostField" }) }, then: function() {
+          t.check(panel.service.hosting.credentialPresent, true, "the credential is stored")
+          t.check(panel.service.hosting.credentialId.indexOf("d9cb"), -1, "the snapshot never carries the credential")
+          panel.focusRow("hostPause")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Left) } },
+      { name: "paused", until: function() { return panel.service.hosting.paused }, then: function() {
+          panel.focusRow("hostNewShare")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
+      { until: function() { return panel.editing !== null }, then: function() {
+          testRoot.type("Discarded")
+          testRoot.key(Qt.Key_Escape)
+        } },
+      { name: "escape closes the form", then: function() {
+          t.check(panel.navRows.some(function(r) { return r.s === "hostField" }), false, "Escape closes the share form")
+          t.check(panel.view, "settings", "Escape stays in settings")
+          t.check(panel.service.hosting.shares.length, 4, "Escape saves nothing")
         } }
     ]
   }

@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 2
+  readonly property int protocolVersion: 3
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -91,6 +91,8 @@ Item {
   readonly property string runtimeKey: activeSubscription + "|" + startedMs
 
   property var subscriptions: []
+  // The owner's hosting relay, shares and tunnel state (see Model.readHosting).
+  property var hosting: Model.defaultHosting()
   property var ruleSets: []
   property var subRules: []
   property var ruleState: Model.readRules(null)
@@ -157,6 +159,7 @@ Item {
   property int _delayCall: 0
   property int _egressCall: 0
   property int _closeCall: 0
+  property int _hostingCall: 0
 
   readonly property string primaryGroup: Model.primaryGroupName(groups, configuredPrimaryGroup)
   readonly property var primaryGroupEntry: Model.groupByName(groups, primaryGroup)
@@ -164,6 +167,7 @@ Item {
   readonly property bool busy: _coreCall !== 0 || _settingsCall !== 0 || _subCall !== 0
     || _ruleCall !== 0 || _selectCall !== 0 || _closeCall !== 0
   readonly property bool ruleSaving: _ruleCall !== 0
+  readonly property bool hostingBusy: _hostingCall !== 0
   readonly property bool pingTestsRunning: _delayCall !== 0
 
   signal configChanged()
@@ -178,7 +182,7 @@ Item {
 
   function streamScope(stream) {
     var scopes = { status: "core", groups: "configs", rules: "rules",
-      subscriptions: "sub:", traffic: "core", connections: "conns" }
+      subscriptions: "sub:", traffic: "core", connections: "conns", hosting: "settings" }
     return scopes[stream] || "core"
   }
 
@@ -266,7 +270,7 @@ Item {
     hangUp()
   }
 
-  readonly property var panelStreams: ["groups", "rules", "subscriptions", "traffic", "connections"]
+  readonly property var panelStreams: ["groups", "rules", "subscriptions", "traffic", "connections", "hosting"]
 
   function wantedStreams() {
     return panelOpen ? ["status"].concat(panelStreams) : ["status"]
@@ -293,6 +297,7 @@ Item {
     case "subscriptions": subscriptions = Model.readSubscriptions(data); break
     case "traffic": applyTraffic(data); break
     case "connections": applyConnections(data); break
+    case "hosting": hosting = Model.readHosting(data); break
     }
     if (error) reportError(error, streamScope(stream))
     else if (previous && errorScope === streamScope(stream)
@@ -518,6 +523,7 @@ Item {
     startedMs = 0
     routing = ({})
     subscriptions = []
+    hosting = Model.defaultHosting()
     applyRules(null)
     forgetRuntime()
     traceTesting = false
@@ -611,6 +617,34 @@ Item {
       done(result, null)
     }
   }
+
+  // One hosting action at a time; the `hosting` stream carries the result.
+  // Secrets only ever travel in `args`, never into state or the error text.
+  // Returns whether the request started; `done` gets true on success.
+  function hostingAction(op, args, done) {
+    if (!streamsReady(["hosting"]) || _hostingCall !== 0) return false
+    reportDone("")
+    _hostingCall = call(op, args, function(result, error) {
+      root._hostingCall = 0
+      if (error) root.reportError(error, "settings")
+      if (done) done(!error)
+    })
+    return _hostingCall !== 0
+  }
+
+  function setHostingRelay(relay, done) { return hostingAction("hosting.relay.set", { relay: relay }, done) }
+  function removeHostingRelay(done) { return hostingAction("hosting.relay.remove", {}, done) }
+  function setHostingCredential(uuid, done) {
+    return hostingAction("hosting.credential.set", { credential: Model.credentialBytes(uuid) }, done)
+  }
+  function removeHostingCredential(done) { return hostingAction("hosting.credential.remove", {}, done) }
+  function saveHostingShare(share, done) { return hostingAction("hosting.share.save", { share: share }, done) }
+  function removeHostingShare(id, done) { return hostingAction("hosting.share.remove", { id: id }, done) }
+  function enableHostingShare(id, enabled, done) {
+    return hostingAction("hosting.share.enable", { id: id, enabled: enabled }, done)
+  }
+  function pauseHosting(paused, done) { return hostingAction("hosting.pause", { paused: paused }, done) }
+  function retryHosting(done) { return hostingAction("hosting.retry", {}, done) }
 
   function toggleCore() {
     if (!streamsReady(["status"]) || !installed || _coreCall !== 0) return

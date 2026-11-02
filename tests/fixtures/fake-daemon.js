@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 2 by default
+// --protocol  the version its hello announces, 3 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 2, refuse: false, busy: 0, latency: 0, fail: new Set() }
+const options = { protocol: 3, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -78,7 +78,19 @@ function connections() {
   }] }
 }
 
+// Hosting starts unconfigured. It checks only what the widget's tests rely on;
+// the daemon owns the real validation. Test ops steer its transport state.
+const hosting = { relay: null, credential: false, paused: false, shares: [], next: 1, state: "idle", reason: "" }
+function hostingSnapshot() {
+  const shares = hosting.shares.map((share) => ({ ...share, active: 0 }))
+  return { config: { ...(hosting.relay ? { relay: hosting.relay } : {}), shares: shares.map(({ active, ...share }) => share),
+    paused: hosting.paused }, state: hosting.state, ...(hosting.reason ? { reason: hosting.reason } : {}),
+    changed_at: 1791741355865, active: 0, shares, refused: 0, dropped: 0, oversized: 0,
+    credential_present: hosting.credential, credential_id: hosting.credential ? "hosting-credential" : "" }
+}
+
 const snapshots = {
+  hosting: hostingSnapshot,
   status: () => status,
   groups,
   rules: ruleList,
@@ -105,6 +117,12 @@ function later(fn) {
 
 function failure(code, message) {
   return { error: { code, message } }
+}
+
+function hostingChange(change) {
+  change()
+  push("hosting", hostingSnapshot())
+  return { result: hostingSnapshot() }
 }
 
 const ops = {
@@ -205,6 +223,24 @@ const ops = {
     push("subscriptions", { subscriptions })
     return { result: {} }
   },
+  "hosting.status": () => ({ result: hostingSnapshot() }),
+  "hosting.relay.set": (client, a) => hostingChange(() => { hosting.relay = a.relay }),
+  "hosting.relay.remove": () => hostingChange(() => { hosting.relay = null; hosting.credential = false }),
+  "hosting.credential.set": (client, a) => Array.isArray(a.credential) && a.credential.length === 36
+    ? hostingChange(() => { hosting.credential = true }) : failure("invalid", "invalid: credential"),
+  "hosting.credential.remove": () => hostingChange(() => { hosting.credential = false }),
+  "hosting.share.save": (client, a) => hostingChange(() => {
+    const existing = hosting.shares.find((share) => share.id === a.share.id)
+    if (existing) Object.assign(existing, a.share)
+    else hosting.shares.push({ ...a.share, id: "share-" + hosting.next++, enabled: false })
+  }),
+  "hosting.share.remove": (client, a) => hostingChange(() => { hosting.shares = hosting.shares.filter((share) => share.id !== a.id) }),
+  "hosting.share.enable": (client, a) => hostingChange(() => {
+    hosting.shares.forEach((share) => { if (share.id === a.id) share.enabled = a.enabled })
+  }),
+  "hosting.pause": (client, a) => hostingChange(() => { hosting.paused = a.paused }),
+  "hosting.retry": () => hostingChange(() => {}),
+  "test.hosting": (client, a) => hostingChange(() => Object.assign(hosting, a)),
   "connections.list": () => ({ result: connections() }),
   "connections.close": () => ({ result: {} }),
   "test.drop": () => {
