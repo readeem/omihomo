@@ -47,13 +47,19 @@ ColumnLayout {
 
   spacing: Style.space(6)
 
-  SmallButton {
-    theme: selector.theme
+  Item {
     Layout.fillWidth: true
-    text: "→ " + selector.label + " ▾"
-    hasCursor: selector.panel.at(selector.section)
-    onHovered: function(on) { if (on) selector.panel.focusRow(selector.section) }
-    onClicked: selector.picking ? selector.cancel() : selector.openPicker()
+    implicitHeight: trigger.implicitHeight
+
+    SmallButton {
+      id: trigger
+      anchors.right: parent.right
+      theme: selector.theme
+      text: "→ " + selector.label + " ▾"
+      hasCursor: selector.panel.at(selector.section)
+      onHovered: function(on) { if (on) selector.panel.focusRow(selector.section) }
+      onClicked: selector.picking ? selector.cancel() : selector.openPicker()
+    }
   }
 
   PanelField {
