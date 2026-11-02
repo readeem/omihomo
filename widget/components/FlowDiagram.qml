@@ -10,6 +10,67 @@ Canvas {
   // The open stack under the cursor, as { source, target }, or null.
   property var hot: null
 
+  readonly property real pad: Style.space(14)
+  readonly property real sourceX: Style.space(86)
+  readonly property real targetX: width - Style.space(96)
+
+  function rowY(index, count) {
+    return count < 2 ? height / 2 : pad + index * (height - pad * 2) / (count - 1)
+  }
+
+  function isHot(source, target) {
+    return hot !== null && (source === undefined || source === hot.source)
+      && (target === undefined || target === hot.target)
+  }
+
+  PanelText {
+    theme: diagram.theme
+    visible: diagram.flows.sources.length === 0
+    anchors.verticalCenter: parent.verticalCenter
+    text: "No open connections."
+    color: diagram.theme.dim
+  }
+
+  Repeater {
+    model: diagram.flows.sources
+    NameText {
+      required property var modelData
+      required property int index
+      theme: diagram.theme
+      width: Math.min(implicitWidth, diagram.sourceX - Style.space(8))
+      x: diagram.sourceX - Style.space(6) - width
+      y: diagram.rowY(index, diagram.flows.sources.length) - height / 2
+      text: modelData.name
+      color: diagram.isHot(modelData.name, undefined) ? diagram.theme.accent : diagram.theme.foreground
+    }
+  }
+
+  Repeater {
+    model: diagram.flows.targets
+    Item {
+      id: target
+      required property var modelData
+      required property int index
+      x: diagram.targetX + Style.space(6)
+      y: diagram.rowY(index, diagram.flows.targets.length)
+      width: diagram.width - x - Style.space(2)
+
+      NameText {
+        theme: diagram.theme
+        width: parent.width
+        y: -Style.space(5) - height / 2
+        text: target.modelData.name
+        color: diagram.isHot(undefined, target.modelData.name) ? diagram.theme.accent : diagram.theme.foreground
+      }
+      PanelText {
+        theme: diagram.theme
+        y: Style.space(7) - height / 2
+        text: Model.formatBytes(target.modelData.bytes)
+        color: diagram.theme.dim
+      }
+    }
+  }
+
   onFlowsChanged: requestPaint()
   onHotChanged: requestPaint()
   onWidthChanged: requestPaint()
@@ -21,35 +82,10 @@ Canvas {
     ctx.reset()
     var sources = flows.sources
     var targets = flows.targets
-    ctx.font = Style.font.bodySmall + "px \"" + theme.fontFamily + "\""
-    ctx.textBaseline = "middle"
-    if (sources.length === 0) {
-      ctx.fillStyle = theme.css(theme.dim)
-      ctx.fillText("No open connections.", 0, height / 2)
-      return
-    }
-    var pad = Style.space(14)
-    var left = Style.space(86)
-    var right = width - Style.space(96)
-
-    function rowY(index, count) {
-      return count < 2 ? height / 2 : pad + index * (height - pad * 2) / (count - 1)
-    }
     function indexOf(nodes, name) {
       for (let n = 0; n < nodes.length; n++) if (nodes[n].name === name) return n
       return -1
     }
-    function fit(text, room) {
-      var out = text
-      if (ctx.measureText(out).width <= room) return out
-      while (out.length > 1 && ctx.measureText(out + "…").width > room) out = out.slice(0, -1)
-      return out + "…"
-    }
-    function isHot(source, target) {
-      return hot !== null && (source === undefined || source === hot.source)
-        && (target === undefined || target === hot.target)
-    }
-
     var i
     var links = flows.links.slice().sort(function(a, b) {
       return isHot(a.source, a.target) - isHot(b.source, b.target)
@@ -60,10 +96,10 @@ Canvas {
       const link = links[i]
       const y1 = rowY(indexOf(sources, link.source), sources.length)
       const y2 = rowY(indexOf(targets, link.target), targets.length)
-      const middle = (left + right) / 2
+      const middle = (sourceX + targetX) / 2
       ctx.beginPath()
-      ctx.moveTo(left + 4, y1)
-      ctx.bezierCurveTo(middle, y1, middle, y2, right - 4, y2)
+      ctx.moveTo(sourceX + 4, y1)
+      ctx.bezierCurveTo(middle, y1, middle, y2, targetX - 4, y2)
       ctx.lineWidth = Math.max(1.5, Math.min(12, 3.5 * Math.log(Math.max(1, link.bytes / 2e4)) / Math.LN10))
       ctx.strokeStyle = theme.css(isHot(link.source, link.target) ? theme.accent : muted)
       ctx.stroke()
@@ -72,19 +108,13 @@ Canvas {
     for (i = 0; i < sources.length; i++) {
       const sy = rowY(i, sources.length)
       ctx.fillStyle = theme.css(isHot(sources[i].name, undefined) ? theme.accent : theme.foreground)
-      ctx.fillRect(left, sy - 7, 4, 14)
-      ctx.textAlign = "right"
-      ctx.fillText(fit(sources[i].name, left - 8), left - 6, sy)
+      ctx.fillRect(sourceX, sy - 7, 4, 14)
     }
 
-    ctx.textAlign = "left"
     for (i = 0; i < targets.length; i++) {
       const ty = rowY(i, targets.length)
       ctx.fillStyle = theme.css(isHot(undefined, targets[i].name) ? theme.accent : theme.foreground)
-      ctx.fillRect(right - 4, ty - 7, 4, 14)
-      ctx.fillText(fit(targets[i].name, width - right - 8), right + 6, ty - 5)
-      ctx.fillStyle = theme.css(theme.dim)
-      ctx.fillText(Model.formatBytes(targets[i].bytes), right + 6, ty + 7)
+      ctx.fillRect(targetX - 4, ty - 7, 4, 14)
     }
   }
 }

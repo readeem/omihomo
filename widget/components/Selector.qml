@@ -57,11 +57,11 @@ Item {
   implicitWidth: trigger.implicitWidth
   implicitHeight: trigger.implicitHeight
 
-  SmallButton {
+  NameButton {
     id: trigger
     anchors.fill: parent
     theme: selector.theme
-    text: selector.label + " ▾"
+    label: selector.label + " ▾"
     hasCursor: selector.panel.at(selector.section)
     onHovered: function(on) { if (on) selector.panel.focusRow(selector.section) }
     onClicked: selector.picking ? selector.cancel() : selector.openPicker()

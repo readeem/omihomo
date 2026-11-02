@@ -48,7 +48,7 @@ ColumnLayout {
     }
   }
 
-  PanelText {
+  NameText {
     objectName: "ruleTestResult"
     theme: view.theme
     Layout.fillWidth: true
@@ -57,8 +57,7 @@ ColumnLayout {
       : view.panel.ruleTest.hit < 0 ? "No rule matches."
       : "→ " + view.panel.ruleHitTarget
     color: view.panel.ruleTest.hit >= 0 || view.panel.ruleTest.bypassed ? view.theme.accent : view.theme.dim
-    font.bold: view.panel.ruleTest.hit >= 0 || view.panel.ruleTest.bypassed
-    wrapMode: Text.Wrap
+    bold: view.panel.ruleTest.hit >= 0 || view.panel.ruleTest.bypassed
   }
 
   Row {
@@ -90,7 +89,7 @@ ColumnLayout {
 
     Repeater {
       model: view.panel.ruleTally.slice(0, 6)
-      PanelText {
+      NameText {
         required property var modelData
         theme: view.theme
         text: modelData.count + " " + modelData.target

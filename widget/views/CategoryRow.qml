@@ -62,11 +62,11 @@ NavRow {
         text: "Read-only · fixed order" + (row.category && row.category.disabled ? " · off" : "")
         color: row.theme.faint
       }
-      SmallButton {
+      NameButton {
         objectName: row.category ? "categoryTarget-" + row.category.id : ""
         theme: row.theme
         visible: row.category && row.category.own
-        text: row.category ? row.panel.categorySummary(row.category) + " ▾" : ""
+        label: row.category ? row.panel.categorySummary(row.category) + " ▾" : ""
         Layout.maximumWidth: row.width * 0.48
         enabled: row.category && row.category.rules.some(function(r) { return r.type !== "SUB-RULE" })
           && !row.panel.service.ruleSaving && row.panel.editingRule === 0 && row.panel.categoryEditing === ""

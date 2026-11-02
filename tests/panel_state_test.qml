@@ -4,6 +4,7 @@ import Quickshell
 import qs.Ui
 import "omihomo/widget" as Omihomo
 import "omihomo/widget/components" as Components
+import "omihomo/widget/Model.js" as Model
 
 ShellRoot {
   id: testRoot
@@ -14,9 +15,18 @@ ShellRoot {
   }
 
   function checkNameFits(item) {
-    if (item.truncated !== undefined)
+    if (item.truncated !== undefined && item.visible && item.text !== "")
       t.check(item.truncated, false, "fitting names retain all text: " + item.text)
     for (var i = 0; i < item.children.length; i++) checkNameFits(item.children[i])
+  }
+
+  function checkEmojiRuns(item) {
+    if (item.textFormat !== undefined) {
+      var parts = Model.nameParts(item.text)
+      if (parts.some(function(part) { return part.emoji }))
+        t.check(parts.length === 1 && parts[0].emoji, true, "emoji are isolated from destination text: " + item.text)
+    }
+    for (var i = 0; i < item.children.length; i++) checkEmojiRuns(item.children[i])
   }
 
   property string categoryId: ""
@@ -93,6 +103,29 @@ ShellRoot {
         }
       }
     }
+    Column {
+      id: destinationFixtures
+      x: -1000
+      Components.Selector {
+        panel: panel
+        section: "ruleTarget"
+        choices: [{ value: "destination", label: "🇺🇸 Example 🦅LA" }]
+        value: "destination"
+        pickerHost: destinationFixtures
+      }
+      Components.NameButton {
+        theme: panel.theme
+        label: "🇯🇵Node🚀→ X ▾"
+      }
+      Components.FlowDiagram {
+        theme: panel.theme
+        width: 420
+        height: 80
+        flows: ({ sources: [{ name: "browser", bytes: 1000 }],
+          targets: [{ name: "🇯🇵Node🚀→ X", bytes: 1000 }],
+          links: [{ source: "browser", target: "🇯🇵Node🚀→ X", bytes: 1000 }] })
+      }
+    }
     TestEvent { id: events }
   }
 
@@ -102,6 +135,8 @@ ShellRoot {
     steps: [
       { name: "panel ready", until: function() { return panel.service.proxiesLoaded && panel.service.rules.length === 4 }, then: function() {
           testRoot.checkNameFits(nameFixtures)
+          testRoot.checkNameFits(destinationFixtures)
+          testRoot.checkEmojiRuns(destinationFixtures)
           testRoot.type("3")
         } },
       { then: function() {

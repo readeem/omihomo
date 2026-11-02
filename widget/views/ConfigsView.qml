@@ -120,15 +120,6 @@ ColumnLayout {
       color: view.theme.dim
     }
 
-    SmallButton {
-      theme: view.theme
-      text: "test all"
-      ghost: true
-      horizontalPadding: Style.space(4)
-      enabled: !view.service.pingTestsRunning
-      onClicked: view.service.testGroup(view.panel.browsedGroup)
-    }
-
     Item { Layout.fillWidth: true }
 
     PanelText {
