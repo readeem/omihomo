@@ -506,7 +506,7 @@ func readSettings(root *os.Root) (state.Settings, error) {
 		if (r.Type == "DOMAIN-SUFFIX" || r.Type == "DOMAIN-KEYWORD") && strings.ContainsAny(r.Value, " /\\") {
 			return s, errors.New("old rule has an invalid domain value")
 		}
-		s.Rules = append(s.Rules, protocol.UserRule{Type: r.Type, Value: r.Value, Target: r.Target})
+		s.Rules = append(s.Rules, protocol.UserRule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " ")})
 	}
 	if len(s.Rules) > 1000 {
 		return s, errors.New("old override has too many user rules")

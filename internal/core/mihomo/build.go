@@ -164,6 +164,12 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 		}
 		payload := make([]any, len(rs.Payload))
 		for i, line := range rs.Payload {
+			if rs.Behavior == "classical" {
+				typ, value, _ := strings.Cut(line, ",")
+				if err := checkRuleRegex(strings.TrimSpace(typ), strings.TrimSpace(value)); err != nil {
+					return nil, nil, err
+				}
+			}
 			payload[i] = line
 		}
 		raw.RuleProvider[rs.Name] = map[string]any{
@@ -171,6 +177,16 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 		}
 	}
 
+	raw.SubRules = make(map[string][]string)
+	for name, rules := range p.SubRules {
+		for _, r := range rules {
+			line, err := ruleLine(r)
+			if err != nil {
+				return nil, nil, err
+			}
+			raw.SubRules[name] = append(raw.SubRules[name], line)
+		}
+	}
 	rules := withOmihomoRules(p.Rules, cfg, primary)
 	listed := make([]protocol.Rule, 0, len(rules))
 	for _, r := range rules {
@@ -179,7 +195,7 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 			return nil, nil, err
 		}
 		raw.Rule = append(raw.Rule, line)
-		listed = append(listed, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Source: r.Source})
+		listed = append(listed, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " "), Source: r.Source})
 	}
 	return raw, listed, nil
 }
@@ -288,6 +304,9 @@ func ruleLine(r core.Rule) (string, error) {
 		return "", fmt.Errorf("rule %s,%s,%s %s", r.Type, r.Value, r.Target, why)
 	}
 	typ := strings.ToUpper(r.Type)
+	if err := checkRuleRegex(typ, r.Value); err != nil {
+		return bad(err.Error())
+	}
 	for _, f := range append([]string{r.Type, r.Value, r.Target}, r.Params...) {
 		if strings.ContainsAny(f, "\r\n") || f != strings.TrimSpace(f) {
 			return bad("has a line break or surrounding space")

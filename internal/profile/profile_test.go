@@ -385,10 +385,10 @@ rules:
   - RULE-SET,c,REJECT
   - MATCH,Proxy
 `, nil)
-	if got := ruleLines(p); !slices.Equal(got, []string{"DOMAIN,foo-regex.example,DIRECT", "RULE-SET,c,REJECT", "MATCH,,Proxy"}) {
+	if got := ruleLines(p); !slices.Equal(got, []string{"DOMAIN-REGEX,^(a+)+$,REJECT", "AND,((NETWORK,tcp),(PROCESS-NAME-REGEX,^(a+)+$)),REJECT", "DOMAIN,foo-regex.example,DIRECT", "RULE-SET,c,REJECT", "MATCH,,Proxy"}) {
 		t.Errorf("rules %v", got)
 	}
-	if !slices.Equal(p.RuleSets[0].Payload, []string{"DOMAIN,ok.example"}) {
+	if !slices.Equal(p.RuleSets[0].Payload, []string{"DOMAIN-REGEX,^(a+)+$", "DOMAIN,ok.example"}) {
 		t.Errorf("rule set %v", p.RuleSets[0].Payload)
 	}
 }

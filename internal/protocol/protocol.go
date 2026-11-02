@@ -200,11 +200,12 @@ type StreamsArgs struct {
 
 // Settings are the owner's typed choices, as their settings.json holds them.
 type Settings struct {
-	Mode         string `json:"mode"`
-	TUN          bool   `json:"tun,omitzero"`
-	TUNRedirect  bool   `json:"tun_redirect,omitzero"`
-	Tailscale    bool   `json:"tailscale,omitzero"`
-	TailnetProxy bool   `json:"tailnet_proxy,omitzero"`
+	CategoryTargets CategoryTargets `json:"category_targets,omitzero"`
+	Mode            string          `json:"mode"`
+	TUN             bool            `json:"tun,omitzero"`
+	TUNRedirect     bool            `json:"tun_redirect,omitzero"`
+	Tailscale       bool            `json:"tailscale,omitzero"`
+	TailnetProxy    bool            `json:"tailnet_proxy,omitzero"`
 	// PrimaryGroup may name a group the active subscription lacks; the
 	// first selectable group stands in for it.
 	PrimaryGroup string `json:"primary_group,omitzero"`
@@ -217,6 +218,7 @@ type UserRule struct {
 	Type   string `json:"type"`
 	Value  string `json:"value"`
 	Target string `json:"target"`
+	Params string `json:"params,omitempty"`
 }
 
 // ApplyArgs replaces all of the owner's settings and rules at once.
@@ -268,13 +270,16 @@ type Rule struct {
 	Value  string `json:"value"`
 	Target string `json:"target"`
 	Source string `json:"source"`
+	Params string `json:"params,omitempty"`
 	// Inactive keeps a saved user rule visible when the subscription lacks its target.
 	Inactive bool `json:"inactive,omitempty"`
 }
 
 // RuleList includes every saved user rule, then non-user runtime rules in match order.
 type RuleList struct {
-	Rules []Rule `json:"rules"`
+	Rules    []Rule   `json:"rules"`
+	RuleSets []string `json:"rule_sets,omitempty"`
+	SubRules []string `json:"sub_rules,omitempty"`
 }
 
 // Proxy is one member of a group: a proxy, or another group.

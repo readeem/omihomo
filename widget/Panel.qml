@@ -27,6 +27,13 @@ Panel {
   property string removeArmed: ""
   property bool uninstallArmed: false
   property int ruleTypeIndex: 0
+  property int editingRule: 0
+  property string editingRuleOriginal: ""
+  property string savedRuleTarget: ""
+  property string ruleParams: ""
+  property string ruleCategory: ""
+  property string bulkCategory: ""
+  property bool typePicking: false
   property int ruleTargetIndex: 0
   property bool targetPicking: false
 
@@ -107,13 +114,20 @@ Panel {
     return at ? "tested " + Model.relativeSince(at, nowMs) : "not tested yet"
   }
 
-  readonly property var ruleTargets: Model.ruleTargets(visibleGroups)
+  readonly property var ruleTargets: {
+    var targets = ruleType === "SUB-RULE" && bulkCategory === ""
+      ? omihomo.subRules.map(function(name) { return { value: name, label: name, description: "sub-rule" } }) : Model.ruleTargets(visibleGroups)
+    if (editingRule > 0 && savedRuleTarget !== "" && !targets.some(function(target) { return target.value === savedRuleTarget }))
+      targets.push({ value: savedRuleTarget, label: savedRuleTarget, description: "unavailable in this subscription" })
+    return targets
+  }
   readonly property var visibleTargets: {
     var needle = targetPicking ? rulesView.targetField.text.trim().toLowerCase() : ""
     return ruleTargets.filter(function(target) { return target.value.toLowerCase().indexOf(needle) !== -1 })
   }
+  readonly property var visibleRuleTypes: Model.RULE_TYPES.filter(function(type) { return type.toLowerCase().indexOf(rulesView.typeField.text.toLowerCase()) !== -1 })
   readonly property string ruleType: Model.RULE_TYPES[Math.max(0, Math.min(ruleTypeIndex, Model.RULE_TYPES.length - 1))]
-  readonly property string ruleTarget: ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))].value
+  readonly property string ruleTarget: ruleTargets.length > 0 ? ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))].value : ""
   readonly property string ruleFormError: Model.validateRule(ruleType, ruleFormValue, ruleTarget)
 
   readonly property var effectiveRules: omihomo.effectiveRules
@@ -139,7 +153,7 @@ Panel {
     })
     for (i = 0; i < omihomo.subscriptionRules.length; i++)
       out.push({ kind: "sub", s: "srule", i: i, rule: omihomo.subscriptionRules[i], eff: head + i })
-    return out
+    return out.filter(function(entry) { return entry.kind === "head" || root.ruleCategory === "" || Model.ruleCategory(entry.rule.type) === root.ruleCategory })
   }
 
   readonly property var flows: Model.connectionFlows(omihomo.connectionStacks, 6, 4)
@@ -208,14 +222,16 @@ Panel {
       rows.push({ s: "subUrl" }, { s: "subSubmit" })
       break
     case "rules":
+      if (typePicking) {
+        for (i = 0; i < visibleRuleTypes.length; i++) rows.push({ s: "ruleTypeChoice", i: i })
+        break
+      }
       if (targetPicking) {
         for (i = 0; i < visibleTargets.length; i++) rows.push({ s: "target", i: i })
         break
       }
       rows.push({ s: "ruleTest" })
-      for (i = 0; i < omihomo.rules.length; i++) rows.push({ s: "rule", i: i })
-      for (i = 0; i < omihomo.injectedRules.length; i++) rows.push({ s: "irule", i: i })
-      for (i = 0; i < omihomo.subscriptionRules.length; i++) rows.push({ s: "srule", i: i })
+      for (i = 0; i < ruleEntries.length; i++) if (ruleEntries[i].s) rows.push({ s: ruleEntries[i].s, i: ruleEntries[i].i })
       rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" }, { s: "ruleSubmit" })
       break
     case "conns":
@@ -303,7 +319,9 @@ Panel {
     case "subUrl": beginEdit(subscriptionsView.urlField); break
     case "subSubmit": submitSubForm(); break
     case "ruleTest": beginEdit(rulesView.testField); break
-    case "ruleType": cycleRuleType(1); break
+    case "ruleType": openTypePicker(); break
+    case "ruleTypeChoice": chooseRuleType(cursorRow.i); break
+    case "rule": editRule(omihomo.rules[cursorRow.i]); break
     case "ruleValue": beginEdit(rulesView.valueField); break
     case "ruleTarget": openTargetPicker(); break
     case "target": pickTargetAt(cursorRow.i); break
@@ -351,7 +369,7 @@ Panel {
     case "t": omihomo.toggleTun(); return
     case "m": cycleMode(1); return
     case "c": openView("conns"); return
-    case "n": openRuleForm(); return
+    case "n": cancelRuleEdit(); openRuleForm(); return
     case "r": omihomo.refresh(); omihomo.refreshTrace(); return
     }
     if (view === "configs") {
@@ -383,7 +401,9 @@ Panel {
     if (removeArmed !== "") { removeArmed = ""; return }
     if (uninstallArmed) { uninstallArmed = false; return }
     if (filterOpen) { closeFilter(); return }
+    if (typePicking) { typePicking = false; return }
     if (targetPicking) { closeTargetPicker(); return }
+    if (editingRule > 0) { cancelRuleEdit(); return }
     if (view !== "configs") { openView("configs"); return }
     close()
   }
@@ -504,11 +524,30 @@ Panel {
     omihomo.setMode(Model.MODES[next])
   }
 
+  function openTypePicker() {
+    typePicking = !typePicking
+    if (typePicking) {
+      rulesView.typeField.text = ""
+      beginEdit(rulesView.typeField)
+    } else endEdit()
+  }
+
+  function chooseRuleType(index) {
+    var type = visibleRuleTypes[index]
+    if (!type) return
+    ruleTypeIndex = Model.RULE_TYPES.indexOf(type)
+    typePicking = false
+    ruleParams = ""
+    if (type === "MATCH") rulesView.valueField.text = ""
+    openRuleForm()
+  }
+
   function cycleRuleType(delta) {
     ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
   }
 
   function cycleRuleTarget(delta) {
+    if (ruleTargets.length === 0) return
     ruleTargetIndex = (ruleTargetIndex + delta + ruleTargets.length) % ruleTargets.length
   }
 
@@ -520,6 +559,7 @@ Panel {
   }
 
   function closeTargetPicker() {
+    bulkCategory = ""
     targetPicking = false
     rulesView.targetField.text = ""
     endEdit()
@@ -528,7 +568,11 @@ Panel {
 
   function pickTargetAt(index) {
     var target = visibleTargets[index]
-    if (target) ruleTargetIndex = ruleTargets.indexOf(target)
+    if (target) {
+      if (bulkCategory !== "") omihomo.retargetRules(bulkCategory, target.value)
+      else ruleTargetIndex = ruleTargets.indexOf(target)
+    }
+    bulkCategory = ""
     closeTargetPicker()
   }
 
@@ -587,6 +631,32 @@ Panel {
     endEdit()
   }
 
+  function editRule(rule) {
+    if (!rule || omihomo.ruleSaving) return
+    editingRule = rule.index
+    editingRuleOriginal = JSON.stringify(rule)
+    savedRuleTarget = rule.target
+    ruleTypeIndex = Model.RULE_TYPES.indexOf(rule.type)
+    rulesView.valueField.text = rule.value
+    ruleParams = rule.params || ""
+    ruleTargetIndex = Math.max(0, ruleTargets.findIndex(function(target) { return target.value === rule.target }))
+    openRuleForm()
+  }
+
+  function cancelRuleEdit() {
+    editingRule = 0
+    savedRuleTarget = ""
+    ruleParams = ""
+    rulesView.valueField.text = ""
+    typePicking = false
+    endEdit()
+  }
+
+  function bulkRetarget() {
+    openTargetPicker()
+    bulkCategory = ruleCategory
+  }
+
   function openRuleForm() {
     if (view !== "rules") openView("rules")
     omihomo.clearMessages()
@@ -602,7 +672,7 @@ Panel {
       beginEdit(rulesView.valueField)
       return
     }
-    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget)
+    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget, ruleParams, editingRule)
   }
 
   function openFilter() {
@@ -645,6 +715,7 @@ Panel {
       break
     case "conn": list = connectionsView.list; break
     case "target": list = rulesView.targetList; break
+    case "ruleTypeChoice": list = rulesView.typeList; break
     }
     if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
     else if (view === "settings") settingsView.reveal(cursorRow.s)
@@ -683,6 +754,10 @@ Panel {
 
   Connections {
     target: omihomo
+    function onRulesChanged() {
+      if (root.editingRule > 0 && JSON.stringify(omihomo.rules[root.editingRule - 1]) !== root.editingRuleOriginal)
+        root.cancelRuleEdit()
+    }
     function onLinkChanged() { root.setupStarted = "" }
     function onDaemonVersionChanged() {
       if (omihomo.daemonVersion !== "") updateService.check()
@@ -694,6 +769,9 @@ Panel {
     panelOpen: root.opened
     onConfigChanged: omihomo.refreshTrace()
     onRuleAdded: {
+      root.editingRule = 0
+      root.savedRuleTarget = ""
+      root.ruleParams = ""
       rulesView.valueField.text = ""
       root.endEdit()
     }

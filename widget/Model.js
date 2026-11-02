@@ -2,7 +2,37 @@
 // message from the daemon's socket, or formats a value for display; nothing
 // touches QML types, so tests/model_test.js runs the same functions under node.
 
-var RULE_TYPES = ["DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "PROCESS-NAME"]
+var RULE_TYPES = ["DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD", "DOMAIN-REGEX", "GEOSITE",
+"IP-CIDR", "IP-CIDR6", "IP-SUFFIX", "GEOIP", "IP-ASN", "SRC-IP-CIDR", "SRC-IP-SUFFIX", "SRC-GEOIP", "SRC-IP-ASN",
+"PROCESS-NAME", "PROCESS-PATH", "PROCESS-NAME-WILDCARD", "PROCESS-PATH-WILDCARD", "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX",
+"UID", "DST-PORT", "SRC-PORT", "IN-PORT", "IN-TYPE", "IN-USER", "IN-NAME", "REMATCH-NAME", "NETWORK", "DSCP", "RULE-SET", "AND", "OR", "NOT", "SUB-RULE", "MATCH"]
+var RULE_CATEGORIES = ["domains", "addresses", "applications", "ports", "inbound", "rule-sets", "logic", "other"]
+
+function ruleCategory(type) {
+  if (type.indexOf("DOMAIN") === 0 || type === "GEOSITE") return "domains"
+  if (type.indexOf("IP") !== -1) return "addresses"
+  if (type.indexOf("PROCESS") === 0 || type === "UID") return "applications"
+  if (type.slice(-5) === "-PORT") return "ports"
+  if (type.indexOf("IN-") === 0 || type === "REMATCH-NAME") return "inbound"
+  if (type === "RULE-SET") return "rule-sets"
+  if (["AND", "OR", "NOT", "SUB-RULE"].indexOf(type) !== -1) return "logic"
+  return "other"
+}
+
+function ruleHint(type) {
+  if (type === "MATCH") return "Matches everything; later rules will not be reached."
+  if (type === "GEOSITE") return "Site category, e.g. youtube, google, category-ads-all, or cn. Supports @ attributes and ! negation."
+  if (type.indexOf("GEOIP") !== -1) return "Country code, e.g. CN, US, or private. Database downloads and updates automatically."
+  if (type.indexOf("ASN") !== -1) return "Autonomous system number, e.g. 13335. Database managed automatically."
+  if (type === "RULE-SET") return "Exact name of a rule provider in the active subscription."
+  if (["AND", "OR", "NOT"].indexOf(type) !== -1) return "Expression, e.g. ((DOMAIN,example.com),(NETWORK,UDP))"
+  if (type.indexOf("REGEX") !== -1) return "Go-compatible regular expression. Matching has a time limit."
+  if (type.indexOf("PORT") !== -1) return "Port or range, e.g. 443 or 8000-8080"
+  if (type.indexOf("CIDR") !== -1 || type.indexOf("SUFFIX") !== -1 && type.indexOf("IP") !== -1) return "IP prefix, e.g. 10.0.0.0/8 or 2001:db8::/32"
+  if (type === "NETWORK") return "TCP or UDP"
+  if (type.indexOf("PROCESS") === 0) return "Process name or path; wildcard selectors accept * and ?."
+  return "Value for " + type
+}
 var MODES = ["rule", "global", "direct"]
 
 function isSystemGroup(group) {
@@ -173,7 +203,7 @@ function readRules(data) {
     var entry = list[i]
     if (!entry || typeof entry !== "object") continue
     var rule = { type: text(entry.type), value: text(entry.value), target: text(entry.target),
-      inactive: entry.inactive === true }
+      params: text(entry.params), inactive: entry.inactive === true }
     var source = text(entry.source)
     if (source === "user") {
       rule.index = out.own.length + 1
@@ -189,21 +219,18 @@ function readRules(data) {
   return out
 }
 
-// Mirrors the daemon's per-type validation for the form's four types so it
-// can refuse a rule before the call. The daemon is still the real gate.
 function validateRule(type, value, target) {
   if (text(target) === "") return "Pick a target"
+  if (RULE_TYPES.indexOf(type) === -1) return "Unsupported rule type"
   var v = text(value).trim()
+  if (type === "MATCH") return v === "" ? "" : "MATCH takes no value"
   if (v === "") return "Value is required"
-  if ((v + target).indexOf(",") !== -1) return "No commas"
-  if (type === "IP-CIDR") {
-    return isCidr(v) ? "" : "Not a valid CIDR"
-  }
-  if (type === "DOMAIN-SUFFIX" || type === "DOMAIN-KEYWORD") {
-    return /[\s/]/.test(v) ? "No spaces or slashes" : ""
-  }
-  if (type === "PROCESS-NAME") return ""
-  return "Unsupported rule type"
+  if (v.length > 4096 || /[\x00-\x1f\x7f]/.test(v)) return "Value is too long or contains control characters"
+  if (target.indexOf(",") !== -1) return "No commas in targets"
+  if (v.indexOf(",") !== -1 && ["AND", "OR", "NOT", "SUB-RULE"].indexOf(type) === -1 && type.indexOf("REGEX") === -1) return "No commas"
+  if (type.indexOf("CIDR") !== -1) return isCidr(v) ? "" : "Not a valid CIDR"
+  if (type.indexOf("DOMAIN") === 0 && type.indexOf("REGEX") === -1) return /[\s/]/.test(v) ? "No spaces or slashes" : ""
+  return ""
 }
 
 function isCidr(value) {
@@ -573,6 +600,7 @@ function inIpv4Cidr(ip, cidr) {
 // depends on something a host string cannot tell — a rule set, a geo database,
 // the process, or a DNS lookup that only the core would make.
 function ruleVerdict(rule, host) {
+  if (text(rule.params).split(" ").indexOf("src") !== -1) return "unknown"
   var type = text(rule && rule.type).toUpperCase()
   var value = text(rule && rule.value).toLowerCase()
   var ip = ipv4Number(host)
@@ -848,6 +876,7 @@ function emojiKey(emoji) {
 if (typeof module !== "undefined") {
   module.exports = {
     RULE_TYPES: RULE_TYPES,
+ RULE_CATEGORIES: RULE_CATEGORIES, ruleCategory: ruleCategory, ruleHint: ruleHint,
     MODES: MODES,
     isSystemGroup: isSystemGroup,
     text: text,

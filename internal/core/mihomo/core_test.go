@@ -715,3 +715,59 @@ func TestHiddenPrimaryAgreesWithListedGroups(t *testing.T) {
 		})
 	}
 }
+
+func TestSubRulesRouteThroughTheCore(t *testing.T) {
+	cfg := testConfig()
+	cfg.Profile.SubRules = map[string][]core.Rule{"blocked": {{Type: "DOMAIN", Value: "blocked.example", Target: "REJECT"}}}
+	cfg.Profile.Rules = []core.Rule{
+		{Type: "SUB-RULE", Value: "(NETWORK,tcp)", Target: "blocked"},
+		{Type: "MATCH", Target: "REJECT"},
+	}
+	c := running(t, cfg)
+	conn, err := c.DialContext(t.Context(), "tcp", "blocked.example:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("sub-rule rejection: %v", err)
+	}
+	cfg.Profile.SubRules["blocked"] = []core.Rule{{Type: "SUB-RULE", Value: "(NETWORK,tcp)", Target: "blocked"}}
+	if err := c.Check(t.Context(), cfg); err == nil {
+		t.Fatal("circular sub-rule accepted")
+	}
+}
+
+func TestCatastrophicRuleRegexIsBounded(t *testing.T) {
+	cfg := testConfig()
+	cfg.Profile.Rules = []core.Rule{
+		{Type: "DOMAIN-REGEX", Value: "^(a+)+$", Target: "DIRECT"},
+		{Type: "MATCH", Target: "REJECT"},
+	}
+	c := running(t, cfg)
+	start := time.Now()
+	conn, err := c.DialContext(t.Context(), "tcp", strings.Repeat("a", 50)+"!:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("fallback rejection: %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("regex exceeded its matching budget")
+	}
+}
+
+func TestBacktrackingOnlyRegexSyntaxIsRefused(t *testing.T) {
+	for _, rule := range []core.Rule{
+		{Type: "DOMAIN-REGEX", Value: "(?=example)", Target: "DIRECT"},
+		{Type: "AND", Value: "((DOMAIN-REGEX,(?=example)),(NETWORK,tcp))", Target: "DIRECT"},
+	} {
+		cfg := testConfig()
+		cfg.Profile.Rules = []core.Rule{rule}
+		if err := shared.Check(t.Context(), cfg); err == nil {
+			t.Fatalf("accepted backtracking-only syntax: %+v", rule)
+		}
+	}
+}
