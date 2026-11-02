@@ -11,6 +11,7 @@ ColumnLayout {
   required property string value
   readonly property Theme theme: panel.theme
   property Component heading: null
+  property Item pickerHost: selector
   property bool picking: false
   readonly property alias field: search
   readonly property alias list: options
@@ -68,67 +69,72 @@ ColumnLayout {
     }
   }
 
-  PanelField {
-    id: search
-    panel: selector.panel
-    theme: selector.theme
+  ColumnLayout {
+    parent: selector.pickerHost
     visible: selector.picking
     Layout.fillWidth: true
-    placeholderText: "Filter destinations"
-    onAccepted: selector.pick(0)
-    onActiveFocusChanged: selector.panel.fieldFocusChanged(search, activeFocus)
-    Keys.onEscapePressed: selector.cancel()
-    Keys.onDownPressed: {
-      selector.panel.endEdit()
-      selector.panel.focusRow("destination", 0)
-    }
-  }
+    spacing: Style.space(6)
 
-  ScrollList {
-    id: options
-    theme: selector.theme
-    visible: selector.picking
-    Layout.fillWidth: true
-    Layout.preferredHeight: Math.min(contentHeight, Style.space(160))
-    spacing: Style.space(1)
-    model: selector.filtered
-
-    delegate: NavRow {
-      id: option
-      required property var modelData
-      required property int index
+    PanelField {
+      id: search
       panel: selector.panel
-      section: "destination"
-      rowIndex: index
-      current: modelData.value === selector.value
-      width: options.rowWidth
-      implicitHeight: Style.space(28)
-      onActivated: selector.pick(index)
+      theme: selector.theme
+      Layout.fillWidth: true
+      placeholderText: "Filter destinations"
+      onAccepted: selector.pick(0)
+      onActiveFocusChanged: selector.panel.fieldFocusChanged(search, activeFocus)
+      Keys.onEscapePressed: selector.cancel()
+      Keys.onDownPressed: {
+        selector.panel.endEdit()
+        selector.panel.focusRow("destination", 0)
+      }
+    }
 
-      RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: Style.space(8)
-        anchors.rightMargin: Style.space(8)
-        spacing: Style.space(8)
-        NameText {
-          theme: selector.theme
-          Layout.fillWidth: true
-          text: option.modelData.label
-          bold: option.current
-        }
-        PanelText {
-          theme: selector.theme
-          text: option.modelData.description || ""
-          color: selector.theme.faint
+    ScrollList {
+      id: options
+      theme: selector.theme
+      Layout.fillWidth: true
+      Layout.preferredHeight: Math.min(contentHeight, Style.space(160))
+      spacing: Style.space(1)
+      model: selector.filtered
+
+      delegate: NavRow {
+        id: option
+        required property var modelData
+        required property int index
+        panel: selector.panel
+        section: "destination"
+        rowIndex: index
+        current: modelData.value === selector.value
+        width: options.rowWidth
+        implicitHeight: Style.space(28)
+        onActivated: selector.pick(index)
+
+        RowLayout {
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(8)
+          anchors.rightMargin: Style.space(8)
+          spacing: Style.space(8)
+          NameText {
+            theme: selector.theme
+            Layout.fillWidth: true
+            text: option.modelData.label
+            bold: option.current
+          }
+          PanelText {
+            theme: selector.theme
+            text: option.modelData.description || ""
+            color: selector.theme.faint
+          }
         }
       }
     }
-  }
 
-  PanelText {
-    theme: selector.theme
-    visible: selector.picking && selector.filtered.length === 0
-    text: "No matching destinations"
-    color: selector.theme.dim
+    PanelText {
+      theme: selector.theme
+      visible: selector.filtered.length === 0
+      text: "No matching destinations"
+      color: selector.theme.dim
+    }
   }
 }

@@ -12,6 +12,16 @@ ShellRoot {
     for (var i = 0; i < text.length; i++) events.keyClickChar(text[i], 0, -1)
   }
 
+  function settingsScroll(item) {
+    if (item.visible && item.contentY !== undefined && item.flickableDirection !== undefined && item.model === undefined)
+      return item
+    for (var i = 0; i < item.children.length; i++) {
+      var scroll = settingsScroll(item.children[i])
+      if (scroll) return scroll
+    }
+    return null
+  }
+
   function clickHint(label) {
     function find(item) {
       if (item.keys !== undefined && item.label === label && item.visible) return item
@@ -101,6 +111,16 @@ ShellRoot {
           t.check(panel.activeSelector.choices.some(function(c) { return c.value === "REJECT" }), false,
             "DNS excludes rule-only destinations")
           t.check(panel.hintsFor("settings")[0].label, "pick", "the footer offers selection in the picker")
+          var scroll = testRoot.settingsScroll(panel)
+          t.check(scroll !== null, true, "the settings page has a scrollable body")
+          if (scroll) {
+            var field = panel.activeSelector.field
+            var top = field.mapToItem(panel, 0, 0).y
+            var oldScroll = scroll.contentY
+            scroll.contentY = Math.min(scroll.contentHeight - scroll.height, oldScroll + 60)
+            t.check(scroll.contentY > oldScroll, true, "settings content scrolls while choosing DNS")
+            t.check(field.mapToItem(panel, 0, 0).y, top, "the DNS picker stays pinned while settings scroll")
+          }
           testRoot.type("Proxy")
           testRoot.key(Qt.Key_Return)
           t.check(panel.service.effectiveDNSDestination, "Proxy", "DNS selection displays immediately")
