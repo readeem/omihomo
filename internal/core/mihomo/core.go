@@ -221,6 +221,20 @@ func prepare(cfg core.Config) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.DNSDestination != "" {
+		name := cfg.DNSDestination
+		exists := name != globalGroup && (slices.ContainsFunc(cfg.Profile.Groups, func(g core.Group) bool { return g.Name == name }) ||
+			slices.ContainsFunc(cfg.Profile.Proxies, func(p core.Proxy) bool { return p.Name == name }))
+		adapter := parsed.Proxies[name]
+		if !exists || adapter == nil {
+			return nil, fmt.Errorf("DNS destination %q is unavailable in the active subscription", name)
+		}
+		// Bind the adapter: mihomo treats an unknown DNS proxy name as an interface
+		// and may dial directly. Names also must not become DNS fragment parameters.
+		for i := range parsed.DNS.NameServer {
+			parsed.DNS.NameServer[i].ProxyAdapter = adapter
+		}
+	}
 	// A rule set keeps the lines it can read and only logs the others,
 	// which would let through what the rest should have matched.
 	for _, rs := range cfg.Profile.RuleSets {

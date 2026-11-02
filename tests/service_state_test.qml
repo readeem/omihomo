@@ -106,6 +106,13 @@ ShellRoot {
         t.check(svc.injectedRules.length, 1, "Omihomo's rules are read-only")
         t.check(svc.currentConfig, "Pass", "groups arrive with the panel")
         t.check(svc.subscriptions[0].active, true, "subscriptions arrive with the panel")
+        svc.setDNSDestination("Proxy")
+      } },
+    { name: "DNS destination lands", until: function() { return !svc.busy && svc.dnsDestination === "Proxy" }, then: function() {
+        t.check(svc.configuredPrimaryGroup, "", "DNS selection leaves the primary group unchanged")
+        svc.setDNSDestination("")
+      } },
+    { name: "DNS default restored", until: function() { return !svc.busy && svc.dnsDestination === "" }, then: function() {
         // A daemon restarting under socket activation drops the connection.
         svc.call("test.drop", {})
       } },

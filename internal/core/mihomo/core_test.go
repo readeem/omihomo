@@ -2,8 +2,11 @@ package mihomo
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/metacubex/mihomo/component/resolver"
+	"github.com/miekg/dns"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -714,4 +718,102 @@ func TestHiddenPrimaryAgreesWithListedGroups(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDNSDestination(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if r.Method == http.MethodGet {
+			body, err = base64.RawURLEncoding.DecodeString(r.URL.Query().Get("dns"))
+		}
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		var question dns.Msg
+		if err := question.Unpack(body); err != nil {
+			t.Error(err)
+			return
+		}
+		requests.Add(1)
+		answer := new(dns.Msg)
+		answer.SetReply(&question)
+		answer.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: question.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+			A:   net.ParseIP("192.0.2.1"),
+		}}
+		wire, err := answer.Pack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		w.Write(wire)
+	}))
+	defer server.Close()
+	previous := defaultNameservers
+	defaultNameservers = []string{server.URL + "/dns-query"}
+	t.Cleanup(func() { defaultNameservers = previous })
+
+	cfg := testConfig()
+	// Delimiters in an owner's choice must remain part of the proxy name.
+	cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: "DNS & choice=1", Type: "direct"})
+	cfg.DNSDestination = "DNS & choice=1"
+	cfg.Profile.Groups[0].Members = []string{"Dead"}
+	c := running(t, cfg)
+	lookup := func(host string, wantSuccess bool) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		ips, err := resolver.LookupIPv4(ctx, host)
+		if wantSuccess && (err != nil || !slices.Contains(ips, netip.MustParseAddr("192.0.2.1"))) {
+			t.Fatalf("lookup %s = %v, %v", host, ips, err)
+		}
+		if !wantSuccess && err == nil {
+			t.Fatalf("lookup %s unexpectedly succeeded: %v", host, ips)
+		}
+	}
+	lookup("independent.example", true)
+	cfg.DNSDestination = "Proxy"
+	cfg.Profile.Groups[0].Members = []string{"Local"}
+	if err := c.Apply(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	lookup("group.example", true)
+	cfg.DNSDestination = ""
+	if err := c.Apply(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	lookup("compatible.example", true)
+
+	cfg.DNSDestination = "Dead"
+	if err := c.Apply(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if _, err := resolver.LookupIPv4WithResolver(ctx, "bootstrap.example", resolver.ProxyServerHostResolver); err != nil {
+		t.Fatalf("proxy bootstrap depended on application DNS destination: %v", err)
+	}
+	before := requests.Load()
+	lookup("unreachable.example", false)
+	if requests.Load() != before {
+		t.Fatal("unreachable DNS destination fell back to the reachable primary")
+	}
+	for _, name := range []string{"Missing", "GLOBAL", "DIRECT"} {
+		cfg.DNSDestination = name
+		if err := c.Check(t.Context(), cfg); err == nil {
+			t.Fatalf("check accepted unavailable DNS destination %q", name)
+		}
+		if err := c.Apply(t.Context(), cfg); !errors.Is(err, core.ErrInvalid) {
+			t.Fatalf("apply %q = %v", name, err)
+		}
+	}
+	lookup("still-unreachable.example", false)
+	cfg.DNSDestination = ""
+	if err := c.Apply(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	lookup("restored.example", true)
 }

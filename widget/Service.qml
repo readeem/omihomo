@@ -39,6 +39,7 @@ Item {
   property string coreDetail: ""
   property string activeSubscription: ""
   property string configuredPrimaryGroup: ""
+  property string dnsDestination: ""
   property string mode: ""
   property bool tunEnabled: false
   // Whether TUN uses the nftables-backed fast pairing. Off is the fallback that
@@ -445,6 +446,7 @@ Item {
     coreDetail = status.detail
     activeSubscription = status.activeSubscription
     configuredPrimaryGroup = status.primaryGroup
+    dnsDestination = status.dnsDestination
     mode = status.mode
     tunEnabled = status.tunEnabled
     tunRedirect = status.tunRedirect
@@ -499,6 +501,7 @@ Item {
     coreDetail = ""
     activeSubscription = ""
     configuredPrimaryGroup = ""
+    dnsDestination = ""
     mode = ""
     tunEnabled = false
     tunRedirect = false
@@ -627,7 +630,7 @@ Item {
     if (desired !== "") root[desired] = pending
     reportDone(message || "")
     var key = Object.keys(args)[0]
-    var names = { primary_group: "group", tun_redirect: "tun-redirect", tailnet_proxy: "tailnet-proxy" }
+    var names = { primary_group: "group", dns_destination: "dns-destination", tun_redirect: "tun-redirect", tailnet_proxy: "tailnet-proxy" }
     var value = typeof args[key] === "boolean" ? (args[key] ? "on" : "off") : args[key]
     _settingsCall = edit(["set", names[key] || key, "--", value], function(result, error) {
       root._settingsCall = 0
@@ -673,6 +676,10 @@ Item {
     var desired = tailnetProxyActive ? 0 : 1
     changeSetting({ tailnet_proxy: desired === 1 }, "_desiredTailnetProxy", desired,
       desired === 1 ? "Routing the tailnet through the proxy…" : "Routing the tailnet through Tailscale…")
+  }
+
+  function setDNSDestination(name) {
+    changeSetting({ dns_destination: name }, "", 0, "")
   }
 
   function setPrimaryGroup(name) {

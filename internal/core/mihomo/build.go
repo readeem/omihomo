@@ -86,10 +86,15 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 	raw.DNS.ProxyServerNameserver = slices.Clone(defaultNameservers)
 	raw.DNS.NameServer = nil
 	for _, ns := range defaultNameservers {
-		raw.DNS.NameServer = append(raw.DNS.NameServer, ns+"#"+globalGroup)
+		if cfg.DNSDestination == "" {
+			ns += "#" + globalGroup
+		}
+		raw.DNS.NameServer = append(raw.DNS.NameServer, ns)
 	}
 	raw.DNS.NameServerPolicy = orderedmap.New[string, any]()
 	raw.DNS.NameServerPolicy.Set(tailscaleDomain, tailscaleDNS)
+	raw.DNS.ProxyServerNameserverPolicy = orderedmap.New[string, any]()
+	raw.DNS.ProxyServerNameserverPolicy.Set(tailscaleDomain, tailscaleDNS)
 
 	raw.Tun.Enable = cfg.TUN
 	raw.Tun.Device = tunDevice

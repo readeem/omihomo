@@ -12,7 +12,7 @@ Flickable {
   readonly property var service: panel.service
   readonly property Theme theme: panel.theme
   readonly property var rows: ({
-    mode: modeRow, tun: tunRow, tunRedirect: tunRedirectRow,
+    mode: modeRow, dns: dnsRow, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
     checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow
   })
@@ -20,8 +20,19 @@ Flickable {
   readonly property var updater: panel.updater
   readonly property bool checked: updater.availableVersion !== ""
 
-  function reveal(section) {
-    var item = rows[section]
+  property bool dnsPicking: false
+  readonly property var dnsChoices: Model.dnsDestinations(service.groups, service.dnsDestination)
+
+  function openDNS() { dnsPicking = !dnsPicking }
+  function pickDNS(index) {
+    if (index < 0 || index >= dnsChoices.length) return
+    service.setDNSDestination(dnsChoices[index].value)
+    dnsPicking = false
+    panel.focusRow("dns")
+  }
+
+  function reveal(section, index) {
+    var item = section === "dnsChoice" ? dnsOptions.itemAt(index) : rows[section]
     if (!item) return
     Qt.callLater(function() {
       var top = item.mapToItem(view.contentItem, 0, 0).y
@@ -86,6 +97,33 @@ Flickable {
           keyHint: "m"
           subtitle: "global sends everything to " + (view.service.primaryGroup || "the proxy")
           modeControl: true
+        }
+
+        SettingRow {
+          id: dnsRow
+          panel: view.panel
+          Layout.fillWidth: true
+          section: "dns"
+          title: "DNS destination"
+          subtitle: (view.service.dnsDestination || "Follow primary group") + " · public DNS over HTTPS"
+          tag: "choose"
+          onActivated: view.openDNS()
+        }
+        Repeater {
+          id: dnsOptions
+          model: view.dnsPicking ? view.dnsChoices : []
+          SettingRow {
+            required property var modelData
+            required property int index
+            panel: view.panel
+            Layout.fillWidth: true
+            section: "dnsChoice"
+            rowIndex: index
+            title: modelData.label
+            subtitle: modelData.value === "" ? "Use the primary group's selection" : "Use this destination independently of normal traffic"
+            tag: modelData.value === view.service.dnsDestination ? "selected" : "use"
+            onActivated: view.pickDNS(index)
+          }
         }
 
         SettingRow {
