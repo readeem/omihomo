@@ -90,30 +90,35 @@ Flickable {
           modeControl: true
         }
 
-        ColumnLayout {
+        ProxySelector {
+          id: dnsSelector
+          panel: view.panel
+          section: "dns"
           Layout.fillWidth: true
           Layout.margins: Style.space(8)
-          spacing: Style.space(4)
-          PanelText {
-            theme: view.theme
-            text: "DNS destination"
-            color: view.theme.foreground
-            font.pixelSize: Style.font.body
+          choices: Model.dnsDestinations(view.service.groups, view.service.effectiveDNSDestination)
+          value: view.service.effectiveDNSDestination
+          heading: Component {
+            ColumnLayout {
+              spacing: Style.space(4)
+              PanelText {
+                theme: view.theme
+                Layout.fillWidth: true
+                text: "DNS destination"
+                color: view.theme.foreground
+                font.pixelSize: Style.font.body
+                wrapMode: Text.WordWrap
+              }
+              PanelText {
+                theme: view.theme
+                Layout.fillWidth: true
+                text: "public DNS over HTTPS"
+                color: view.theme.faint
+                wrapMode: Text.WordWrap
+              }
+            }
           }
-          PanelText {
-            theme: view.theme
-            text: "public DNS over HTTPS"
-            color: view.theme.faint
-          }
-          ProxySelector {
-            id: dnsSelector
-            panel: view.panel
-            section: "dns"
-            Layout.fillWidth: true
-            choices: Model.dnsDestinations(view.service.groups, view.service.effectiveDNSDestination)
-            value: view.service.effectiveDNSDestination
-            onSelected: function(value) { view.service.setDNSDestination(value) }
-          }
+          onSelected: function(value) { view.service.setDNSDestination(value) }
         }
 
         SettingRow {

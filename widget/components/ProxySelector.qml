@@ -10,6 +10,7 @@ ColumnLayout {
   required property var choices
   required property string value
   readonly property Theme theme: panel.theme
+  property Component heading: null
   property bool picking: false
   readonly property alias field: search
   readonly property alias list: options
@@ -47,13 +48,18 @@ ColumnLayout {
 
   spacing: Style.space(6)
 
-  Item {
+  RowLayout {
     Layout.fillWidth: true
-    implicitHeight: trigger.implicitHeight
+    spacing: Style.space(8)
+
+    Loader {
+      Layout.fillWidth: true
+      Layout.preferredHeight: item ? item.implicitHeight : 0
+      sourceComponent: selector.heading
+    }
 
     SmallButton {
       id: trigger
-      anchors.right: parent.right
       theme: selector.theme
       text: "→ " + selector.label + " ▾"
       hasCursor: selector.panel.at(selector.section)

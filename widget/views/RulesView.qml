@@ -120,7 +120,7 @@ ColumnLayout {
   ScrollList {
     id: ruleListView
     theme: view.theme
-    visible: !destination.picking && !view.panel.typePicking
+    visible: !view.panel.typePicking
     Layout.fillWidth: true
     Layout.fillHeight: true
     model: view.panel.ruleEntries
@@ -245,30 +245,30 @@ ColumnLayout {
     Keys.onEscapePressed: view.panel.handleEscape()
   }
 
-  ColumnLayout {
+  ProxySelector {
+    id: destination
+    panel: view.panel
+    section: "ruleTarget"
+    choices: view.panel.ruleTargets
+    value: view.panel.ruleTarget
     Layout.fillWidth: true
-    spacing: Style.space(6)
-
-    SmallButton {
-      theme: view.theme
-      text: view.panel.ruleType + " ▾"
-      tooltipText: "Rule type · h l"
-      hasCursor: view.panel.at("ruleType")
-      onHovered: function(on) { if (on) view.panel.focusRow("ruleType") }
-      onClicked: view.panel.openTypePicker()
-    }
-
-    ProxySelector {
-      id: destination
-      panel: view.panel
-      section: "ruleTarget"
-      choices: view.panel.ruleTargets
-      value: view.panel.ruleTarget
-      Layout.fillWidth: true
-      onSelected: function(value) {
-        view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
-        view.panel.openRuleForm()
+    heading: Component {
+      Item {
+        implicitHeight: typeButton.implicitHeight
+        SmallButton {
+          id: typeButton
+          theme: view.theme
+          text: view.panel.ruleType + " ▾"
+          tooltipText: "Rule type · h l"
+          hasCursor: view.panel.at("ruleType")
+          onHovered: function(on) { if (on) view.panel.focusRow("ruleType") }
+          onClicked: view.panel.openTypePicker()
+        }
       }
+    }
+    onSelected: function(value) {
+      view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
+      view.panel.openRuleForm()
     }
   }
 
