@@ -58,6 +58,7 @@ ColumnLayout {
     spacing: Style.space(6)
 
     PanelField {
+      panel: view.panel
       id: subUrlField
       theme: view.theme
       Layout.fillWidth: true
@@ -68,7 +69,7 @@ ColumnLayout {
       onHoveredChanged: if (hovered) view.panel.focusRow("subUrl")
       onAccepted: view.panel.submitSubForm()
       onActiveFocusChanged: view.panel.fieldFocusChanged(subUrlField, activeFocus)
-      Keys.onEscapePressed: view.panel.endEdit()
+      Keys.onEscapePressed: view.panel.handleEscape()
     }
 
     SmallButton {

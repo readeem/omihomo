@@ -12,7 +12,7 @@ Flickable {
   readonly property var service: panel.service
   readonly property Theme theme: panel.theme
   readonly property var rows: ({
-    mode: modeRow, dns: dnsRow, tun: tunRow, tunRedirect: tunRedirectRow,
+    mode: modeRow, dns: dnsSelector, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
     checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow
   })
@@ -20,19 +20,10 @@ Flickable {
   readonly property var updater: panel.updater
   readonly property bool checked: updater.availableVersion !== ""
 
-  property bool dnsPicking: false
-  readonly property var dnsChoices: Model.dnsDestinations(service.groups, service.dnsDestination)
-
-  function openDNS() { dnsPicking = !dnsPicking }
-  function pickDNS(index) {
-    if (index < 0 || index >= dnsChoices.length) return
-    service.setDNSDestination(dnsChoices[index].value)
-    dnsPicking = false
-    panel.focusRow("dns")
-  }
+  readonly property alias selector: dnsSelector
 
   function reveal(section, index) {
-    var item = section === "dnsChoice" ? dnsOptions.itemAt(index) : rows[section]
+    var item = rows[section]
     if (!item) return
     Qt.callLater(function() {
       var top = item.mapToItem(view.contentItem, 0, 0).y
@@ -99,30 +90,29 @@ Flickable {
           modeControl: true
         }
 
-        SettingRow {
-          id: dnsRow
-          panel: view.panel
+        ColumnLayout {
           Layout.fillWidth: true
-          section: "dns"
-          title: "DNS destination"
-          subtitle: (view.service.dnsDestination || "Follow primary group") + " · public DNS over HTTPS"
-          tag: "choose"
-          onActivated: view.openDNS()
-        }
-        Repeater {
-          id: dnsOptions
-          model: view.dnsPicking ? view.dnsChoices : []
-          SettingRow {
-            required property var modelData
-            required property int index
+          Layout.margins: Style.space(8)
+          spacing: Style.space(4)
+          PanelText {
+            theme: view.theme
+            text: "DNS destination"
+            color: view.theme.foreground
+            font.pixelSize: Style.font.body
+          }
+          PanelText {
+            theme: view.theme
+            text: "public DNS over HTTPS"
+            color: view.theme.faint
+          }
+          ProxySelector {
+            id: dnsSelector
             panel: view.panel
+            section: "dns"
             Layout.fillWidth: true
-            section: "dnsChoice"
-            rowIndex: index
-            title: modelData.label
-            subtitle: modelData.value === "" ? "Use the primary group's selection" : "Use this destination independently of normal traffic"
-            tag: modelData.value === view.service.dnsDestination ? "selected" : "use"
-            onActivated: view.pickDNS(index)
+            choices: Model.dnsDestinations(view.service.groups, view.service.effectiveDNSDestination)
+            value: view.service.effectiveDNSDestination
+            onSelected: function(value) { view.service.setDNSDestination(value) }
           }
         }
 

@@ -5,6 +5,9 @@ import qs.Ui
 
 TextField {
   id: field
+  property var panel: null
+  Keys.onTabPressed: if (panel) panel.switchPanel(1)
+  Keys.onBacktabPressed: if (panel) panel.switchPanel(-1)
   required property Theme theme
   property bool highlighted: false
   implicitWidth: Style.space(120)

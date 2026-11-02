@@ -65,6 +65,7 @@ Item {
   property int _desiredTailscaleEnabled: -1
   property int _desiredTailnetProxy: -1
   property string _desiredMode: ""
+  property var _desiredDNSDestination: null
 
   // The panel is usable once the daemon is greeted and has said what it is
   // doing. A connection that drops keeps the last status, so a daemon
@@ -80,6 +81,7 @@ Item {
     ? tailscaleEnabled : _desiredTailscaleEnabled === 1
   readonly property bool tailnetProxyActive: _desiredTailnetProxy === -1
     ? tailnetProxy : _desiredTailnetProxy === 1
+  readonly property string effectiveDNSDestination: _desiredDNSDestination === null ? dnsDestination : _desiredDNSDestination
   readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
   // Whether live state — groups, traffic, connections — can be read now.
   readonly property bool apiReady: streamsReady(["status"]) && coreRunning
@@ -528,6 +530,7 @@ Item {
     _desiredTailscaleEnabled = -1
     _desiredTailnetProxy = -1
     _desiredMode = ""
+    _desiredDNSDestination = null
   }
 
   function applyGroups(data) {
@@ -632,6 +635,7 @@ Item {
   // on the status stream.
   function changeSetting(args, desired, pending, message, scope) {
     if (!streamsReady(["status"]) || _settingsCall !== 0 || _ruleCall !== 0) return false
+    var idle = desired !== "" ? root[desired] : null
     if (desired !== "") root[desired] = pending
     reportDone(message || "")
     var key = Object.keys(args)[0]
@@ -639,12 +643,12 @@ Item {
     var value = typeof args[key] === "boolean" ? (args[key] ? "on" : "off") : args[key]
     _settingsCall = edit(["set", names[key] || key, "--", value], function(result, error) {
       root._settingsCall = 0
-      if (desired !== "") root[desired] = typeof pending === "string" ? "" : -1
+      if (desired !== "") root[desired] = idle
       if (error) return root.reportError(error, scope || "settings")
       root.reportDone("")
     })
     if (_settingsCall !== 0) return true
-    if (desired !== "") root[desired] = typeof pending === "string" ? "" : -1
+    if (desired !== "") root[desired] = idle
     actionStatus = ""
     return false
   }
@@ -684,7 +688,7 @@ Item {
   }
 
   function setDNSDestination(name) {
-    changeSetting({ dns_destination: name }, "", 0, "")
+    changeSetting({ dns_destination: name }, "_desiredDNSDestination", name, "")
   }
 
   function setPrimaryGroup(name) {
@@ -706,15 +710,6 @@ Item {
       root.ruleAdded()
     })
     return _ruleCall !== 0
-  }
-
-  function retargetRules(category, target) {
-    if (!streamsReady(["rules", "groups"]) || _ruleCall !== 0 || _settingsCall !== 0) return
-    _ruleCall = edit(target === "" ? ["rule", "reset-target", "--", category] : ["rule", "retarget", "--", category, target], function(result, error) {
-      root._ruleCall = 0
-      if (error) return root.reportError(error, "rules")
-      root.ruleAdded()
-    })
   }
 
   function moveRule(from, to) {

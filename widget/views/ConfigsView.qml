@@ -69,6 +69,7 @@ ColumnLayout {
   }
 
   PanelField {
+      panel: view.panel
     id: configFilterField
     theme: view.theme
     visible: view.panel.filterOpen

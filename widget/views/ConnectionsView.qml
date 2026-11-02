@@ -111,23 +111,4 @@ ColumnLayout {
     wrapMode: Text.WordWrap
   }
 
-  RowLayout {
-    Layout.fillWidth: true
-    spacing: Style.space(6)
-
-    SmallButton {
-      theme: view.theme
-      text: "close all"
-      danger: true
-      enabled: view.service.openConnectionCount > 0
-      onClicked: view.service.closeAllConnections()
-    }
-
-    SmallButton {
-      theme: view.theme
-      text: "clear log"
-      enabled: view.panel.closedLogged > 0
-      onClicked: view.service.clearConnectionLog()
-    }
-  }
 }

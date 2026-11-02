@@ -14,6 +14,11 @@ node --test "$here/model_test.js"
 if command -v qs >/dev/null 2>&1; then
   "$here/update_state_test.sh"
   "$here/daemon_state_test.sh"
+  if [[ -d /usr/share/omarchy/shell/Ui ]]; then
+    "$here/panel_state_test.sh"
+  else
+    printf 'skipping panel interaction tests: Omarchy shell is not installed\n'
+  fi
 elif [[ ${OMIHOMO_REQUIRE_QML:-0} == 1 ]]; then
   printf 'QML service tests need Quickshell\n' >&2
   exit 2

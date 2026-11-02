@@ -123,7 +123,11 @@ ShellRoot {
       return JSON.stringify({
         view: panel.view, cursor: panel.cursorActive ? panel.cursorRow : null,
         editing: panel.editing ? panel.editing.placeholderText || true : null,
-        filter: panel.filterOpen, picking: panel.targetPicking,
+        filter: panel.filterOpen, picking: panel.activeSelector !== null,
+        ruleDraft: panel.ruleFormValue, editingRule: panel.editingRule, typePicking: panel.typePicking,
+        destination: panel.activeSelector ? panel.activeSelector.label : null,
+        choices: panel.activeSelector ? panel.activeSelector.filtered.map(function(choice) { return choice.value }) : [],
+        dns: service.effectiveDNSDestination, hints: panel.hintsFor(panel.view),
         armed: panel.removeArmed || (panel.uninstallArmed ? "uninstall" : ""),
         link: service.link, core: service.coreState, mode: service.effectiveMode, tun: service.tunActive,
         group: panel.browsedGroup, config: service.currentConfig, subscription: service.activeSubscription,

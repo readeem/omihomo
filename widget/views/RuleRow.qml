@@ -138,7 +138,6 @@ NavRow {
           iconText: modelData < 0 ? "↑" : "↓"
           tooltipText: ruleRow.panel.editingRule > 0 ? "Save or cancel editing before reordering"
             : (modelData < 0 ? "Higher priority · Ctrl+↑" : "Lower priority · Ctrl+↓")
-              + (ruleRow.panel.ruleCategory !== "" ? " · past the next visible rule" : "")
           enabled: ruleRow.hasCursor && !ruleRow.panel.service.ruleSaving && ruleRow.panel.editingRule === 0
             && ruleRow.rule && ruleRow.panel.ruleMoveTarget(ruleRow.rule.index, modelData) > 0
           opacity: enabled ? 1 : 0.3

@@ -31,11 +31,10 @@ Panel {
   property string editingRuleOriginal: ""
   property string savedRuleTarget: ""
   property string ruleParams: ""
-  property string ruleCategory: ""
-  property string bulkCategory: ""
   property bool typePicking: false
   property int ruleTargetIndex: 0
-  property bool targetPicking: false
+  readonly property var activeSelector: rulesView.selector.picking ? rulesView.selector
+    : (settingsView.selector.picking ? settingsView.selector : null)
 
   readonly property string subFormUrl: subscriptionsView.urlField.text.trim()
   readonly property string ruleFormValue: rulesView.valueField.text
@@ -115,15 +114,11 @@ Panel {
   }
 
   readonly property var ruleTargets: {
-    var targets = ruleType === "SUB-RULE" && bulkCategory === ""
+    var targets = ruleType === "SUB-RULE"
       ? omihomo.subRules.map(function(name) { return { value: name, label: name, description: "sub-rule" } }) : Model.ruleTargets(visibleGroups)
     if (editingRule > 0 && savedRuleTarget !== "" && !targets.some(function(target) { return target.value === savedRuleTarget }))
       targets.push({ value: savedRuleTarget, label: savedRuleTarget, description: "unavailable in this subscription" })
     return targets
-  }
-  readonly property var visibleTargets: {
-    var needle = targetPicking ? rulesView.targetField.text.trim().toLowerCase() : ""
-    return ruleTargets.filter(function(target) { return target.value.toLowerCase().indexOf(needle) !== -1 })
   }
   readonly property var visibleRuleTypes: Model.RULE_TYPES.filter(function(type) { return type.toLowerCase().indexOf(rulesView.typeField.text.toLowerCase()) !== -1 })
   readonly property string ruleType: Model.RULE_TYPES[Math.max(0, Math.min(ruleTypeIndex, Model.RULE_TYPES.length - 1))]
@@ -153,7 +148,7 @@ Panel {
     })
     for (i = 0; i < omihomo.subscriptionRules.length; i++)
       out.push({ kind: "sub", s: "srule", i: i, rule: omihomo.subscriptionRules[i], eff: head + i })
-    return out.filter(function(entry) { return entry.kind === "head" || root.ruleCategory === "" || Model.ruleCategory(entry.rule.type) === root.ruleCategory })
+    return out
   }
 
   readonly property var flows: Model.connectionFlows(omihomo.connectionStacks, 6, 4)
@@ -210,6 +205,10 @@ Panel {
       for (i = 0; i < setup.actions.length; i++) rows.push({ s: "install", i: i })
       return rows
     }
+    if (activeSelector) {
+      for (i = 0; i < activeSelector.filtered.length; i++) rows.push({ s: "destination", i: i })
+      return rows
+    }
     switch (view) {
     case "configs":
       if (liveReady) {
@@ -226,21 +225,15 @@ Panel {
         for (i = 0; i < visibleRuleTypes.length; i++) rows.push({ s: "ruleTypeChoice", i: i })
         break
       }
-      if (targetPicking) {
-        for (i = 0; i < visibleTargets.length; i++) rows.push({ s: "target", i: i })
-        break
-      }
       rows.push({ s: "ruleTest" })
       for (i = 0; i < ruleEntries.length; i++) if (ruleEntries[i].s) rows.push({ s: ruleEntries[i].s, i: ruleEntries[i].i })
-      rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" }, { s: "ruleSubmit" })
+      rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" })
       break
     case "conns":
       for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
       break
     case "settings":
       rows.push({ s: "mode" }, { s: "dns" })
-      if (settingsView.dnsPicking)
-        for (i = 0; i < settingsView.dnsChoices.length; i++) rows.push({ s: "dnsChoice", i: i })
       rows.push({ s: "tun" }, { s: "tunRedirect" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
       rows.push({ s: "checkUpdates" })
@@ -326,13 +319,11 @@ Panel {
     case "ruleTypeChoice": chooseRuleType(cursorRow.i); break
     case "rule": editRule(omihomo.rules[cursorRow.i]); break
     case "ruleValue": beginEdit(rulesView.valueField); break
-    case "ruleTarget": openTargetPicker(); break
-    case "target": pickTargetAt(cursorRow.i); break
-    case "ruleSubmit": submitRuleForm(); break
+    case "ruleTarget": rulesView.selector.openPicker(); break
+    case "destination": if (activeSelector) activeSelector.pick(cursorRow.i); break
     case "conn": activateConnectionAt(cursorRow.i); break
     case "mode": cycleMode(1); break
-    case "dns": settingsView.openDNS(); break
-    case "dnsChoice": settingsView.pickDNS(cursorRow.i); break
+    case "dns": settingsView.selector.openPicker(); break
     case "tun": omihomo.toggleTun(); break
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
@@ -363,6 +354,7 @@ Panel {
       if (action) runSetup(action)
       return
     }
+    if (key === "/" && activeSelector) { beginEdit(activeSelector.field); return }
     var tab = ["1", "2", "3", "4"].indexOf(key)
     if (tab >= 0) {
       openView(tabViews[tab])
@@ -387,7 +379,8 @@ Panel {
       if (key === "u") updateSelectedSubscription()
       else if (key === "a") { focusRow("subUrl"); beginEdit(subscriptionsView.urlField) }
     } else if (view === "rules") {
-      if (key === "/" && targetPicking) beginEdit(rulesView.targetField)
+      if (key === "/" && activeSelector) beginEdit(activeSelector.field)
+      else if (key === "/" && typePicking) beginEdit(rulesView.typeField)
       else if (key === "/") { focusRow("ruleTest"); beginEdit(rulesView.testField) }
     } else if (view === "conns") {
       if (key === "A") omihomo.closeAllConnections()
@@ -402,19 +395,34 @@ Panel {
   }
 
   function handleEscape() {
+    if (activeSelector) { activeSelector.cancel(); return }
+    if (typePicking || editingRule > 0 || (view === "rules" && editing === rulesView.valueField)) {
+      cancelRuleEdit()
+      return
+    }
+    if (view === "subs" && editing) subscriptionsView.urlField.text = ""
+    if (view === "rules" && editing === rulesView.testField) rulesView.testField.text = ""
+    if (filterOpen) { closeFilter(); return }
     if (editing) { endEdit(); return }
     if (removeArmed !== "") { removeArmed = ""; return }
     if (uninstallArmed) { uninstallArmed = false; return }
-    if (filterOpen) { closeFilter(); return }
-    if (typePicking) { typePicking = false; return }
-    if (targetPicking) { closeTargetPicker(); return }
-    if (editingRule > 0) { cancelRuleEdit(); return }
     if (view !== "configs") { openView("configs"); return }
     close()
   }
 
+  function acceptEdit() {
+    if (activeSelector) {
+      activeSelector.pick(cursorRow && cursorRow.s === "destination" ? cursorRow.i : 0)
+    } else if (typePicking) {
+      chooseRuleType(cursorRow && cursorRow.s === "ruleTypeChoice" ? cursorRow.i : 0)
+    } else if (view === "rules" && (editingRule > 0 || editing === rulesView.valueField)) {
+      submitRuleForm()
+    } else if (editing) editing.accepted()
+    else { cursorActive = true; activateCursor() }
+  }
+
   function runHint(key) {
-    if (key === "enter") { cursorActive = true; activateCursor() }
+    if (key === "enter") acceptEdit()
     else if (key === "x") { cursorActive = true; deleteCursorRow() }
     else if (key === "esc") handleEscape()
     else if (key === "j") moveCursor(0, 1)
@@ -425,9 +433,11 @@ Panel {
   function hintsFor(name) {
     if (!omihomo.installed) return setup.actions.map(a => ({ keys: a.key, label: a.button.split(" ")[0].toLowerCase(), key: a.key }))
       .concat([{ keys: "esc", label: "close", key: "esc" }])
-    if (name === "rules" && targetPicking) return [
+    if (activeSelector || typePicking) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
+    if (editing !== null || editingRule > 0) return [
+      { keys: "↵", label: "save", key: "enter" }, { keys: "esc", label: "cancel", key: "esc" }]
     switch (name) {
     case "configs": return [
       { keys: "↵", label: "select", key: "enter" }, { keys: "d", label: "test", key: "d" },
@@ -451,18 +461,24 @@ Panel {
     return []
   }
 
+  function switchPanel(direction) {
+    var views = tabViews.concat(["settings"])
+    openView(views[(views.indexOf(view) + direction + views.length) % views.length])
+  }
+
   function openView(name) {
-    if (editing) {
-      editing = null
-      endEdit()
-    }
+    if (activeSelector) activeSelector.cancel()
+    cancelRuleEdit()
+    subscriptionsView.urlField.text = ""
+    rulesView.testField.text = ""
+    editing = null
+    endEdit()
     view = name
     cursor = 0
     cursorActive = false
     removeArmed = ""
     uninstallArmed = false
     if (filterOpen) closeFilter()
-    if (targetPicking) closeTargetPicker()
     if (name === "configs" && browsedGroupEntry) {
       const at = visibleConfigs.indexOf(browsedGroupEntry.now)
       if (at >= 0) {
@@ -556,31 +572,6 @@ Panel {
     ruleTargetIndex = (ruleTargetIndex + delta + ruleTargets.length) % ruleTargets.length
   }
 
-  function openTargetPicker() {
-    rulesView.targetField.text = ""
-    targetPicking = true
-    cursorActive = false
-    beginEdit(rulesView.targetField)
-  }
-
-  function closeTargetPicker() {
-    bulkCategory = ""
-    targetPicking = false
-    rulesView.targetField.text = ""
-    endEdit()
-    focusRow("ruleTarget")
-  }
-
-  function pickTargetAt(index) {
-    var target = visibleTargets[index]
-    if (target) {
-      if (bulkCategory !== "") omihomo.retargetRules(bulkCategory, target.value)
-      else ruleTargetIndex = ruleTargets.indexOf(target)
-    }
-    bulkCategory = ""
-    closeTargetPicker()
-  }
-
   function chooseConfigAt(index) {
     var name = visibleConfigs[index]
     if (name && browsedGroupEntry && browsedGroupEntry.selectable) omihomo.selectConfig(browsedGroup, name)
@@ -665,14 +656,11 @@ Panel {
     editingRule = 0
     savedRuleTarget = ""
     ruleParams = ""
+    ruleTypeIndex = 0
+    ruleTargetIndex = 0
     rulesView.valueField.text = ""
     typePicking = false
     endEdit()
-  }
-
-  function bulkRetarget() {
-    openTargetPicker()
-    bulkCategory = ruleCategory
   }
 
   function openRuleForm() {
@@ -685,6 +673,7 @@ Panel {
   }
 
   function submitRuleForm() {
+    if (omihomo.ruleSaving) return
     if (ruleFormError !== "") {
       focusRow("ruleValue")
       beginEdit(rulesView.valueField)
@@ -732,7 +721,7 @@ Panel {
       index = ruleEntries.findIndex(function(entry) { return entry.s === cursorRow.s && entry.i === cursorRow.i })
       break
     case "conn": list = connectionsView.list; break
-    case "target": list = rulesView.targetList; break
+    case "destination": if (activeSelector) list = activeSelector.list; break
     case "ruleTypeChoice": list = rulesView.typeList; break
     }
     if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
@@ -868,7 +857,11 @@ Panel {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
       }
-      onActivateRequested: if (root.cursorActive) root.activateCursor()
+      onActivateRequested: {
+        if (root.cursorRow && ["ruleType", "ruleTarget"].indexOf(root.cursorRow.s) !== -1)
+          root.activateCursor()
+        else root.acceptEdit()
+      }
       onDeleteRequested: if (root.cursorActive) root.deleteCursorRow()
       onCloseRequested: root.handleEscape()
       onTabRequested: function(direction) { root.switchPanel(direction) }

@@ -107,10 +107,12 @@ ShellRoot {
         t.check(svc.currentConfig, "Pass", "groups arrive with the panel")
         t.check(svc.subscriptions[0].active, true, "subscriptions arrive with the panel")
         svc.setDNSDestination("Proxy")
+        t.check(svc.effectiveDNSDestination, "Proxy", "DNS selection is visible before the daemon replies")
       } },
     { name: "DNS destination lands", until: function() { return !svc.busy && svc.dnsDestination === "Proxy" }, then: function() {
         t.check(svc.configuredPrimaryGroup, "", "DNS selection leaves the primary group unchanged")
         svc.setDNSDestination("")
+        t.check(svc.effectiveDNSDestination, "", "following the primary group is visible before the daemon replies")
       } },
     { name: "DNS default restored", until: function() { return !svc.busy && svc.dnsDestination === "" }, then: function() {
         // A daemon restarting under socket activation drops the connection.
@@ -146,6 +148,11 @@ ShellRoot {
     { name: "a failed setting", until: function() { return !failing.busy }, then: function() {
         t.check(failing.tunActive, false, "a failed TUN change rolls back")
         t.check(failing.errorScope, "settings", "a failed setting's error sits in settings")
+        failing.setDNSDestination("Proxy")
+        t.check(failing.effectiveDNSDestination, "Proxy", "a failing DNS change is visible immediately")
+      } },
+    { name: "a failed DNS setting", until: function() { return !failing.busy }, then: function() {
+        t.check(failing.effectiveDNSDestination, "", "a failed DNS change restores the confirmed destination")
         t.check(failing.addRule("DOMAIN-SUFFIX", "steamcontent.com", "DIRECT"), true,
           "a failing rule write still starts")
       } },
