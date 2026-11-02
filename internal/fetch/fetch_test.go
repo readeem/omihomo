@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -474,6 +475,7 @@ func TestDownloadConnectivityRecovery(t *testing.T) {
 func TestRecoveryDoesNotRetryTLSAuthenticationOrHTTPFailures(t *testing.T) {
 	for _, failure := range []error{
 		errors.New("proxy authentication failed"),
+		fmt.Errorf("proxy lookup: %w", fmt.Errorf("DNS lookup: %w", errors.Join(&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, &StatusError{Code: http.StatusUnauthorized}))),
 		&tls.CertificateVerificationError{Err: errors.New("certificate verification failed")},
 		tls.AlertError(42),
 	} {

@@ -42,17 +42,14 @@ func (n Network) links(ctx context.Context) ([]Link, error) {
 // Recoverable only admits connectivity failures. In particular, a certificate,
 // TLS protocol, proxy authentication or HTTP error is never recovery permission.
 func Recoverable(err error) bool {
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		for _, cause := range joined.Unwrap() {
-			if !Recoverable(cause) {
-				return false
+	for nested := err; nested != nil; nested = errors.Unwrap(nested) {
+		if joined, ok := nested.(interface{ Unwrap() []error }); ok {
+			for _, cause := range joined.Unwrap() {
+				if !Recoverable(cause) {
+					return false
+				}
 			}
-		}
-		return len(joined.Unwrap()) > 0
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		if _, joined := wrapped.Unwrap().(interface{ Unwrap() []error }); joined {
-			return Recoverable(wrapped.Unwrap())
+			return len(joined.Unwrap()) > 0
 		}
 	}
 
