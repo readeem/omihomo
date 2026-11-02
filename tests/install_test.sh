@@ -7,7 +7,7 @@ test_root=$(mktemp -d)
 trap 'rm -r -- "$test_root"' EXIT
 mkdir -p "$test_root/bin" "$test_root/project/bin" "$test_root/project/internal/update"
 cp "$project_root/bin/omihomo-install" "$test_root/project/bin/"
-cp "$project_root/manifest.json" "$test_root/project/"
+jq '.version = "1.0.0"' "$project_root/manifest.json" > "$test_root/project/manifest.json"
 export INSTALL_TEST_ROOT="$test_root" INSTALL_TEST_LOG="$test_root/commands"
 export HOME="$test_root/home"
 openssl genpkey -algorithm ED25519 -out "$test_root/private.pem"
