@@ -14,7 +14,7 @@ require (
 	github.com/peterbourgon/ff/v3 v3.4.0
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a
 	go.yaml.in/yaml/v3 v3.0.6
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	google.golang.org/protobuf v1.34.2
 )
 
