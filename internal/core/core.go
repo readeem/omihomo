@@ -17,11 +17,12 @@ import (
 // typed settings and the active subscription; a Core never reads settings of
 // its own and never fetches anything.
 type Config struct {
-	Mode         string
-	TUN          bool
-	TUNRedirect  bool
-	Tailscale    bool
-	TailnetProxy bool
+	Mode                 string
+	TUN                  bool
+	TUNRedirect          bool
+	Tailscale            bool
+	TailnetProxy         bool
+	OmihomoRulesDisabled bool
 	// PrimaryGroup is the group global mode and Omihomo's own rules send
 	// traffic through. Empty, or a name absent from the profile, means the
 	// first visible select group, falling back to the first visible group.

@@ -160,3 +160,36 @@ func TestGroupNumbersAreBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestDisablingGeneratedRulesPreservesTheIntegration(t *testing.T) {
+	cfg := testConfig()
+	cfg.Tailscale = true
+	cfg.TailnetProxy = true
+	cfg.OmihomoRulesDisabled = true
+	raw, listed, err := rawConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range listed {
+		if r.Source == protocol.SourceOmihomo {
+			t.Fatalf("disabled rule runs: %+v", r)
+		}
+	}
+	if len(raw.Listeners) == 0 {
+		t.Fatal("disabling routing rules disabled the integration listener")
+	}
+	cfg.OmihomoRulesDisabled = false
+	_, listed, err = rawConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, r := range listed {
+		if r.Source == protocol.SourceOmihomo {
+			count++
+		}
+	}
+	if count != 6 {
+		t.Fatalf("enabled integration has %d rules", count)
+	}
+}

@@ -11,12 +11,54 @@ ColumnLayout {
   readonly property var service: panel.service
   readonly property Theme theme: panel.theme
   readonly property alias typeSelector: ruleTypeSelector
+  readonly property alias categorySelector: categorySelectorControl
+  readonly property alias bulkSelector: categoryDestination
+  readonly property alias categoryField: categoryNameField
   readonly property alias testField: ruleTestField
   readonly property alias valueField: ruleValueField
   readonly property alias selector: destination
   readonly property alias ruleList: ruleListView
 
   spacing: Style.space(8)
+
+  RowLayout {
+    Layout.fillWidth: true
+    spacing: Style.space(6)
+    SmallButton {
+      theme: view.theme
+      text: "New category"
+      hasCursor: view.panel.at("newCategory")
+      onHovered: function(on) { if (on) view.panel.focusRow("newCategory") }
+      onClicked: view.panel.editCategory("")
+    }
+    Item { Layout.fillWidth: true }
+    SmallButton {
+      theme: view.theme
+      text: "Collapse all"
+      hasCursor: view.panel.at("collapseCategories")
+      onHovered: function(on) { if (on) view.panel.focusRow("collapseCategories") }
+      onClicked: view.panel.expandAllCategories(false)
+    }
+    SmallButton {
+      theme: view.theme
+      text: "Expand all"
+      hasCursor: view.panel.at("expandCategories")
+      onHovered: function(on) { if (on) view.panel.focusRow("expandCategories") }
+      onClicked: view.panel.expandAllCategories(true)
+    }
+  }
+
+  PanelField {
+    id: categoryNameField
+    panel: view.panel
+    theme: view.theme
+    visible: view.panel.categoryEditing !== ""
+    Layout.fillWidth: true
+    placeholderText: view.panel.categoryEditing === "new" ? "New category name" : "Category name"
+    onActiveFocusChanged: view.panel.fieldFocusChanged(categoryNameField, activeFocus)
+    onAccepted: view.panel.saveCategory()
+    Keys.onEscapePressed: view.panel.handleEscape()
+  }
 
   RowLayout {
     Layout.fillWidth: true
@@ -112,7 +154,7 @@ ColumnLayout {
   PanelText {
     theme: view.theme
     Layout.fillWidth: true
-    text: "First match wins · select your rule to edit"
+    text: "First match wins · categories run in order"
     color: view.theme.dim
   }
 
@@ -127,27 +169,41 @@ ColumnLayout {
       id: ruleEntry
       required property var modelData
       width: ruleListView.rowWidth
-      height: modelData.kind === "head" ? ruleHead.implicitHeight + Style.space(8) : ruleBody.implicitHeight
+      height: modelData.kind === "category" ? categoryHead.implicitHeight : ruleBody.implicitHeight
 
-      SectionLine {
-        id: ruleHead
-        theme: view.theme
-        visible: ruleEntry.modelData.kind === "head"
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Style.space(2)
-        title: ruleEntry.modelData.title || ""
-        note: ruleEntry.modelData.note || ""
+      CategoryRow {
+        id: categoryHead
+        panel: view.panel
+        visible: ruleEntry.modelData.kind === "category"
+        width: parent.width
+        entry: ruleEntry.modelData
       }
 
       RuleRow {
         id: ruleBody
         panel: view.panel
-        visible: ruleEntry.modelData.kind !== "head"
+        visible: ruleEntry.modelData.kind !== "category"
         width: parent.width
         entry: ruleEntry.modelData
       }
+    }
+  }
+
+  RowLayout {
+    Layout.fillWidth: true
+    PanelText {
+      theme: view.theme
+      Layout.fillWidth: true
+      text: view.panel.editingRule > 0 ? "Edit rule " + view.panel.editingRule : "New rule"
+      color: view.theme.dim
+    }
+    PanelText { theme: view.theme; text: view.panel.ruleEnabled ? "Enabled" : "Disabled"; color: view.theme.dim }
+    PanelSwitch {
+      objectName: "ruleEnabled"
+      theme: view.theme
+      checked: view.panel.ruleEnabled
+      enabled: !view.service.ruleSaving
+      onToggled: { view.panel.ruleEnabled = !view.panel.ruleEnabled; view.panel.openRuleForm() }
     }
   }
 
@@ -207,6 +263,7 @@ ColumnLayout {
         return { value: type, label: type, description: Model.ruleCategory(type) }
       })
       value: view.panel.ruleType
+      Layout.maximumWidth: (view.width - Style.space(16)) / 3
       onSelected: function(value) {
         view.panel.ruleTypeIndex = Model.RULE_TYPES.indexOf(value)
         view.panel.ruleParams = ""
@@ -218,6 +275,21 @@ ColumnLayout {
     Item { Layout.fillWidth: true }
 
     Selector {
+      id: categorySelectorControl
+      panel: view.panel
+      section: "ruleCategory"
+      pickerHost: pickerDock
+      placeholderText: "Filter categories"
+      choices: view.panel.categoryChoices
+      value: view.panel.ruleCategory
+      Layout.maximumWidth: (view.width - Style.space(16)) / 3
+      onSelected: function(value) {
+        view.panel.ruleCategory = value
+        view.panel.openRuleForm()
+      }
+    }
+
+    Selector {
       id: destination
       panel: view.panel
       section: "ruleTarget"
@@ -225,6 +297,7 @@ ColumnLayout {
       placeholderText: "Filter destinations"
       choices: view.panel.ruleTargets
       value: view.panel.ruleTarget
+      Layout.maximumWidth: (view.width - Style.space(16)) / 3
       onSelected: function(value) {
         view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
         view.panel.openRuleForm()
@@ -232,10 +305,22 @@ ColumnLayout {
     }
   }
 
+  Selector {
+    id: categoryDestination
+    visible: false
+    panel: view.panel
+    section: "categoryTarget"
+    pickerHost: pickerDock
+    placeholderText: "Target for the whole category"
+    choices: Model.ruleTargets(view.panel.visibleGroups)
+    value: ""
+    onSelected: function(value) { view.service.categoryAction("target", view.panel.categoryTarget, value) }
+  }
+
   ColumnLayout {
     id: pickerDock
     Layout.fillWidth: true
-    visible: ruleTypeSelector.picking || destination.picking
+    visible: ruleTypeSelector.picking || destination.picking || categorySelectorControl.picking || categoryDestination.picking
   }
 
   PanelText {

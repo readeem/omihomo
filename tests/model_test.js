@@ -176,7 +176,7 @@ test("rules split by source, and the owner's carry their index", () => {
     [[1, "DOMAIN-SUFFIX,internal.example,DIRECT"], [2, "PROCESS-NAME,syncthing,DIRECT"]])
   assert.deepEqual(rules.injected.map(r => r.value), ["ts.net"])
   assert.deepEqual(rules.subscription.map(r => r.type), ["DOMAIN-KEYWORD", "MATCH"])
-  assert.deepEqual(Model.readRules(null), { own: [], injected: [], subscription: [], effective: [] })
+  assert.deepEqual(Model.readRules(null), { own: [], injected: [], subscription: [], effective: [], document: [], omihomoDisabled: false, subscriptionDisabled: false })
 })
 
 test("saved rules with missing targets stay editable but cannot match traffic", () => {
@@ -494,4 +494,31 @@ test("extended selectors keep parameters and do not guess source IP matches", ()
   const rules = Model.readRules({rules: [{type: "IP-CIDR", value: "10.0.0.0/8", target: "DIRECT", source: "user", params: "src no-resolve"}]})
   assert.equal(rules.own[0].params, "src no-resolve")
   assert.equal(Model.ruleVerdict(rules.own[0], "10.1.1.1"), "unknown")
+})
+
+test("collapsed categories preserve routing indices and standalone positions", () => {
+  const state = Model.readRules({entries: [
+    {category: {id: "work", name: "Work", rules: []}},
+    {type: "MATCH", target: "DIRECT"}
+  ], rules: [
+    {type: "DOMAIN", value: "a.example", target: "DIRECT", source: "user", index: 1, category: "work"},
+    {type: "DOMAIN", value: "b.example", target: "DIRECT", source: "user", index: 2, category: "work", disabled: true, inactive: true},
+    {type: "MATCH", target: "DIRECT", source: "user", index: 3},
+    {type: "MATCH", target: "Proxy", source: "subscription", unreachable: true}
+  ]})
+  const collapsed = Model.rulePresentation(state, {}, "Active")
+  assert.deepEqual(collapsed.rows.map(r => r.kind), ["category", "own", "category", "category"])
+  assert.equal(collapsed.rows[1].i, 2)
+  assert.equal(collapsed.rows[1].eff, 1)
+  assert.equal(collapsed.rows[1].top, 2)
+  const expanded = Model.rulePresentation(state, {work: true, subscription: true}, "Active")
+  assert.deepEqual(expanded.rows.filter(r => r.kind === "own").map(r => r.rule.index), [1, 2, 3])
+  assert.equal(expanded.rows[2].eff, -1)
+  assert.equal(expanded.rows.at(-1).rule.unreachable, true)
+})
+
+test("selector filtering puts exact choices before partial matches", () => {
+  const choices = ["REMATCH-NAME", "MATCH", "DOMAIN"].map(label => ({value: label, label}))
+  assert.deepEqual(Model.filterChoices(choices, " match ").map(c => c.value), ["MATCH", "REMATCH-NAME"])
+  assert.deepEqual(Model.filterChoices(choices, "").map(c => c.value), choices.map(c => c.value))
 })

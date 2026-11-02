@@ -41,7 +41,7 @@ func Dir() (string, error) {
 
 // Default is what a fresh install runs.
 func Default() protocol.ApplyArgs {
-	return protocol.ApplyArgs{Settings: protocol.Settings{Mode: protocol.ModeRule}, Rules: []protocol.UserRule{}}
+	return protocol.ApplyArgs{Settings: protocol.Settings{Mode: protocol.ModeRule}, Rules: []protocol.RuleEntry{}}
 }
 
 // Load reads the files in dir. Only their shape is checked here; the daemon
@@ -55,7 +55,7 @@ func Load(dir string) (protocol.ApplyArgs, error) {
 		return protocol.ApplyArgs{}, err
 	}
 	if out.Rules == nil {
-		out.Rules = []protocol.UserRule{}
+		out.Rules = []protocol.RuleEntry{}
 	}
 	return out, nil
 }
@@ -94,7 +94,7 @@ type File struct {
 func Encode(v protocol.ApplyArgs) []File {
 	rules := v.Rules
 	if rules == nil {
-		rules = []protocol.UserRule{}
+		rules = []protocol.RuleEntry{}
 	}
 	return []File{{settingsFile, indent(v.Settings)}, {rulesFile, indent(rules)}}
 }

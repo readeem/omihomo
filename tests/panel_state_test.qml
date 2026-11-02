@@ -12,6 +12,23 @@ ShellRoot {
     for (var i = 0; i < text.length; i++) events.keyClickChar(text[i], 0, -1)
   }
 
+  property string categoryId: ""
+
+  function clickObject(name) {
+    function find(item) {
+      if (item.visible && item.objectName === name) return item
+      for (var i = 0; i < item.children.length; i++) {
+        var match = find(item.children[i])
+        if (match) return match
+      }
+      return null
+    }
+    var item = find(panel)
+    if (!item) return false
+    events.mouseClick(item, item.width / 2, item.height / 2, Qt.LeftButton, 0, -1)
+    return true
+  }
+
   function settingsScroll(item) {
     if (item.visible && item.contentY !== undefined && item.flickableDirection !== undefined && item.model === undefined)
       return item
@@ -93,7 +110,7 @@ ShellRoot {
           testRoot.key(Qt.Key_Tab)
           testRoot.key(Qt.Key_Backtab)
         } },
-      { then: function() { testRoot.key(Qt.Key_Down); testRoot.key(Qt.Key_Down); testRoot.key(Qt.Key_Return) } },
+      { then: function() { panel.focusRow("rule", 0); testRoot.key(Qt.Key_Return) } },
       { name: "owner rule focused", until: function() { return panel.editingRule === 1 && panel.editing !== null }, then: function() {
           t.check(panel.ruleFormValue, "github.com", "editing starts from the saved value")
           testRoot.key(Qt.Key_A, Qt.ControlModifier)
@@ -136,8 +153,7 @@ ShellRoot {
           testRoot.type("3")
         } },
       { then: function() {
-          testRoot.key(Qt.Key_Down)
-          for (var i = 0; i < panel.navRows.length; i++) testRoot.key(Qt.Key_Down)
+          panel.focusRow("ruleTarget")
           testRoot.key(Qt.Key_Return)
         } },
       { name: "rule picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
@@ -168,6 +184,93 @@ ShellRoot {
       { then: function() {
           t.check(panel.view, "subs", "Shift+Tab switches back while editing")
           t.check(panel.ruleFormValue, "", "switching back also discards the draft")
+          testRoot.type("3")
+        } },
+      { then: function() { panel.focusRow("newCategory"); testRoot.key(Qt.Key_Return) } },
+      { name: "category editor", until: function() { return panel.categoryEditing === "new" && panel.editing !== null }, then: function() {
+          testRoot.type("Work")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { name: "category saved", until: function() { return !panel.service.ruleSaving && panel.categoryEditing === "" && panel.categoryChoices.length === 2 }, then: function() {
+          testRoot.categoryId = panel.categoryChoices[1].value
+          t.check(panel.expandedCategories[testRoot.categoryId] === true, false, "new categories start collapsed")
+          testRoot.type("n")
+        } },
+      { until: function() { return panel.editing !== null }, then: function() {
+          testRoot.type("categorized.example")
+          panel.focusRow("ruleCategory")
+          panel.activateCursor()
+        } },
+      { name: "category selector", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+          t.check(panel.activeSelector.section, "ruleCategory", "categories use the shared selector")
+          testRoot.type("Work")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
+          t.check(panel.ruleCategory, testRoot.categoryId, "the draft has the chosen category")
+          t.check(testRoot.clickObject("ruleEnabled"), true, "the individual rule toggle is clickable")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
+      { name: "disabled categorized rule saved", until: function() { return !panel.service.ruleSaving && panel.service.rules.length === 5 }, then: function() {
+          var rule = panel.service.rules[4]
+          t.check(rule.category, testRoot.categoryId, "the saved rule belongs to the category")
+          t.check(rule.disabled, true, "the individual toggle is persisted")
+          t.check(rule.inactive, true, "a disabled rule cannot match traffic")
+          panel.focusRow("expandCategories")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { then: function() {
+          t.check(panel.ruleEntries.some(function(e) { return e.kind === "own" && e.rule.index === 5 }), true, "expand all reveals categorized rules")
+          panel.focusRow("rule", 4)
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return panel.editingRule === 5 && panel.editing !== null }, then: function() {
+          t.check(panel.ruleEnabled, false, "reopening preserves the individual toggle")
+          t.check(testRoot.clickObject("ruleEnabled"), true, "the rule can be enabled again")
+        } },
+      { then: function() { testRoot.key(Qt.Key_Return) } },
+      { until: function() { return !panel.service.ruleSaving && !panel.service.rules[4].inactive }, then: function() {
+          var category = panel.ruleCategories.find(function(c) { return c.id === testRoot.categoryId })
+          panel.toggleCategory(category)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.service.rules[4].inactive }, then: function() {
+          t.check(panel.service.rules[4].disabled, false, "disabling a category preserves the rule's own toggle")
+          panel.focusRow("collapseCategories")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { then: function() {
+          t.check(panel.ruleEntries.some(function(e) { return e.kind === "own" && e.rule.index === 5 }), false, "collapse all hides category contents")
+          var category = panel.ruleCategories.find(function(c) { return c.id === "subscription" })
+          t.check(category.own, false, "the subscription category is read-only")
+          panel.toggleCategory(category)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.service.ruleState.subscriptionDisabled }, then: function() {
+          t.check(panel.service.subscriptionRules.every(function(r) { return r.inactive }), true, "the read-only subscription category can be disabled")
+          t.check(testRoot.clickObject("categoryTarget-" + testRoot.categoryId), true, "the category target action is clickable")
+        } },
+      { name: "bulk destination picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+          t.check(panel.activeSelector.section, "categoryTarget", "bulk targeting uses the shared bottom picker")
+          testRoot.type("REJECT")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.service.rules[4].target === "REJECT" }, then: function() {
+          t.check(panel.service.rules[4].disabled, false, "retargeting preserves the rule toggle")
+          t.check(testRoot.clickObject("categoryRename-" + testRoot.categoryId), true, "the category rename action is clickable")
+        } },
+      { until: function() { return panel.categoryEditing === testRoot.categoryId && panel.editing !== null }, then: function() {
+          testRoot.key(Qt.Key_A, Qt.ControlModifier)
+          testRoot.type("Renamed")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.categoryEditing === "" && panel.editing === null }, then: function() {
+          t.check(panel.categoryChoices[1].label, "Renamed", "Enter saves a category rename")
+          t.check(panel.categoryChoices[1].value, testRoot.categoryId, "rename preserves category identity")
+          panel.focusRow("category", 0)
+          testRoot.key(Qt.Key_Up, Qt.ControlModifier)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.service.ruleDocument[3].category !== undefined }, then: function() {
+          t.check(panel.service.ruleDocument[3].category.id, testRoot.categoryId, "Ctrl+Up reorders the category")
+          t.check(panel.cursorRow.s, "category", "the cursor follows the moved category")
         } }
     ]
   }

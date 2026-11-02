@@ -24,7 +24,7 @@ func TestMissingFilesHoldTheDefaults(t *testing.T) {
 func TestSavedFilesLeaveOutZeroSettings(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "omihomo")
 	v := protocol.ApplyArgs{Settings: protocol.Settings{Mode: "global", TUN: true},
-		Rules: []protocol.UserRule{{Type: "DOMAIN-SUFFIX", Value: "example.com", Target: "DIRECT"}}}
+		Rules: []protocol.RuleEntry{{Type: "DOMAIN-SUFFIX", Value: "example.com", Target: "DIRECT"}}}
 	if err := settings.Save(dir, v); err != nil {
 		t.Fatal(err)
 	}

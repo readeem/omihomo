@@ -37,14 +37,14 @@ const (
 // was on.
 type Settings struct {
 	protocol.Settings
-	Rules []protocol.UserRule `json:"rules"`
+	Rules []protocol.RuleEntry `json:"rules"`
 	// Running is whether the proxy was on, restored when the daemon starts.
 	Running bool `json:"running"`
 }
 
 // DefaultSettings are the settings of a fresh install.
 func DefaultSettings() Settings {
-	return Settings{Mode: protocol.ModeRule, Rules: []protocol.UserRule{}}
+	return Settings{Mode: protocol.ModeRule, Rules: []protocol.RuleEntry{}}
 }
 
 // Subscription is one subscription's record. Times are unix milliseconds.
@@ -132,7 +132,7 @@ func (s *Store) Settings() (Settings, error) {
 		return Settings{}, err
 	}
 	if out.Rules == nil {
-		out.Rules = []protocol.UserRule{}
+		out.Rules = []protocol.RuleEntry{}
 	}
 	return out, nil
 }

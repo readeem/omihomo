@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import "../Model.js" as Model
 
 Item {
   id: selector
@@ -19,10 +20,7 @@ Item {
     var choice = choices.find(function(choice) { return choice.value === value })
     return choice ? choice.label : value
   }
-  readonly property var filtered: {
-    var needle = search.text.trim().toLowerCase()
-    return choices.filter(function(choice) { return choice.label.toLowerCase().indexOf(needle) !== -1 })
-  }
+  readonly property var filtered: Model.filterChoices(choices, search.text)
 
   signal selected(string value)
 

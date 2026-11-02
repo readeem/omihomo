@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -65,7 +64,7 @@ func hasTarget(p core.Profile, name string) bool {
 		slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == name })
 }
 
-func ruleActive(p core.Profile, r protocol.UserRule) bool {
+func ruleActive(p core.Profile, r protocol.RuleEntry) bool {
 	if r.Type == "SUB-RULE" {
 		_, ok := p.SubRules[r.Target]
 		return ok
@@ -76,45 +75,49 @@ func ruleActive(p core.Profile, r protocol.UserRule) bool {
 	return hasTarget(p, r.Target)
 }
 
-// runConfig is what the core runs for s and the active profile: the
-// owner's rules first, leaving out those whose target the profile lacks,
-// as one written for another subscription's group.
+// compileRules retains saved rules for editing while excluding disabled or
+// unavailable entries from the configuration passed to the core.
+func compileRules(entries []protocol.RuleEntry, p core.Profile) ([]core.Rule, []protocol.Rule) {
+	var effective []core.Rule
+	listed := []protocol.Rule{}
+	add := func(r protocol.RuleEntry, category string, disabled bool) {
+		off := disabled || r.Disabled
+		inactive := off || !ruleActive(p, r)
+		listed = append(listed, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: r.Params,
+			Source: protocol.SourceUser, Index: len(listed) + 1, Category: category, Disabled: r.Disabled, Inactive: inactive})
+		switch {
+		case disabled:
+			listed[len(listed)-1].InactiveReason = "Category disabled"
+		case r.Disabled:
+			listed[len(listed)-1].InactiveReason = "Rule disabled"
+		case inactive:
+			listed[len(listed)-1].InactiveReason = "Unavailable target or rule provider"
+		}
+		if !inactive {
+			effective = append(effective, core.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Fields(r.Params), Source: protocol.SourceUser})
+		}
+	}
+	for _, e := range entries {
+		if e.Category == nil {
+			add(e, "", false)
+			continue
+		}
+		for _, r := range e.Category.Rules {
+			add(r, e.Category.ID, e.Disabled)
+		}
+	}
+	return effective, listed
+}
+
 func runConfig(s state.Settings, p core.Profile) core.Config {
-	var rules []core.Rule
-	for _, r := range s.Rules {
-		if ruleActive(p, r) {
-			rules = append(rules, core.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Fields(r.Params), Source: protocol.SourceUser})
-		}
+	rules, _ := compileRules(s.Rules, p)
+	if !s.SubscriptionRulesDisabled {
+		rules = append(rules, p.Rules...)
 	}
-	p.Rules = slices.Clone(p.Rules)
-	for i := range p.Rules {
-		r := &p.Rules[i]
-		target := *s.CategoryTargets.Field(protocol.RuleCategory(r.Type))
-		if r.Type != "SUB-RULE" && target != "" && hasTarget(p, target) {
-			r.Target = target
-		}
-	}
-	p.SubRules = maps.Clone(p.SubRules)
-	for name, sub := range p.SubRules {
-		sub = slices.Clone(sub)
-		for i := range sub {
-			target := *s.CategoryTargets.Field(protocol.RuleCategory(sub[i].Type))
-			if sub[i].Type != "SUB-RULE" && target != "" && hasTarget(p, target) {
-				sub[i].Target = target
-			}
-		}
-		p.SubRules[name] = sub
-	}
-	p.Rules = append(rules, p.Rules...)
+	p.Rules = rules
 	return core.Config{
-		Mode:           s.Mode,
-		TUN:            s.TUN,
-		TUNRedirect:    s.TUNRedirect,
-		Tailscale:      s.Tailscale,
-		TailnetProxy:   s.TailnetProxy,
-		PrimaryGroup:   s.PrimaryGroup,
-		DNSDestination: s.DNSDestination,
-		TUNBypass:      bypass(s),
-		Profile:        p,
+		Mode: s.Mode, TUN: s.TUN, TUNRedirect: s.TUNRedirect, Tailscale: s.Tailscale,
+		TailnetProxy: s.TailnetProxy, OmihomoRulesDisabled: s.OmihomoRulesDisabled,
+		PrimaryGroup: s.PrimaryGroup, DNSDestination: s.DNSDestination, TUNBypass: bypass(s), Profile: p,
 	}
 }

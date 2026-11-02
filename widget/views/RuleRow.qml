@@ -21,11 +21,15 @@ NavRow {
   section: entry.s || ""
   rowIndex: entry.i === undefined ? -1 : entry.i
   current: hit
-  implicitHeight: Style.space(22)
+  implicitHeight: Style.space(rule && rule.unreachable ? 38 : 22)
   opacity: !hasCursor && (below || (rule && rule.inactive)) ? 0.5 : 1
 
   RowLayout {
-    anchors.fill: parent
+    id: ruleContent
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    height: Style.space(22)
     anchors.leftMargin: Style.space(4)
     anchors.rightMargin: Style.space(2)
     spacing: Style.space(8)
@@ -120,9 +124,10 @@ NavRow {
     PanelText {
       theme: ruleRow.theme
       Layout.preferredWidth: Style.space(22)
-      text: ruleRow.rule && ruleRow.rule.inactive ? "off"
+      text: ruleRow.rule && ruleRow.rule.unreachable ? "!"
+        : ruleRow.rule && ruleRow.rule.inactive ? "off"
         : (ruleRow.hit ? "hit" : (ruleRow.verdict === "miss" ? "no" : (ruleRow.verdict === "unknown" ? "?" : "")))
-      color: ruleRow.hit ? ruleRow.theme.accent : ruleRow.theme.faint
+      color: ruleRow.rule && ruleRow.rule.unreachable ? ruleRow.theme.urgent : ruleRow.hit ? ruleRow.theme.accent : ruleRow.theme.faint
     }
 
     Row {
@@ -159,11 +164,22 @@ NavRow {
     }
   }
 
+  PanelText {
+    theme: ruleRow.theme
+    visible: ruleRow.rule && ruleRow.rule.unreachable
+    anchors.top: ruleContent.bottom
+    anchors.left: parent.left
+    anchors.leftMargin: Style.space(24)
+    text: "Unreachable · earlier MATCH"
+    color: ruleRow.theme.urgent
+  }
+
   PanelToolTip {
     visible: ruleRow.hovered && ruleRow.rule !== null
     text: ruleRow.rule ? ruleRow.rule.type + (ruleRow.rule.value ? ", " + ruleRow.rule.value : "")
       + " → " + ruleRow.rule.target + (ruleRow.rule.params ? " · " + ruleRow.rule.params : "")
-      + (ruleRow.rule.inactive ? "\nUnavailable target or rule provider in this subscription"
+      + (ruleRow.rule.unreachable ? "\nUnreachable: an earlier MATCH catches everything"
+        : ruleRow.rule.inactive ? "\n" + (ruleRow.rule.inactiveReason || "Category disabled")
         : ruleRow.verdict === "unknown" ? "\nDepends on DNS, a rule set, or the app making the connection" : "")
       + (ruleRow.own ? "\nClick or press Enter to edit" : "") : ""
     fontFamily: ruleRow.theme.fontFamily

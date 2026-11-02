@@ -430,7 +430,6 @@ func TestRuleEditsPreservePositionAndFlags(t *testing.T) {
 		{"rule", "add", "DOMAIN", "first.example", "DIRECT"},
 		{"rule", "add", "DOMAIN", "second.example", "DIRECT"},
 		{"rule", "update", "1", "IP-CIDR", "10.0.0.0/8", "REJECT", "no-resolve"},
-		{"rule", "retarget", "domains", "REJECT"},
 	} {
 		if code, _, stderr := run(t, "", args...); code != cli.ExitOK {
 			t.Fatalf("%v: %d %s", args, code, stderr)
@@ -442,15 +441,13 @@ func TestRuleEditsPreservePositionAndFlags(t *testing.T) {
 		t.Fatalf("list: %d %s", code, stderr)
 	}
 	if len(listed.Rules) != 2 || listed.Rules[0].Type != "IP-CIDR" || listed.Rules[0].Params != "no-resolve" ||
-		listed.Rules[1].Value != "second.example" || listed.Rules[1].Target != "REJECT" {
+		listed.Rules[1].Value != "second.example" || listed.Rules[1].Target != "DIRECT" {
 		t.Fatalf("edited rules: %+v", listed.Rules)
 	}
 	if code, _, stderr := run(t, "", "rule", "update", "3", "MATCH", "", "DIRECT"); code != cli.ExitNotFound {
 		t.Fatalf("missing index: %d %s", code, stderr)
 	}
-	if code, _, stderr := run(t, "", "rule", "reset-target", "domains"); code != cli.ExitOK {
-		t.Fatalf("reset: %d %s", code, stderr)
-	}
+
 }
 
 func TestRuleMovesPreserveOrderAndContents(t *testing.T) {
@@ -494,5 +491,66 @@ func TestRuleMovesPreserveOrderAndContents(t *testing.T) {
 			t.Fatalf("accepted indices %v", indices)
 		}
 		assertRules("DOMAIN", "MATCH")
+	}
+}
+
+func TestNamedCategoriesAndRuleToggles(t *testing.T) {
+	serve(t, os.Getuid())
+	command := func(args ...string) protocol.RuleList {
+		t.Helper()
+		code, out, stderr := run(t, "", args...)
+		if code != cli.ExitOK {
+			t.Fatalf("%v: %d %s", args, code, stderr)
+		}
+		var listed protocol.RuleList
+		if err := json.Unmarshal([]byte(out), &listed); err != nil {
+			t.Fatal(err)
+		}
+		return listed
+	}
+	listed := command("rule", "category", "add", "Work")
+	id := listed.Entries[0].Category.ID
+	command("rule", "add", "DOMAIN", "first.example", "DIRECT", "", id, "true")
+	command("rule", "add", "DOMAIN", "second.example", "DIRECT", "", id, "false")
+	command("rule", "category", "target", id, "REJECT")
+	listed = command("rule", "add", "DOMAIN", "third.example", "DIRECT", "", id, "true")
+	if listed.Rules[0].Target != "REJECT" || listed.Rules[2].Target != "DIRECT" {
+		t.Fatalf("bulk target became inheritance: %+v", listed)
+	}
+	listed = command("rule", "category", "disable", id)
+	if !listed.Rules[0].Inactive || listed.Rules[0].Disabled {
+		t.Fatalf("category changed individual toggle: %+v", listed)
+	}
+	listed = command("rule", "category", "enable", id)
+	if listed.Rules[0].Inactive || !listed.Rules[1].Inactive || !listed.Rules[1].Disabled {
+		t.Fatalf("individual toggle was lost: %+v", listed)
+	}
+	command("rule", "enable", "2")
+	command("rule", "disable", "1")
+	command("rule", "category", "rename", id, "Renamed")
+	command("rule", "add", "MATCH", "", "DIRECT")
+	listed = command("rule", "entry-move", "2", "1")
+	if listed.Rules[0].Type != "MATCH" || !listed.Rules[2].Unreachable || listed.Entries[1].Category.ID != id || listed.Entries[1].Category.Name != "Renamed" {
+		t.Fatalf("category move or rename: %+v", listed)
+	}
+	listed = command("rule", "update", "3", "DOMAIN", "second.example", "REJECT", "", "", "true")
+	if len(listed.Entries[1].Category.Rules) != 2 || listed.Rules[len(listed.Rules)-1].Category != "" {
+		t.Fatalf("move out of category: %+v", listed)
+	}
+	command("rule", "category", "disable", "subscription")
+	listed = command("rule", "category", "disable", "omihomo")
+	if !listed.SubscriptionDisabled || !listed.OmihomoDisabled {
+		t.Fatalf("fixed category toggle: %+v", listed)
+	}
+	for _, id := range []string{"subscription", "omihomo"} {
+		for _, args := range [][]string{{"rule", "category", "target", id, "REJECT"}, {"rule", "category", "rename", id, "Changed"}, {"rule", "category", "remove", id}} {
+			if code, _, _ := run(t, "", args...); code != cli.ExitNotFound {
+				t.Fatalf("read-only category accepted %v: %d", args, code)
+			}
+		}
+	}
+	listed = command("rule", "category", "remove", id)
+	if len(listed.Entries) != 4 || !listed.Rules[1].Disabled {
+		t.Fatalf("ungroup lost rules or toggle: %+v", listed)
 	}
 }

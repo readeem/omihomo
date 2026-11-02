@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -336,6 +337,16 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 	if d.running() {
 		return nil
 	}
+	if err := checkSettings(d.settings.Settings); err != nil {
+		d.setState(protocol.StateStopped, err.Message)
+		d.publish(ctx)
+		return err
+	}
+	if err := checkRules(d.settings.Rules); err != nil {
+		d.setState(protocol.StateStopped, err.Message)
+		d.publish(ctx)
+		return err
+	}
 	if active := d.activeSub(); active != nil {
 		p, err := d.loadProfile(*active)
 		if err != nil {
@@ -556,8 +567,8 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	if (in.Tailscale && !next.Tailscale || in.TailnetProxy && !next.TailnetProxy) && !d.cfg.tailscalePresent() {
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
 	}
-	rules := append([]protocol.UserRule{}, args.Rules...)
-	if in == next.Settings && slices.Equal(rules, next.Rules) {
+	rules := append([]protocol.RuleEntry{}, args.Rules...)
+	if in == next.Settings && reflect.DeepEqual(rules, next.Rules) {
 		return d.status(), nil
 	}
 	next.Settings, next.Rules = in, rules
@@ -574,16 +585,8 @@ func checkSettings(s protocol.Settings) *protocol.Error {
 			return err
 		}
 	}
-	for _, category := range protocol.RuleCategories {
-		target := *s.CategoryTargets.Field(category)
-		if target != "" {
-			if err := validName("category target", target); err != nil {
-				return err
-			}
-			if strings.Contains(target, ",") {
-				return fail(protocol.CodeInvalid, "a category target cannot contain a comma")
-			}
-		}
+	if s.CategoryTargets != (protocol.CategoryTargets{}) {
+		return fail(protocol.CodeInvalid, "legacy category_targets are no longer supported; remove category_targets from settings.json before applying")
 	}
 
 	switch s.Mode {
@@ -636,28 +639,34 @@ func (d *server) testDelay(ctx context.Context, args protocol.DelayArgs) (any, *
 }
 
 func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error) {
-	runtime, err := d.core.Rules(ctx)
-	if err != nil && !errors.Is(err, core.ErrNotRunning) {
-		return protocol.RuleList{}, coreError(err)
-	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	out := []protocol.Rule{}
-	// Retain unavailable targets so the displayed indices match rules.json.
-	for _, r := range d.settings.Rules {
-		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target,
-			Params: r.Params, Source: protocol.SourceUser, Inactive: !ruleActive(d.profile, r)})
+	_, out := compileRules(d.settings.Rules, d.profile)
+	cfg := runConfig(d.settings, d.profile)
+	for _, r := range core.IntegrationRules(cfg) {
+		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " "),
+			Source: protocol.SourceOmihomo, Category: "omihomo", Disabled: d.settings.OmihomoRulesDisabled, Inactive: d.settings.OmihomoRulesDisabled})
 	}
-	for _, r := range runtime {
-		if r.Source != protocol.SourceUser {
-			out = append(out, r)
+	for _, r := range d.profile.Rules {
+		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " "),
+			Source: protocol.SourceSubscription, Category: "subscription", Disabled: d.settings.SubscriptionRulesDisabled, Inactive: d.settings.SubscriptionRulesDisabled})
+	}
+	caught := false
+	for i := range out {
+		if out[i].Inactive {
+			continue
+		}
+		out[i].Unreachable = caught
+		if out[i].Type == "MATCH" {
+			caught = true
 		}
 	}
 	sets := make([]string, 0, len(d.profile.RuleSets))
 	for _, set := range d.profile.RuleSets {
 		sets = append(sets, set.Name)
 	}
-	return protocol.RuleList{Rules: out, RuleSets: sets, SubRules: slices.Sorted(maps.Keys(d.profile.SubRules))}, nil
+	return protocol.RuleList{Rules: out, Entries: d.settings.Rules, OmihomoDisabled: d.settings.OmihomoRulesDisabled,
+		SubscriptionDisabled: d.settings.SubscriptionRulesDisabled, RuleSets: sets, SubRules: slices.Sorted(maps.Keys(d.profile.SubRules))}, nil
 }
 
 func (d *server) closeConnections(ctx context.Context, args protocol.CloseArgs) (any, *protocol.Error) {

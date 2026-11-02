@@ -49,11 +49,36 @@ function connections() {
     connections: open.map(({ age, closes, ...c }) => ({ ...c, started_at: now - age * 1000 })) }
 }
 
+function ruleSnapshot() {
+  let index = 0
+  let caught = false
+  const own = []
+  function add(rule, category, disabled) {
+    const inactive = disabled || rule.disabled === true || !targets.has(rule.target)
+    own.push({ ...rule, category, index: ++index, source: "user", inactive,
+      inactive_reason: disabled ? "Category disabled" : rule.disabled ? "Rule disabled" : inactive ? "Unavailable target or rule provider" : "" })
+  }
+  userRules.forEach(entry => {
+    if (entry.category) entry.category.rules.forEach(r => add(r,entry.category.id,entry.disabled))
+    else add(entry,"",false)
+  })
+  const rules = own.concat(runtimeRules.map(r => {
+    const disabled = r.source === "omihomo" ? status.omihomo_rules_disabled === true : status.subscription_rules_disabled === true
+    return { ...r, disabled, inactive: disabled, category: r.source === "omihomo" ? "omihomo" : "subscription" }
+  }))
+  rules.forEach(r => {
+    if (r.inactive) return
+    r.unreachable = caught
+    if (r.type === "MATCH") caught = true
+  })
+  return { entries: userRules, rules, omihomo_disabled: status.omihomo_rules_disabled === true,
+    subscription_disabled: status.subscription_rules_disabled === true }
+}
+
 const snapshots = {
   status: () => status,
   groups: () => groups,
-  rules: () => ({ rules: userRules.map((rule) => ({ ...rule, source: "user", inactive: !targets.has(rule.target) }))
-    .concat(running() ? runtimeRules : []) }),
+  rules: ruleSnapshot,
   subscriptions: () => ({ subscriptions })
 }
 
@@ -119,6 +144,8 @@ const ops = {
     if (!["rule", "global", "direct"].includes(mode)) return fail("invalid", `unknown mode ${mode}`)
     if (primary_group !== "" && !findGroup(primary_group)) return fail("not_found", `no group ${primary_group}`)
     Object.assign(status, { dns_destination: dns_destination || "", mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group: primary_group || "Proxy" })
+    status.omihomo_rules_disabled = args.settings.omihomo_rules_disabled === true
+    status.subscription_rules_disabled = args.settings.subscription_rules_disabled === true
     userRules = args.rules
     push("status", "rules")
     return { result: status }

@@ -199,16 +199,18 @@ function subscriptionUsage(sub) {
 // only effective rules participate in routing tests.
 function readRules(data) {
   var list = data && typeof data === "object" ? data.rules : null
-  var out = { own: [], injected: [], subscription: [], effective: [] }
+  var out = { own: [], injected: [], subscription: [], effective: [], document: [],
+    omihomoDisabled: !!data && data.omihomo_disabled === true, subscriptionDisabled: !!data && data.subscription_disabled === true }
   if (!Array.isArray(list)) return out
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
     if (!entry || typeof entry !== "object") continue
     var rule = { type: text(entry.type), value: text(entry.value), target: text(entry.target),
-      params: text(entry.params), inactive: entry.inactive === true }
+      params: text(entry.params), inactive: entry.inactive === true, disabled: entry.disabled === true,
+      category: text(entry.category), unreachable: entry.unreachable === true, inactiveReason: text(entry.inactive_reason) }
     var source = text(entry.source)
     if (source === "user") {
-      rule.index = out.own.length + 1
+      rule.index = number(entry.index, out.own.length + 1)
       rule.rule = rule.type + "," + rule.value + "," + rule.target
       out.own.push(rule)
     } else if (source === "omihomo") {
@@ -218,7 +220,40 @@ function readRules(data) {
     }
     if (!rule.inactive) out.effective.push(rule)
   }
+  out.document = Array.isArray(data.entries) ? data.entries : out.own
   return out
+}
+
+function rulePresentation(state, expanded, subscription) {
+  var categories = [], rows = [], own = 0, effective = 0
+  function addRule(rule, kind, top) {
+    var i = kind === "own" ? own++ : rows.length
+    rows.push({ kind: kind, s: kind === "own" ? "rule" : "readonlyRule", i: i, rule: rule, top: top,
+      eff: rule.inactive ? -1 : effective++ })
+  }
+  function addCategory(category) {
+    categories.push(category)
+    rows.push({ kind: "category", s: "category", i: categories.length - 1, category: category })
+    category.rules.forEach(function(rule) {
+      if (expanded[category.id]) addRule(rule, category.own ? "own" : "readonly", category.top || 0)
+      else { if (category.own) own++; if (!rule.inactive) effective++ }
+    })
+  }
+  state.document.forEach(function(entry, i) {
+    if (entry.category) addCategory({ id: entry.category.id, name: entry.category.name, disabled: entry.disabled === true,
+      rules: state.own.filter(function(r) { return r.category === entry.category.id }), top: i + 1, own: true })
+    else if (state.own[own]) addRule(state.own[own], "own", i + 1)
+  })
+  addCategory({ id: "omihomo", name: "Tailscale", disabled: state.omihomoDisabled, rules: state.injected, own: false })
+  addCategory({ id: "subscription", name: subscription || "Subscription", disabled: state.subscriptionDisabled, rules: state.subscription, own: false })
+  return { categories: categories, rows: rows }
+}
+
+function filterChoices(choices, query) {
+  var needle = query.trim().toLowerCase()
+  var matches = choices.filter(function(choice) { return choice.label.toLowerCase().indexOf(needle) !== -1 })
+  return matches.filter(function(choice) { return choice.label.toLowerCase() === needle })
+    .concat(matches.filter(function(choice) { return choice.label.toLowerCase() !== needle }))
 }
 
 function validateRule(type, value, target) {
@@ -911,7 +946,7 @@ if (typeof module !== "undefined") {
     readSubscriptions: readSubscriptions,
     readSubscription: readSubscription,
     subscriptionUsage: subscriptionUsage,
-    readRules: readRules,
+    readRules: readRules, rulePresentation: rulePresentation, filterChoices: filterChoices,
     validateRule: validateRule,
     isCidr: isCidr,
     readGroups: readGroups,

@@ -716,7 +716,7 @@ func TestSettingsRulesAndTheRunningStateSurviveARestart(t *testing.T) {
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Mode: "global", TUN: true, PrimaryGroup: "Proxy"},
-		protocol.UserRule{Type: "DOMAIN-SUFFIX", Value: "intranet.example", Target: "DIRECT"}))
+		protocol.RuleEntry{Type: "DOMAIN-SUFFIX", Value: "intranet.example", Target: "DIRECT"}))
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	o.Close()
 
@@ -748,9 +748,9 @@ func TestOwnRules(t *testing.T) {
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	steam := protocol.UserRule{Type: "PROCESS-NAME", Value: "steam", Target: "Proxy"}
-	lan := protocol.UserRule{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT"}
-	for _, r := range []protocol.UserRule{
+	steam := protocol.RuleEntry{Type: "PROCESS-NAME", Value: "steam", Target: "Proxy"}
+	lan := protocol.RuleEntry{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT"}
+	for _, r := range []protocol.RuleEntry{
 		{Type: "IP-CIDR", Value: "not-a-cidr", Target: "DIRECT"},
 		{Type: "PROCESS-NAME", Value: "Firefox,REJECT", Target: "Proxy"},
 		{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT,no-resolve"},
@@ -765,10 +765,10 @@ func TestOwnRules(t *testing.T) {
 			t.Errorf("%+v = %v", r, err)
 		}
 	}
-	elsewhere := protocol.UserRule{Type: "DOMAIN", Value: "a.example", Target: "Elsewhere"}
+	elsewhere := protocol.RuleEntry{Type: "DOMAIN", Value: "a.example", Target: "Elsewhere"}
 	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{}, steam, elsewhere, lan))
 	list := call[protocol.RuleList](t, c, protocol.OpRules, nil)
-	if len(list.Rules) != 3 || list.Rules[0].Value != "steam" || list.Rules[0].Source != protocol.SourceUser {
+	if len(list.Entries) != 3 || list.Rules[0].Value != "steam" || list.Rules[0].Source != protocol.SourceUser {
 		t.Fatalf("rules while stopped = %+v", list)
 	}
 	call[protocol.Status](t, c, protocol.OpStart, nil)
@@ -926,7 +926,7 @@ func TestChangesWhileStoppedAreChecked(t *testing.T) {
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	h.core.FailCheck(fmt.Errorf("refused"))
-	geosite := protocol.UserRule{Type: "GEOSITE", Value: "nonexistent", Target: "DIRECT"}
+	geosite := protocol.RuleEntry{Type: "GEOSITE", Value: "nonexistent", Target: "DIRECT"}
 	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{}, geosite)); err.Code != protocol.CodeCore {
 		t.Fatalf("a rule the core would refuse = %v", err)
 	}
@@ -937,7 +937,7 @@ func TestChangesWhileStoppedAreChecked(t *testing.T) {
 	if st := call[protocol.Status](t, c, protocol.OpStatus, nil); st.TUN {
 		t.Fatal("the refused setting was kept")
 	}
-	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Rules) != 0 {
+	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Entries) != 0 {
 		t.Fatalf("the refused rule was kept: %+v", list)
 	}
 }
@@ -956,11 +956,11 @@ func TestAChangeNeedingGeodataThatDoesNotComeIsRefused(t *testing.T) {
 	h := serveCore(t, os.Getuid(), c0, o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	geosite := protocol.UserRule{Type: "GEOSITE", Value: "cn", Target: "DIRECT"}
+	geosite := protocol.RuleEntry{Type: "GEOSITE", Value: "cn", Target: "DIRECT"}
 	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{}, geosite)); err.Code != protocol.CodeFetch {
 		t.Fatalf("a rule whose geodata does not come = %v", err)
 	}
-	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Rules) != 0 {
+	if list := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(list.Entries) != 0 {
 		t.Fatalf("the rule was kept: %+v", list)
 	}
 }
@@ -1040,13 +1040,13 @@ func TestSubscriptionChangePushesIdenticalGroups(t *testing.T) {
 	}
 }
 
-func TestExtendedRulesAndCategoryTargets(t *testing.T) {
+func TestExtendedRuleParameters(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{body: workYAML})
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	rules := []protocol.UserRule{
+	rules := []protocol.RuleEntry{
 		{Type: "IP-CIDR", Value: "10.0.0.0/8", Target: "DIRECT", Params: "no-resolve src"},
 		{Type: "PROCESS-PATH-WILDCARD", Value: "/usr/*/browser", Target: "Proxy"},
 		{Type: "DOMAIN-REGEX", Value: "^example[.]com$", Target: "DIRECT"},
@@ -1056,32 +1056,75 @@ func TestExtendedRulesAndCategoryTargets(t *testing.T) {
 		{Type: "DSCP", Value: "4/8-10", Target: "DIRECT"},
 		{Type: "MATCH", Target: "Proxy"},
 	}
-	s := protocol.Settings{Mode: protocol.ModeRule, CategoryTargets: protocol.CategoryTargets{Domains: "REJECT"}}
+	s := protocol.Settings{Mode: protocol.ModeRule}
 	call[protocol.Status](t, c, protocol.OpApply, owned(s, rules...))
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	cfg, _ := h.core.Config()
 	if len(cfg.Profile.Rules[0].Params) != 2 || cfg.Profile.Rules[2].Target != "DIRECT" {
 		t.Fatalf("owner rules changed unexpectedly: %+v", cfg.Profile.Rules)
 	}
-	for _, r := range cfg.Profile.Rules[len(rules):] {
-		if protocol.RuleCategory(r.Type) == "domains" && r.Target != "REJECT" {
-			t.Fatalf("subscription category target not applied: %+v", r)
-		}
-	}
 	listed := call[protocol.RuleList](t, c, protocol.OpRules, nil)
 	if listed.Rules[0].Params != "no-resolve src" {
 		t.Fatalf("lost flags: %+v", listed)
 	}
-	bad := append([]protocol.UserRule{}, rules...)
+	bad := append([]protocol.RuleEntry{}, rules...)
 	bad[0].Params = "path=/tmp/escape"
 	if err := callErr(t, c, protocol.OpApply, owned(s, bad...)); err.Code != protocol.CodeInvalid {
 		t.Fatalf("unknown flag accepted: %v", err)
 	}
-	h.restart(t)
-	cfg, _ = h.core.Config()
-	for _, r := range cfg.Profile.Rules[len(rules):] {
-		if protocol.RuleCategory(r.Type) == "domains" && r.Target != "REJECT" {
-			t.Fatalf("override lost after restart: %+v", r)
+}
+
+func TestCategoryCompilationSurvivesRefreshAndRollsBack(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML})
+	h := serve(t, os.Getuid(), o.opts()...)
+	c := h.dial(t)
+	sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	entries := []protocol.RuleEntry{
+		{Category: &protocol.RuleCategory{ID: "11111111111111111111111111111111", Name: "Work", Rules: []protocol.RuleEntry{
+			{Type: "DOMAIN", Value: "first.example", Target: "DIRECT"},
+			{Type: "DOMAIN", Value: "off.example", Target: "REJECT", Disabled: true},
+		}}},
+		{Type: "DOMAIN", Value: "standalone.example", Target: "DIRECT"},
+		{Disabled: true, Category: &protocol.RuleCategory{ID: "22222222222222222222222222222222", Name: "Disabled", Rules: []protocol.RuleEntry{
+			{Type: "MATCH", Target: "REJECT"},
+		}}},
+	}
+	args := owned(protocol.Settings{Tailscale: true, OmihomoRulesDisabled: true, SubscriptionRulesDisabled: true}, entries...)
+	call[protocol.Status](t, c, protocol.OpApply, args)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	assert := func() {
+		t.Helper()
+		cfg, _ := h.core.Config()
+		if len(cfg.Profile.Rules) != 2 || cfg.Profile.Rules[0].Value != "first.example" || cfg.Profile.Rules[1].Value != "standalone.example" || !cfg.OmihomoRulesDisabled || !cfg.Tailscale {
+			t.Fatalf("compiled routing: %+v", cfg)
 		}
+		listed := call[protocol.RuleList](t, c, protocol.OpRules, nil)
+		if len(listed.Entries) != 3 || !listed.Rules[1].Disabled || !listed.Rules[3].Inactive || listed.Rules[3].Disabled {
+			t.Fatalf("saved toggles: %+v", listed)
+		}
+		for _, r := range listed.Rules[4:] {
+			if !r.Inactive {
+				t.Fatalf("generated category still enabled: %+v", r)
+			}
+		}
+	}
+	assert()
+	h.clock.advance(time.Minute)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: sub.Name})
+	assert()
+	h.core.FailApply(fmt.Errorf("refused"))
+	refused := owned(protocol.Settings{}, protocol.RuleEntry{Type: "MATCH", Target: "REJECT"})
+	if err := callErr(t, c, protocol.OpApply, refused); err.Code != protocol.CodeCore {
+		t.Fatal(err)
+	}
+	h.core.FailApply(nil)
+	assert()
+	h.restart(t)
+	c = h.dial(t)
+	assert()
+	args.Rules[0].Category.Rules = append(args.Rules[0].Category.Rules, protocol.RuleEntry{Category: &protocol.RuleCategory{ID: "33333333333333333333333333333333", Name: "Nested"}})
+	if err := callErr(t, c, protocol.OpApply, args); err.Code != protocol.CodeInvalid {
+		t.Fatalf("nested category accepted: %v", err)
 	}
 }

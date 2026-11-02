@@ -192,7 +192,7 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 			raw.SubRules[name] = append(raw.SubRules[name], line)
 		}
 	}
-	rules := withOmihomoRules(p.Rules, cfg, primary)
+	rules := withOmihomoRules(p.Rules, cfg)
 	listed := make([]protocol.Rule, 0, len(rules))
 	for _, r := range rules {
 		line, err := ruleLine(r)
@@ -270,21 +270,11 @@ func primaryGroup(groups []core.Group, want string) string {
 // withOmihomoRules puts the integrations' rules after the owner's leading
 // rules and before everything else. They send traffic through the global
 // group, so without a primary group there are none.
-func withOmihomoRules(rules []core.Rule, cfg core.Config, primary string) []core.Rule {
-	var own []core.Rule
-	add := func(typ, value, target string, params ...string) {
-		own = append(own, core.Rule{Type: typ, Value: value, Target: target, Params: params, Source: protocol.SourceOmihomo})
+func withOmihomoRules(rules []core.Rule, cfg core.Config) []core.Rule {
+	if cfg.OmihomoRulesDisabled {
+		return rules
 	}
-	if primary != "" && cfg.TailnetProxy {
-		add("IP-CIDR", tailnetRange, globalGroup, "no-resolve")
-		add("DOMAIN-SUFFIX", "ts.net", globalGroup)
-	}
-	if primary != "" && cfg.Tailscale {
-		add("IP-CIDR", "100.64.0.0/10", "DIRECT", "no-resolve")
-		add("IP-CIDR", "fd7a:115c:a1e0::/48", "DIRECT", "no-resolve")
-		add("DOMAIN-SUFFIX", "tailscale.com", globalGroup)
-		add("DOMAIN-SUFFIX", "tailscale.io", globalGroup)
-	}
+	own := core.IntegrationRules(cfg)
 	lead := 0
 	for lead < len(rules) && rules[lead].Source == protocol.SourceUser {
 		lead++

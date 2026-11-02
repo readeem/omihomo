@@ -150,7 +150,7 @@ func callErr(t *testing.T, c *client.Client, op string, args any) *protocol.Erro
 
 // owned is settings.apply's args for s, in rule mode unless s names one, and
 // rules.
-func owned(s protocol.Settings, rules ...protocol.UserRule) protocol.ApplyArgs {
+func owned(s protocol.Settings, rules ...protocol.RuleEntry) protocol.ApplyArgs {
 	if s.Mode == "" {
 		s.Mode = protocol.ModeRule
 	}
@@ -347,7 +347,7 @@ func TestTailscaleNeedsTailscaledToTurnOn(t *testing.T) {
 
 	// Settings that keep it on still apply once tailscaled is gone.
 	present.Store(false)
-	rule := protocol.UserRule{Type: "DOMAIN", Value: "a.example", Target: "DIRECT"}
+	rule := protocol.RuleEntry{Type: "DOMAIN", Value: "a.example", Target: "DIRECT"}
 	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Tailscale: true}, rule))
 }
 
@@ -386,8 +386,9 @@ func TestRulesAndConnections(t *testing.T) {
 	if rules := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(rules.Rules) != 0 {
 		t.Fatalf("rules while stopped = %+v", rules)
 	}
+	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{}, protocol.RuleEntry{Type: "MATCH", Target: "DIRECT"}))
 	call[protocol.Status](t, c, protocol.OpStart, nil)
-	if rules := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(rules.Rules) != 2 {
+	if rules := call[protocol.RuleList](t, c, protocol.OpRules, nil); len(rules.Rules) != 1 {
 		t.Fatalf("rules = %+v", rules)
 	}
 

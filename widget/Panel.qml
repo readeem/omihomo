@@ -31,8 +31,19 @@ Panel {
   property string editingRuleOriginal: ""
   property string savedRuleTarget: ""
   property string ruleParams: ""
+  property string ruleCategory: ""
+  property bool ruleEnabled: true
+  property var expandedCategories: ({})
+  property string categoryEditing: ""
+  property string categoryTarget: ""
+  readonly property var categoryChoices: [{ value: "", label: "No category" }].concat(
+    omihomo.ruleDocument.filter(function(e) { return !!e.category }).map(function(e) {
+      return { value: e.category.id, label: e.category.name }
+    }))
   property int ruleTargetIndex: 0
   readonly property var activeSelector: rulesView.typeSelector.picking ? rulesView.typeSelector
+    : rulesView.categorySelector.picking ? rulesView.categorySelector
+    : rulesView.bulkSelector.picking ? rulesView.bulkSelector
     : rulesView.selector.picking ? rulesView.selector
     : (settingsView.selector.picking ? settingsView.selector : null)
 
@@ -128,26 +139,65 @@ Panel {
   readonly property var ruleTest: Model.testRules(effectiveRules, ruleQuery, omihomo.routing)
   readonly property string ruleHitTarget: ruleTest.hit >= 0 ? effectiveRules[ruleTest.hit].target : ""
   readonly property var ruleTally: Model.ruleTargetTally(effectiveRules)
-  readonly property var ruleEntries: {
-    var out = [{ kind: "head", title: "YOURS · " + omihomo.rules.length, note: "checked first" }]
-    var head = 0
-    var i
-    for (i = 0; i < omihomo.rules.length; i++)
-      out.push({ kind: "own", s: "rule", i: i, rule: omihomo.rules[i], eff: omihomo.rules[i].inactive ? -1 : head++ })
-    if (omihomo.injectedRules.length > 0) {
-      out.push({ kind: "head", title: "OMIHOMO · " + omihomo.injectedRules.length, note: "tailscale · read-only" })
-      for (i = 0; i < omihomo.injectedRules.length; i++)
-        out.push({ kind: "injected", s: "irule", i: i, rule: omihomo.injectedRules[i], eff: head++ })
-    }
-    out.push({
-      kind: "head",
-      title: (omihomo.activeSubscription !== "" ? omihomo.activeSubscription.toUpperCase() : "SUBSCRIPTION")
-        + " · " + omihomo.subscriptionRules.length,
-      note: "read-only"
+  readonly property var rulePresentation: Model.rulePresentation(omihomo.ruleState, expandedCategories, omihomo.activeSubscription)
+  readonly property var ruleCategories: rulePresentation.categories
+  readonly property var ruleEntries: rulePresentation.rows
+
+  function categorySummary(category) {
+    var targets = []
+    category.rules.forEach(function(r) { if (r.type !== "SUB-RULE" && targets.indexOf(r.target) === -1) targets.push(r.target) })
+    return targets.length === 1 ? targets[0] : targets.length > 1 ? "Mixed targets" : "Set target"
+  }
+
+  function expandCategory(id) {
+    var expanded = Object.assign({}, expandedCategories)
+    expanded[id] = !expanded[id]
+    expandedCategories = expanded
+  }
+
+  function expandAllCategories(expand) {
+    var expanded = {}
+    if (expand) ruleCategories.forEach(function(c) { expanded[c.id] = true })
+    expandedCategories = expanded
+  }
+
+  function toggleCategory(category) {
+    if (editingRule > 0 || categoryEditing !== "" || omihomo.ruleSaving) return
+    omihomo.categoryAction(category.disabled ? "enable" : "disable", category.id)
+  }
+
+  function moveCategory(category, delta) {
+    var to = category.top + delta
+    if (!category.own || editingRule > 0 || to < 1 || to > omihomo.ruleDocument.length) return
+    omihomo.moveRuleEntry(category.top, to, function() {
+      root.focusRow("category", root.ruleCategories.findIndex(function(c) { return c.id === category.id }))
+      root.scrollCursorIntoView()
     })
-    for (i = 0; i < omihomo.subscriptionRules.length; i++)
-      out.push({ kind: "sub", s: "srule", i: i, rule: omihomo.subscriptionRules[i], eff: head + i })
-    return out
+  }
+
+  function editCategory(id) {
+    cancelRuleEdit()
+    categoryEditing = id || "new"
+    var category = ruleCategories.find(function(c) { return c.id === id })
+    rulesView.categoryField.text = category ? category.name : ""
+    beginEdit(rulesView.categoryField)
+  }
+
+  function saveCategory() {
+    var name = rulesView.categoryField.text.trim()
+    if (name === "" || omihomo.ruleSaving) return
+    omihomo.categoryAction(categoryEditing === "new" ? "add" : "rename", categoryEditing === "new" ? name : categoryEditing,
+      categoryEditing === "new" ? undefined : name, function() {
+        root.categoryEditing = ""
+        rulesView.categoryField.text = ""
+        root.endEdit()
+      })
+  }
+
+  function retargetCategory(category) {
+    if (!category.own || editingRule > 0 || categoryEditing !== "") return
+    categoryTarget = category.id
+    rulesView.bulkSelector.openPicker()
   }
 
   readonly property var flows: Model.connectionFlows(omihomo.connectionStacks, 6, 4)
@@ -220,9 +270,9 @@ Panel {
       rows.push({ s: "subUrl" }, { s: "subSubmit" })
       break
     case "rules":
-      rows.push({ s: "ruleTest" })
+      rows.push({ s: "newCategory" }, { s: "collapseCategories" }, { s: "expandCategories" }, { s: "ruleTest" })
       for (i = 0; i < ruleEntries.length; i++) if (ruleEntries[i].s) rows.push({ s: ruleEntries[i].s, i: ruleEntries[i].i })
-      rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" })
+      rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleCategory" }, { s: "ruleTarget" }, { s: "ruleEnabled" })
       break
     case "conns":
       for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
@@ -309,6 +359,12 @@ Panel {
     case "sub": activateSubscriptionAt(cursorRow.i); break
     case "subUrl": beginEdit(subscriptionsView.urlField); break
     case "subSubmit": submitSubForm(); break
+    case "newCategory": editCategory(""); break
+    case "collapseCategories": expandAllCategories(false); break
+    case "expandCategories": expandAllCategories(true); break
+    case "category": expandCategory(ruleCategories[cursorRow.i].id); break
+    case "ruleCategory": rulesView.categorySelector.openPicker(); break
+    case "ruleEnabled": ruleEnabled = !ruleEnabled; openRuleForm(); break
     case "ruleTest": beginEdit(rulesView.testField); break
     case "ruleType": rulesView.typeSelector.openPicker(); break
     case "rule": editRule(omihomo.rules[cursorRow.i]); break
@@ -389,6 +445,7 @@ Panel {
 
   function handleEscape() {
     if (activeSelector) { activeSelector.cancel(); return }
+    if (categoryEditing !== "") { categoryEditing = ""; rulesView.categoryField.text = ""; endEdit(); return }
     if (editingRule > 0 || (view === "rules" && editing === rulesView.valueField)) {
       cancelRuleEdit()
       return
@@ -406,6 +463,7 @@ Panel {
   function acceptEdit() {
     if (activeSelector) {
       activeSelector.pick(cursorRow && cursorRow.s === "choice" ? cursorRow.i : 0)
+    } else if (view === "rules" && categoryEditing !== "") { saveCategory()
     } else if (view === "rules" && (editingRule > 0 || editing === rulesView.valueField)) {
       submitRuleForm()
     } else if (editing) editing.accepted()
@@ -427,7 +485,7 @@ Panel {
     if (activeSelector) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
-    if (editing !== null || editingRule > 0) return [
+    if (editing !== null || editingRule > 0 || categoryEditing !== "") return [
       { keys: "↵", label: "save", key: "enter" }, { keys: "esc", label: "cancel", key: "esc" }]
     switch (name) {
     case "configs": return [
@@ -464,6 +522,7 @@ Panel {
     rulesView.testField.text = ""
     editing = null
     endEdit()
+    categoryEditing = ""
     view = name
     cursor = 0
     cursorActive = false
@@ -601,16 +660,31 @@ Panel {
   }
 
   function ruleMoveTarget(index, delta) {
-    var own = ruleEntries.filter(function(entry) { return entry.kind === "own" })
-    var at = own.findIndex(function(entry) { return entry.rule.index === index })
-    var neighbor = at >= 0 ? own[at + delta] : null
-    return neighbor ? neighbor.rule.index : 0
+    var rule = omihomo.rules[index - 1]
+    if (!rule) return 0
+    if (!rule.category) {
+      var entry = ruleEntries.find(function(e) { return e.kind === "own" && e.rule.index === index })
+      return entry && entry.top + delta > 0 && entry.top + delta <= omihomo.ruleDocument.length ? entry.top + delta : 0
+    }
+    var siblings = omihomo.rules.filter(function(r) { return r.category === rule.category })
+    var at = siblings.findIndex(function(r) { return r.index === index })
+    return siblings[at + delta] ? siblings[at + delta].index : 0
   }
 
   function moveRule(index, delta) {
-    if (editingRule > 0 || omihomo.ruleSaving) return
+    if (editingRule > 0 || categoryEditing !== "" || omihomo.ruleSaving) return
     var to = ruleMoveTarget(index, delta)
-    if (to > 0) omihomo.moveRule(index, to)
+    if (to <= 0) return
+    var rule = omihomo.rules[index - 1]
+    if (rule.category) omihomo.moveRule(index, to)
+    else {
+      var entry = ruleEntries.find(function(e) { return e.kind === "own" && e.rule.index === index })
+      omihomo.moveRuleEntry(entry.top, to, function() {
+        var moved = root.ruleEntries.find(function(e) { return e.kind === "own" && e.top === to })
+        if (moved) root.focusRow("rule", moved.i)
+        root.scrollCursorIntoView()
+      })
+    }
   }
 
   function editRule(rule) {
@@ -621,6 +695,8 @@ Panel {
     ruleTypeIndex = Model.RULE_TYPES.indexOf(rule.type)
     rulesView.valueField.text = rule.value
     ruleParams = rule.params || ""
+    ruleCategory = rule.category || ""
+    ruleEnabled = !rule.disabled
     ruleTargetIndex = Math.max(0, ruleTargets.findIndex(function(target) { return target.value === rule.target }))
     openRuleForm()
   }
@@ -628,6 +704,8 @@ Panel {
   function cancelRuleEdit() {
     if (activeSelector && view === "rules") activeSelector.cancel()
     editingRule = 0
+    ruleCategory = ""
+    ruleEnabled = true
     savedRuleTarget = ""
     ruleParams = ""
     ruleTypeIndex = 0
@@ -652,7 +730,7 @@ Panel {
       beginEdit(rulesView.valueField)
       return
     }
-    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget, ruleParams, editingRule)
+    omihomo.addRule(ruleType, ruleFormValue.trim(), ruleTarget, ruleParams, editingRule, ruleCategory, ruleEnabled)
   }
 
   function openFilter() {
@@ -688,8 +766,8 @@ Panel {
     case "config": list = configsView.list; break
     case "sub": list = subscriptionsView.list; break
     case "rule":
-    case "irule":
-    case "srule":
+    case "category":
+    case "readonlyRule":
       list = rulesView.ruleList
       index = ruleEntries.findIndex(function(entry) { return entry.s === cursorRow.s && entry.i === cursorRow.i })
       break
@@ -755,6 +833,8 @@ Panel {
       root.editingRule = 0
       root.savedRuleTarget = ""
       root.ruleParams = ""
+      root.ruleCategory = ""
+      root.ruleEnabled = true
       rulesView.valueField.text = ""
       root.endEdit()
     }
@@ -822,15 +902,16 @@ Panel {
       blocked: root.editing !== null
       reorderable: root.view === "rules"
       onReorderRequested: function(dy) {
-        if (root.cursorActive && root.cursorRow && root.cursorRow.s === "rule")
-          root.moveRule(root.cursorRow.i + 1, dy)
+        if (!root.cursorActive || !root.cursorRow) return
+        if (root.cursorRow.s === "rule") root.moveRule(root.cursorRow.i + 1, dy)
+        if (root.cursorRow.s === "category") root.moveCategory(root.ruleCategories[root.cursorRow.i], dy)
       }
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
       }
       onActivateRequested: {
-        if (root.cursorRow && ["ruleType", "ruleTarget"].indexOf(root.cursorRow.s) !== -1)
+        if (root.cursorRow && ["ruleType", "ruleCategory", "ruleTarget", "ruleEnabled"].indexOf(root.cursorRow.s) !== -1)
           root.activateCursor()
         else root.acceptEdit()
       }

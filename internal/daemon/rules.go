@@ -21,7 +21,6 @@ var userRuleTypes = []string{"SUB-RULE",
 	"UID", "NETWORK", "DSCP", "RULE-SET", "AND", "OR", "NOT", "MATCH",
 }
 
-// maxUserRules bounds the owner's rules.
 const maxUserRules = 1000
 
 func checkRuleValue(typ, value string) *protocol.Error {
@@ -98,20 +97,52 @@ func checkRuleValue(typ, value string) *protocol.Error {
 	return nil
 }
 
-func checkRules(rules []protocol.UserRule) *protocol.Error {
-	if len(rules) > maxUserRules {
-		return fail(protocol.CodeInvalid, "at most %d rules", maxUserRules)
-	}
-	for i, r := range rules {
-		if err := checkRule(r); err != nil {
-			err.Message = fmt.Sprintf("rule %d: %s", i+1, err.Message)
+func checkRules(entries []protocol.RuleEntry) *protocol.Error {
+	count := 0
+	ids, names := map[string]bool{}, map[string]bool{}
+	for i, e := range entries {
+		if e.Category == nil {
+			count++
+			if err := checkRule(e); err != nil {
+				err.Message = fmt.Sprintf("rule %d: %s", i+1, err.Message)
+				return err
+			}
+			continue
+		}
+		c := e.Category
+		if e.Type != "" || e.Value != "" || e.Target != "" || e.Params != "" {
+			return fail(protocol.CodeInvalid, "a category cannot also be a rule")
+		}
+		if err := validName("category name", c.Name); err != nil {
 			return err
 		}
+		if c.Name != strings.TrimSpace(c.Name) {
+			return fail(protocol.CodeInvalid, "category names cannot have surrounding space")
+		}
+		if len(c.ID) != 32 || strings.ContainsFunc(c.ID, func(r rune) bool { return !(r >= 'a' && r <= 'f' || r >= '0' && r <= '9') }) {
+			return fail(protocol.CodeInvalid, "invalid category id")
+		}
+		if ids[c.ID] || names[strings.ToLower(c.Name)] {
+			return fail(protocol.CodeInvalid, "category ids and names must be unique")
+		}
+		ids[c.ID], names[strings.ToLower(c.Name)] = true, true
+		for _, r := range c.Rules {
+			count++
+			if r.Category != nil {
+				return fail(protocol.CodeInvalid, "categories cannot be nested")
+			}
+			if err := checkRule(r); err != nil {
+				return err
+			}
+		}
+	}
+	if count > maxUserRules || len(entries) > maxUserRules {
+		return fail(protocol.CodeInvalid, "at most %d rules or categories", maxUserRules)
 	}
 	return nil
 }
 
-func checkRule(r protocol.UserRule) *protocol.Error {
+func checkRule(r protocol.RuleEntry) *protocol.Error {
 	if !slices.Contains(userRuleTypes, r.Type) {
 		return fail(protocol.CodeInvalid, "the type must be one of %s", strings.Join(userRuleTypes, ", "))
 	}

@@ -39,3 +39,11 @@ _Avoid_: Main group, default group
 **Config**:
 One proxy entry with a protocol, address and credentials.
 _Avoid_: Node, server, profile
+
+**Rule**:
+A condition and destination checked in order against traffic; the first matching enabled rule wins.
+
+**Rule category**:
+A named block of rules that share a position in routing order and can be enabled or disabled together.
+Rules keep their order within the category and their individual enabled states.
+_Avoid_: Group, tag, display mode

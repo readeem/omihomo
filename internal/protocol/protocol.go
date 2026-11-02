@@ -201,12 +201,14 @@ type StreamsArgs struct {
 
 // Settings are the owner's typed choices, as their settings.json holds them.
 type Settings struct {
-	CategoryTargets CategoryTargets `json:"category_targets,omitzero"`
-	Mode            string          `json:"mode"`
-	TUN             bool            `json:"tun,omitzero"`
-	TUNRedirect     bool            `json:"tun_redirect,omitzero"`
-	Tailscale       bool            `json:"tailscale,omitzero"`
-	TailnetProxy    bool            `json:"tailnet_proxy,omitzero"`
+	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
+	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
+	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`
+	Mode                      string          `json:"mode"`
+	TUN                       bool            `json:"tun,omitzero"`
+	TUNRedirect               bool            `json:"tun_redirect,omitzero"`
+	Tailscale                 bool            `json:"tailscale,omitzero"`
+	TailnetProxy              bool            `json:"tailnet_proxy,omitzero"`
 	// PrimaryGroup may name a group the active subscription lacks; the
 	// first selectable group stands in for it.
 	PrimaryGroup string `json:"primary_group,omitzero"`
@@ -214,20 +216,27 @@ type Settings struct {
 	DNSDestination string `json:"dns_destination,omitzero"`
 }
 
-// UserRule is one of the owner's rules, as their rules.json holds it. A rule
-// whose target the active subscription lacks is kept but left out of what
-// runs.
-type UserRule struct {
-	Type   string `json:"type"`
-	Value  string `json:"value"`
-	Target string `json:"target"`
-	Params string `json:"params,omitempty"`
+// RuleEntry contains either a rule or a category, never both. Categories may
+// contain only rules. The array order is the routing order at both levels.
+type RuleEntry struct {
+	Type     string        `json:"type,omitempty"`
+	Value    string        `json:"value,omitempty"`
+	Target   string        `json:"target,omitempty"`
+	Params   string        `json:"params,omitempty"`
+	Disabled bool          `json:"disabled,omitempty"`
+	Category *RuleCategory `json:"category,omitempty"`
+}
+
+type RuleCategory struct {
+	ID    string      `json:"id"`
+	Name  string      `json:"name"`
+	Rules []RuleEntry `json:"rules"`
 }
 
 // ApplyArgs replaces all of the owner's settings and rules at once.
 type ApplyArgs struct {
-	Settings Settings   `json:"settings"`
-	Rules    []UserRule `json:"rules"`
+	Settings Settings    `json:"settings"`
+	Rules    []RuleEntry `json:"rules"`
 }
 
 // Subscription is one remote source of groups, proxies and rules. Its URL
@@ -274,15 +283,23 @@ type Rule struct {
 	Target string `json:"target"`
 	Source string `json:"source"`
 	Params string `json:"params,omitempty"`
-	// Inactive keeps a saved user rule visible when the subscription lacks its target.
-	Inactive bool `json:"inactive,omitempty"`
+	// Inactive rules remain visible but are excluded from routing.
+	Inactive       bool   `json:"inactive,omitempty"`
+	Index          int    `json:"index,omitempty"`
+	Category       string `json:"category,omitempty"`
+	Disabled       bool   `json:"disabled,omitempty"`
+	Unreachable    bool   `json:"unreachable,omitempty"`
+	InactiveReason string `json:"inactive_reason,omitempty"`
 }
 
 // RuleList includes every saved user rule, then non-user runtime rules in match order.
 type RuleList struct {
-	Rules    []Rule   `json:"rules"`
-	RuleSets []string `json:"rule_sets,omitempty"`
-	SubRules []string `json:"sub_rules,omitempty"`
+	Rules                []Rule      `json:"rules"`
+	Entries              []RuleEntry `json:"entries"`
+	OmihomoDisabled      bool        `json:"omihomo_disabled,omitempty"`
+	SubscriptionDisabled bool        `json:"subscription_disabled,omitempty"`
+	RuleSets             []string    `json:"rule_sets,omitempty"`
+	SubRules             []string    `json:"sub_rules,omitempty"`
 }
 
 // Proxy is one member of a group: a proxy, or another group.
