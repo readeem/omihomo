@@ -75,13 +75,14 @@ func runConfig(s state.Settings, p core.Profile) core.Config {
 	}
 	p.Rules = append(rules, p.Rules...)
 	return core.Config{
-		Mode:         s.Mode,
-		TUN:          s.TUN,
-		TUNRedirect:  s.TUNRedirect,
-		Tailscale:    s.Tailscale,
-		TailnetProxy: s.TailnetProxy,
-		PrimaryGroup: s.PrimaryGroup,
-		TUNBypass:    bypass(s),
-		Profile:      p,
+		Mode:           s.Mode,
+		TUN:            s.TUN,
+		TUNRedirect:    s.TUNRedirect,
+		Tailscale:      s.Tailscale,
+		TailnetProxy:   s.TailnetProxy,
+		PrimaryGroup:   s.PrimaryGroup,
+		DNSDestination: s.DNSDestination,
+		TUNBypass:      bypass(s),
+		Profile:        p,
 	}
 }

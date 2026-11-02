@@ -180,6 +180,7 @@ type Status struct {
 	// PrimaryGroup is the group whose selection is "the current proxy".
 	// Empty means the first selectable group.
 	PrimaryGroup     string `json:"primary_group"`
+	DNSDestination   string `json:"dns_destination"`
 	Mode             string `json:"mode"`
 	TUN              bool   `json:"tun"`
 	TUNRedirect      bool   `json:"tun_redirect"`
@@ -208,6 +209,8 @@ type Settings struct {
 	// PrimaryGroup may name a group the active subscription lacks; the
 	// first selectable group stands in for it.
 	PrimaryGroup string `json:"primary_group,omitzero"`
+	// Empty follows the primary group. An explicit destination must exist; it never falls back.
+	DNSDestination string `json:"dns_destination,omitzero"`
 }
 
 // UserRule is one of the owner's rules, as their rules.json holds it. A rule

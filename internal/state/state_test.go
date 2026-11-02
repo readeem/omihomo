@@ -35,6 +35,7 @@ func TestStateRoundTripsAndStaysPrivate(t *testing.T) {
 	}
 	settings := DefaultSettings()
 	settings.TUN = true
+	settings.DNSDestination = "Resolver"
 	settings.Rules = append(settings.Rules, protocol.UserRule{Type: "DOMAIN-SUFFIX", Value: "example.com", Target: "DIRECT"})
 	if err := s.SaveSettings(settings); err != nil {
 		t.Fatal(err)

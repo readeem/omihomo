@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/metacubex/mihomo/common/orderedmap"
 	"github.com/metacubex/mihomo/constant"
 
 	"github.com/readeem/omihomo/internal/core"
@@ -157,6 +158,28 @@ func TestGroupNumbersAreBounded(t *testing.T) {
 		g := core.Group{Name: "Auto", Type: "url-test", Options: map[string]any{"interval": v, "timeout": 5000, "tolerance": 50}}
 		if err := checkGroupNumbers(g); err != nil {
 			t.Errorf("interval %v (%T): %v", v, v, err)
+		}
+	}
+}
+
+func TestDNSResolversStaySeparate(t *testing.T) {
+	cfg := testConfig()
+	cfg.DNSDestination = "Dead"
+	raw, _, err := rawConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.DNS.Fallback) != 0 || raw.DNS.RespectRules {
+		t.Fatal("application DNS may use traffic routing or a fallback")
+	}
+	if !slices.Equal(raw.DNS.DefaultNameserver, defaultNameservers) ||
+		!slices.Equal(raw.DNS.ProxyServerNameserver, defaultNameservers) {
+		t.Fatal("bootstrap resolution depends on application DNS")
+	}
+	for _, policy := range []*orderedmap.OrderedMap[string, any]{raw.DNS.NameServerPolicy, raw.DNS.ProxyServerNameserverPolicy} {
+		value, ok := policy.Get(tailscaleDomain)
+		if !ok || value != tailscaleDNS {
+			t.Fatal("MagicDNS is not resolved separately")
 		}
 	}
 }

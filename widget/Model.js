@@ -45,6 +45,7 @@ function defaultStatus() {
     detail: "",
     activeSubscription: "",
     primaryGroup: "",
+    dnsDestination: "",
     mode: "",
     tunEnabled: false,
     tunRedirect: false,
@@ -63,6 +64,7 @@ function readStatus(data) {
     detail: text(data.detail),
     activeSubscription: text(data.active_subscription),
     primaryGroup: text(data.primary_group),
+    dnsDestination: text(data.dns_destination),
     mode: text(data.mode).toLowerCase(),
     tunEnabled: data.tun === true,
     tunRedirect: data.tun_redirect === true,
@@ -282,6 +284,24 @@ function ruleTargets(groups) {
     var all = groups[i].all || []
     for (var j = 0; j < all.length; j++) add(text(all[j]), "config")
   }
+  return out
+}
+
+function dnsDestinations(groups, configured) {
+  var out = [{ value: "", label: "Follow primary group" }]
+  var seen = new Set(["", "GLOBAL", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"])
+  function add(name) {
+    if (seen.has(name)) return
+    seen.add(name)
+    out.push({ value: name, label: name })
+  }
+  for (var i = 0; i < groups.length; i++) {
+    if (!isSystemGroup(groups[i])) add(text(groups[i].name))
+    var all = groups[i].all || []
+    for (var j = 0; j < all.length; j++) add(text(all[j]))
+  }
+  if (configured !== "" && !seen.has(configured))
+    out.push({ value: configured, label: configured + " (unavailable)" })
   return out
 }
 
@@ -868,6 +888,7 @@ if (typeof module !== "undefined") {
     readGroups: readGroups,
     ruleTargets: ruleTargets,
     userGroups: userGroups,
+    dnsDestinations: dnsDestinations,
     primaryGroupName: primaryGroupName,
     groupByName: groupByName,
     groupForConfig: groupForConfig,

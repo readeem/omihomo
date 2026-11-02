@@ -222,7 +222,10 @@ Panel {
       for (i = 0; i < omihomo.connectionStacks.length; i++) rows.push({ s: "conn", i: i })
       break
     case "settings":
-      rows.push({ s: "mode" }, { s: "tun" }, { s: "tunRedirect" })
+      rows.push({ s: "mode" }, { s: "dns" })
+      if (settingsView.dnsPicking)
+        for (i = 0; i < settingsView.dnsChoices.length; i++) rows.push({ s: "dnsChoice", i: i })
+      rows.push({ s: "tun" }, { s: "tunRedirect" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
       rows.push({ s: "checkUpdates" })
       if (updater.updateAvailable) rows.push({ s: "update" })
@@ -310,6 +313,8 @@ Panel {
     case "ruleSubmit": submitRuleForm(); break
     case "conn": activateConnectionAt(cursorRow.i); break
     case "mode": cycleMode(1); break
+    case "dns": settingsView.openDNS(); break
+    case "dnsChoice": settingsView.pickDNS(cursorRow.i); break
     case "tun": omihomo.toggleTun(); break
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
@@ -647,7 +652,7 @@ Panel {
     case "target": list = rulesView.targetList; break
     }
     if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
-    else if (view === "settings") settingsView.reveal(cursorRow.s)
+    else if (view === "settings") settingsView.reveal(cursorRow.s, cursorRow.i)
   }
 
   implicitWidth: button.implicitWidth

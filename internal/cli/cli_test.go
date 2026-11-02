@@ -156,6 +156,14 @@ func TestSubscriptionAndSettingsCommands(t *testing.T) {
 	if code, out, _ := run(t, "", "sub", "list"); code != cli.ExitOK || !strings.Contains(out, `"name":"Work"`) || strings.Contains(out, "s3cret") {
 		t.Fatalf("sub list: %d %q", code, out)
 	}
+	for _, name := range []string{"Proxy", "Tokyo", ""} {
+		if code, out, errOut := run(t, "", "set", "dns-destination", "--", name); code != cli.ExitOK || !strings.Contains(out, `"dns_destination":"`+name+`"`) {
+			t.Fatalf("set DNS destination: %d %s %s", code, out, errOut)
+		}
+	}
+	if code, _, _ := run(t, "", "set", "dns-destination", "Missing"); code != cli.ExitNotFound {
+		t.Fatalf("unknown DNS destination exit %d", code)
+	}
 	if code, _, _ := run(t, "", "sub", "update", "Work"); code != cli.ExitState {
 		t.Fatalf("an update right after the add exit %d", code)
 	}

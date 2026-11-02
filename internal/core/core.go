@@ -28,6 +28,8 @@ type Config struct {
 	// If all groups are hidden, they remain eligible. The chosen group is
 	// always visible for control.
 	PrimaryGroup string
+	// Empty follows GLOBAL; an unavailable explicit destination rejects the config.
+	DNSDestination string
 	// TUNBypass is the address space TUN routes around.
 	TUNBypass []netip.Prefix
 	Profile   Profile
