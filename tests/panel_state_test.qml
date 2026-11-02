@@ -148,6 +148,21 @@ ShellRoot {
         } },
       { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
           t.check(panel.ruleTarget, "Streaming", "filtered selection changes the rule target")
+          testRoot.key(Qt.Key_Escape)
+        } },
+      { then: function() {
+          testRoot.key(Qt.Key_Up)
+          testRoot.key(Qt.Key_Return)
+        } },
+      { name: "rule type picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+          t.check(panel.activeSelector.section, "ruleType", "rule types open through the shared picker")
+          t.check(panel.hintsFor("rules")[0].label, "pick", "rule types use the same selection hints")
+          testRoot.type("GEOSITE")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
+          t.check(panel.ruleType, "GEOSITE", "filtering and choosing changes the rule type")
+          t.check(panel.service.rules.length, 4, "choosing a type does not save the rule")
           testRoot.key(Qt.Key_Backtab)
         } },
       { then: function() {

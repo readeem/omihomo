@@ -124,7 +124,7 @@ ShellRoot {
         view: panel.view, cursor: panel.cursorActive ? panel.cursorRow : null,
         editing: panel.editing ? panel.editing.placeholderText || true : null,
         filter: panel.filterOpen, picking: panel.activeSelector !== null,
-        ruleDraft: panel.ruleFormValue, editingRule: panel.editingRule, typePicking: panel.typePicking,
+        ruleDraft: panel.ruleFormValue, editingRule: panel.editingRule,
         destination: panel.activeSelector ? panel.activeSelector.label : null,
         choices: panel.activeSelector ? panel.activeSelector.filtered.map(function(choice) { return choice.value }) : [],
         dns: service.effectiveDNSDestination, hints: panel.hintsFor(panel.view),

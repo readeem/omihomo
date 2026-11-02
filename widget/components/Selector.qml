@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 
-ColumnLayout {
+Item {
   id: selector
 
   required property var panel
@@ -10,8 +10,8 @@ ColumnLayout {
   required property var choices
   required property string value
   readonly property Theme theme: panel.theme
-  property Component heading: null
-  property Item pickerHost: selector
+  required property Item pickerHost
+  property string placeholderText: "Filter choices"
   property bool picking: false
   readonly property alias field: search
   readonly property alias list: options
@@ -24,9 +24,10 @@ ColumnLayout {
     return choices.filter(function(choice) { return choice.label.toLowerCase().indexOf(needle) !== -1 })
   }
 
-  signal selected(string destination)
+  signal selected(string value)
 
   function openPicker() {
+    if (panel.activeSelector && panel.activeSelector !== selector) panel.activeSelector.cancel()
     picking = true
     search.text = ""
     panel.cursorActive = false
@@ -47,26 +48,17 @@ ColumnLayout {
     selected(choice.value)
   }
 
-  spacing: Style.space(6)
+  implicitWidth: trigger.implicitWidth
+  implicitHeight: trigger.implicitHeight
 
-  RowLayout {
-    Layout.fillWidth: true
-    spacing: Style.space(8)
-
-    Loader {
-      Layout.fillWidth: true
-      Layout.preferredHeight: item ? item.implicitHeight : 0
-      sourceComponent: selector.heading
-    }
-
-    SmallButton {
-      id: trigger
-      theme: selector.theme
-      text: "→ " + selector.label + " ▾"
-      hasCursor: selector.panel.at(selector.section)
-      onHovered: function(on) { if (on) selector.panel.focusRow(selector.section) }
-      onClicked: selector.picking ? selector.cancel() : selector.openPicker()
-    }
+  SmallButton {
+    id: trigger
+    anchors.fill: parent
+    theme: selector.theme
+    text: selector.label + " ▾"
+    hasCursor: selector.panel.at(selector.section)
+    onHovered: function(on) { if (on) selector.panel.focusRow(selector.section) }
+    onClicked: selector.picking ? selector.cancel() : selector.openPicker()
   }
 
   ColumnLayout {
@@ -80,13 +72,13 @@ ColumnLayout {
       panel: selector.panel
       theme: selector.theme
       Layout.fillWidth: true
-      placeholderText: "Filter destinations"
+      placeholderText: selector.placeholderText
       onAccepted: selector.pick(0)
       onActiveFocusChanged: selector.panel.fieldFocusChanged(search, activeFocus)
       Keys.onEscapePressed: selector.cancel()
       Keys.onDownPressed: {
         selector.panel.endEdit()
-        selector.panel.focusRow("destination", 0)
+        selector.panel.focusRow("choice", 0)
       }
     }
 
@@ -103,7 +95,7 @@ ColumnLayout {
         required property var modelData
         required property int index
         panel: selector.panel
-        section: "destination"
+        section: "choice"
         rowIndex: index
         current: modelData.value === selector.value
         width: options.rowWidth
@@ -133,7 +125,7 @@ ColumnLayout {
     PanelText {
       theme: selector.theme
       visible: selector.filtered.length === 0
-      text: "No matching destinations"
+      text: "No matches"
       color: selector.theme.dim
     }
   }

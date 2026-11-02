@@ -97,36 +97,41 @@ Item {
             modeControl: true
           }
 
-          ProxySelector {
-            id: dnsSelector
-            panel: view.panel
-            section: "dns"
-            pickerHost: pickerDock
+          RowLayout {
             Layout.fillWidth: true
             Layout.margins: Style.space(8)
-            choices: Model.dnsDestinations(view.service.groups, view.service.effectiveDNSDestination)
-            value: view.service.effectiveDNSDestination
-            heading: Component {
-              ColumnLayout {
-                spacing: Style.space(4)
-                PanelText {
-                  theme: view.theme
-                  Layout.fillWidth: true
-                  text: "DNS destination"
-                  color: view.theme.foreground
-                  font.pixelSize: Style.font.body
-                  wrapMode: Text.WordWrap
-                }
-                PanelText {
-                  theme: view.theme
-                  Layout.fillWidth: true
-                  text: "public DNS over HTTPS"
-                  color: view.theme.faint
-                  wrapMode: Text.WordWrap
-                }
+            spacing: Style.space(8)
+
+            ColumnLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(4)
+              PanelText {
+                theme: view.theme
+                Layout.fillWidth: true
+                text: "DNS destination"
+                color: view.theme.foreground
+                font.pixelSize: Style.font.body
+                wrapMode: Text.WordWrap
+              }
+              PanelText {
+                theme: view.theme
+                Layout.fillWidth: true
+                text: "public DNS over HTTPS"
+                color: view.theme.faint
+                wrapMode: Text.WordWrap
               }
             }
-            onSelected: function(value) { view.service.setDNSDestination(value) }
+
+            Selector {
+              id: dnsSelector
+              panel: view.panel
+              section: "dns"
+              pickerHost: pickerDock
+              placeholderText: "Filter destinations"
+              choices: Model.dnsDestinations(view.service.groups, view.service.effectiveDNSDestination)
+              value: view.service.effectiveDNSDestination
+              onSelected: function(value) { view.service.setDNSDestination(value) }
+            }
           }
 
           SettingRow {

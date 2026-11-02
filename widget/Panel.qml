@@ -31,9 +31,9 @@ Panel {
   property string editingRuleOriginal: ""
   property string savedRuleTarget: ""
   property string ruleParams: ""
-  property bool typePicking: false
   property int ruleTargetIndex: 0
-  readonly property var activeSelector: rulesView.selector.picking ? rulesView.selector
+  readonly property var activeSelector: rulesView.typeSelector.picking ? rulesView.typeSelector
+    : rulesView.selector.picking ? rulesView.selector
     : (settingsView.selector.picking ? settingsView.selector : null)
 
   readonly property string subFormUrl: subscriptionsView.urlField.text.trim()
@@ -120,7 +120,6 @@ Panel {
       targets.push({ value: savedRuleTarget, label: savedRuleTarget, description: "unavailable in this subscription" })
     return targets
   }
-  readonly property var visibleRuleTypes: Model.RULE_TYPES.filter(function(type) { return type.toLowerCase().indexOf(rulesView.typeField.text.toLowerCase()) !== -1 })
   readonly property string ruleType: Model.RULE_TYPES[Math.max(0, Math.min(ruleTypeIndex, Model.RULE_TYPES.length - 1))]
   readonly property string ruleTarget: ruleTargets.length > 0 ? ruleTargets[Math.max(0, Math.min(ruleTargetIndex, ruleTargets.length - 1))].value : ""
   readonly property string ruleFormError: Model.validateRule(ruleType, ruleFormValue, ruleTarget)
@@ -206,7 +205,7 @@ Panel {
       return rows
     }
     if (activeSelector) {
-      for (i = 0; i < activeSelector.filtered.length; i++) rows.push({ s: "destination", i: i })
+      for (i = 0; i < activeSelector.filtered.length; i++) rows.push({ s: "choice", i: i })
       return rows
     }
     switch (view) {
@@ -221,10 +220,6 @@ Panel {
       rows.push({ s: "subUrl" }, { s: "subSubmit" })
       break
     case "rules":
-      if (typePicking) {
-        for (i = 0; i < visibleRuleTypes.length; i++) rows.push({ s: "ruleTypeChoice", i: i })
-        break
-      }
       rows.push({ s: "ruleTest" })
       for (i = 0; i < ruleEntries.length; i++) if (ruleEntries[i].s) rows.push({ s: ruleEntries[i].s, i: ruleEntries[i].i })
       rows.push({ s: "ruleType" }, { s: "ruleValue" }, { s: "ruleTarget" })
@@ -315,12 +310,11 @@ Panel {
     case "subUrl": beginEdit(subscriptionsView.urlField); break
     case "subSubmit": submitSubForm(); break
     case "ruleTest": beginEdit(rulesView.testField); break
-    case "ruleType": openTypePicker(); break
-    case "ruleTypeChoice": chooseRuleType(cursorRow.i); break
+    case "ruleType": rulesView.typeSelector.openPicker(); break
     case "rule": editRule(omihomo.rules[cursorRow.i]); break
     case "ruleValue": beginEdit(rulesView.valueField); break
     case "ruleTarget": rulesView.selector.openPicker(); break
-    case "destination": if (activeSelector) activeSelector.pick(cursorRow.i); break
+    case "choice": if (activeSelector) activeSelector.pick(cursorRow.i); break
     case "conn": activateConnectionAt(cursorRow.i); break
     case "mode": cycleMode(1); break
     case "dns": settingsView.selector.openPicker(); break
@@ -380,7 +374,6 @@ Panel {
       else if (key === "a") { focusRow("subUrl"); beginEdit(subscriptionsView.urlField) }
     } else if (view === "rules") {
       if (key === "/" && activeSelector) beginEdit(activeSelector.field)
-      else if (key === "/" && typePicking) beginEdit(rulesView.typeField)
       else if (key === "/") { focusRow("ruleTest"); beginEdit(rulesView.testField) }
     } else if (view === "conns") {
       if (key === "A") omihomo.closeAllConnections()
@@ -396,7 +389,7 @@ Panel {
 
   function handleEscape() {
     if (activeSelector) { activeSelector.cancel(); return }
-    if (typePicking || editingRule > 0 || (view === "rules" && editing === rulesView.valueField)) {
+    if (editingRule > 0 || (view === "rules" && editing === rulesView.valueField)) {
       cancelRuleEdit()
       return
     }
@@ -412,9 +405,7 @@ Panel {
 
   function acceptEdit() {
     if (activeSelector) {
-      activeSelector.pick(cursorRow && cursorRow.s === "destination" ? cursorRow.i : 0)
-    } else if (typePicking) {
-      chooseRuleType(cursorRow && cursorRow.s === "ruleTypeChoice" ? cursorRow.i : 0)
+      activeSelector.pick(cursorRow && cursorRow.s === "choice" ? cursorRow.i : 0)
     } else if (view === "rules" && (editingRule > 0 || editing === rulesView.valueField)) {
       submitRuleForm()
     } else if (editing) editing.accepted()
@@ -433,7 +424,7 @@ Panel {
   function hintsFor(name) {
     if (!omihomo.installed) return setup.actions.map(a => ({ keys: a.key, label: a.button.split(" ")[0].toLowerCase(), key: a.key }))
       .concat([{ keys: "esc", label: "close", key: "esc" }])
-    if (activeSelector || typePicking) return [
+    if (activeSelector) return [
       { keys: "↵", label: "pick", key: "enter" }, { keys: "/", label: "filter", key: "/" },
       { keys: "j k", label: "move", key: "j" }, { keys: "esc", label: "cancel", key: "esc" }]
     if (editing !== null || editingRule > 0) return [
@@ -545,24 +536,6 @@ Panel {
     omihomo.setMode(Model.MODES[next])
   }
 
-  function openTypePicker() {
-    typePicking = !typePicking
-    if (typePicking) {
-      rulesView.typeField.text = ""
-      beginEdit(rulesView.typeField)
-    } else endEdit()
-  }
-
-  function chooseRuleType(index) {
-    var type = visibleRuleTypes[index]
-    if (!type) return
-    ruleTypeIndex = Model.RULE_TYPES.indexOf(type)
-    typePicking = false
-    ruleParams = ""
-    if (type === "MATCH") rulesView.valueField.text = ""
-    openRuleForm()
-  }
-
   function cycleRuleType(delta) {
     ruleTypeIndex = (ruleTypeIndex + delta + Model.RULE_TYPES.length) % Model.RULE_TYPES.length
   }
@@ -653,13 +626,13 @@ Panel {
   }
 
   function cancelRuleEdit() {
+    if (activeSelector && view === "rules") activeSelector.cancel()
     editingRule = 0
     savedRuleTarget = ""
     ruleParams = ""
     ruleTypeIndex = 0
     ruleTargetIndex = 0
     rulesView.valueField.text = ""
-    typePicking = false
     endEdit()
   }
 
@@ -721,8 +694,7 @@ Panel {
       index = ruleEntries.findIndex(function(entry) { return entry.s === cursorRow.s && entry.i === cursorRow.i })
       break
     case "conn": list = connectionsView.list; break
-    case "destination": if (activeSelector) list = activeSelector.list; break
-    case "ruleTypeChoice": list = rulesView.typeList; break
+    case "choice": if (activeSelector) list = activeSelector.list; break
     }
     if (list) Qt.callLater(function() { list.positionViewAtIndex(index, ListView.Contain) })
     else if (view === "settings") settingsView.reveal(cursorRow.s, cursorRow.i)

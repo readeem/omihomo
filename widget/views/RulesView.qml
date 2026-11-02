@@ -10,8 +10,7 @@ ColumnLayout {
   required property var panel
   readonly property var service: panel.service
   readonly property Theme theme: panel.theme
-  readonly property alias typeField: typeSearch
-  readonly property alias typeList: typeListView
+  readonly property alias typeSelector: ruleTypeSelector
   readonly property alias testField: ruleTestField
   readonly property alias valueField: ruleValueField
   readonly property alias selector: destination
@@ -120,7 +119,6 @@ ColumnLayout {
   ScrollList {
     id: ruleListView
     theme: view.theme
-    visible: !view.panel.typePicking
     Layout.fillWidth: true
     Layout.fillHeight: true
     model: view.panel.ruleEntries
@@ -153,62 +151,12 @@ ColumnLayout {
     }
   }
 
-  ColumnLayout {
-    visible: view.panel.typePicking
-    Layout.fillWidth: true
-    Layout.fillHeight: true
-    PanelField {
-      panel: view.panel
-      id: typeSearch
-      theme: view.theme
-      Layout.fillWidth: true
-      placeholderText: "Find a rule type"
-      onAccepted: view.panel.chooseRuleType(0)
-      onActiveFocusChanged: view.panel.fieldFocusChanged(typeSearch, activeFocus)
-      Keys.onEscapePressed: view.panel.handleEscape()
-      Keys.onDownPressed: { view.panel.endEdit(); view.panel.focusRow("ruleTypeChoice", 0) }
-    }
-    ScrollList {
-      id: typeListView
-      theme: view.theme
-      Layout.fillWidth: true
-      Layout.fillHeight: true
-      Layout.minimumHeight: Style.space(120)
-      model: view.panel.visibleRuleTypes
-      delegate: SmallButton {
-        required property string modelData
-        theme: view.theme
-        text: Model.ruleCategory(modelData) + " · " + modelData
-        required property int index
-        hasCursor: view.panel.at("ruleTypeChoice", index)
-        onClicked: view.panel.chooseRuleType(index)
-      }
-    }
-  }
-
   PanelText {
     theme: view.theme
     Layout.fillWidth: true
     text: Model.ruleHint(view.panel.ruleType)
     color: view.theme.dim
     wrapMode: Text.WordWrap
-  }
-
-  Flow {
-    Layout.fillWidth: true
-    spacing: Style.space(4)
-    visible: view.panel.ruleType === "RULE-SET" || view.panel.ruleType === "GEOSITE" || view.panel.ruleType.indexOf("GEOIP") !== -1
-    Repeater {
-      model: view.panel.ruleType === "RULE-SET" ? view.service.ruleSets
-        : view.panel.ruleType === "GEOSITE" ? ["youtube", "google", "category-ads-all", "geolocation-!cn", "cn"]
-        : ["private", "CN", "US", "DE", "GB", "RU"]
-      SmallButton {
-        required property string modelData
-        theme: view.theme
-        text: modelData
-        onClicked: view.valueField.text = modelData
-      }
-    }
   }
 
   RowLayout {
@@ -245,31 +193,49 @@ ColumnLayout {
     Keys.onEscapePressed: view.panel.handleEscape()
   }
 
-  ProxySelector {
-    id: destination
-    panel: view.panel
-    section: "ruleTarget"
-    choices: view.panel.ruleTargets
-    value: view.panel.ruleTarget
+  RowLayout {
     Layout.fillWidth: true
-    heading: Component {
-      Item {
-        implicitHeight: typeButton.implicitHeight
-        SmallButton {
-          id: typeButton
-          theme: view.theme
-          text: view.panel.ruleType + " ▾"
-          tooltipText: "Rule type · h l"
-          hasCursor: view.panel.at("ruleType")
-          onHovered: function(on) { if (on) view.panel.focusRow("ruleType") }
-          onClicked: view.panel.openTypePicker()
-        }
+    spacing: Style.space(8)
+
+    Selector {
+      id: ruleTypeSelector
+      panel: view.panel
+      section: "ruleType"
+      pickerHost: pickerDock
+      placeholderText: "Filter rule types"
+      choices: Model.RULE_TYPES.map(function(type) {
+        return { value: type, label: type, description: Model.ruleCategory(type) }
+      })
+      value: view.panel.ruleType
+      onSelected: function(value) {
+        view.panel.ruleTypeIndex = Model.RULE_TYPES.indexOf(value)
+        view.panel.ruleParams = ""
+        if (value === "MATCH") view.valueField.text = ""
+        view.panel.openRuleForm()
       }
     }
-    onSelected: function(value) {
-      view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
-      view.panel.openRuleForm()
+
+    Item { Layout.fillWidth: true }
+
+    Selector {
+      id: destination
+      panel: view.panel
+      section: "ruleTarget"
+      pickerHost: pickerDock
+      placeholderText: "Filter destinations"
+      choices: view.panel.ruleTargets
+      value: view.panel.ruleTarget
+      onSelected: function(value) {
+        view.panel.ruleTargetIndex = view.panel.ruleTargets.findIndex(function(choice) { return choice.value === value })
+        view.panel.openRuleForm()
+      }
     }
+  }
+
+  ColumnLayout {
+    id: pickerDock
+    Layout.fillWidth: true
+    visible: ruleTypeSelector.picking || destination.picking
   }
 
   PanelText {
