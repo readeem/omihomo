@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/metacubex/mihomo/component/resolver"
-	"github.com/miekg/dns"
 	"io"
 	"log/slog"
 	"net"
@@ -22,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/mihomo/tunnel/statistic"
+	"github.com/miekg/dns"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
