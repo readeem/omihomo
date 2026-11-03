@@ -47,7 +47,8 @@ mise run release 1.2.3
 ```
 
 CI loads the widget on the latest stable Omarchy tag and the edge branch; the manual test covers
-the popups on a real stable install. After CI passes, approve the `release` deployment. CI signs, uploads to a draft, publishes, then
+the popups on a real stable install. The task refuses a release whose widget changed since the
+last one without new screenshots or a `Screenshots:` rationale. After CI passes, approve the `release` deployment. CI signs, uploads to a draft, publishes, then
 fast-forwards `release` to the tag. If CI fails before approval, nothing is published: fix it on
 `next`, delete the tag locally and on `origin`, and run the task again.
 

@@ -64,6 +64,7 @@ git fetch --quiet origin next release
 [[ $(git rev-parse HEAD) == "$(git rev-parse origin/next)" ]] || fail "next differs from origin/next; pull or push first"
 # The release workflow refuses a tag that release cannot fast-forward to.
 git merge-base --is-ancestor origin/release HEAD || fail "next does not descend from release"
+tools/screenshots/fresh origin/release || fail "recapture the screenshots or explain why not"
 ! git show-ref --verify --quiet "refs/tags/$tag" || fail "$tag already exists locally"
 [[ -z $(git ls-remote --tags origin "refs/tags/$tag") ]] || fail "$tag already exists"
 current=$(jq -r .version manifest.json)

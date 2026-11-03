@@ -45,7 +45,9 @@ cd "$work/checkout"
 git config user.name 'Release Fixture'
 git config user.email 'release@example.org'
 printf '{"version":"1.0.0"}\n' > manifest.json
-git add manifest.json
+mkdir -p tools/screenshots
+cp "$root/tools/screenshots/fresh" tools/screenshots/
+git add manifest.json tools
 git commit --quiet -m 'initial fixture'
 git remote add origin "$work/remote"
 git push --quiet origin HEAD:refs/heads/next HEAD:refs/heads/release

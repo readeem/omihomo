@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Fails when the commits since <base> change what the demo shows without recapturing the
+# screenshots, unless one of them says why with a "Screenshots:" trailer.
+# Usage: tools/screenshots/fresh <base>
+set -euo pipefail
+base=${1:?usage: tools/screenshots/fresh <base>}
+changed=$(git diff --name-only "$base"...HEAD -- widget tools/screenshots ':!tools/screenshots/fresh')
+[[ -n $changed ]] || exit 0
+captured=$(git diff --name-only --diff-filter=AM "$base"...HEAD -- preview.png assets/screenshots)
+[[ -n $captured ]] && exit 0
+[[ -n $(git log --format='%(trailers:key=Screenshots,valueonly)' "$base"..HEAD | tr -d '[:space:]') ]] && exit 0
+printf 'The widget or demo changed since %s, but the screenshots did not.\n' "$base" >&2
+printf 'Run tools/screenshots/capture, or explain in a commit trailer: "Screenshots: unchanged, <why>".\n' >&2
+exit 1
