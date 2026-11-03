@@ -36,6 +36,10 @@ depend on the proxy first: switching it can briefly interrupt connections.
 9. Remove `omihomo`. Both system units must stop while `/var/lib/omihomo` stays. Reinstall
    and claim to verify retained subscriptions and settings.
 
+10. On a stable Omarchy install, open the widget's keyboard panel and settings, and reorder a rule
+    with `Ctrl+Up`/`Ctrl+Down`. The automated channel test stubs the popup surfaces, which need
+    Wayland.
+
 For a fresh-install test, use a disposable Omarchy installation: install and claim, check the
 widget starts empty, then add a subscription. Do not delete real daemon state to simulate one.
 

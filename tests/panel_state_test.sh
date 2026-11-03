@@ -11,7 +11,7 @@ cleanup() {
   rm -rf -- "$work"
 }
 trap cleanup EXIT
-stage "$work" "$tests_dir/panel_state_test.qml"
+stage "$work" "$tests_dir/${1:-panel_state_test.qml}"
 cp "$tests_dir/StateTest.qml" "$config/"
 (cd "$root" && go build -o "$work/omihomo" ./cmd/omihomo)
 start_daemon "$work"
@@ -20,5 +20,7 @@ output=$("${panel_env[@]}" QT_QPA_PLATFORM=offscreen QS_DISABLE_CRASH_HANDLER=1 
   printf '%s\n' "$output" >&2
   exit 1
 }
-printf '%s\n' "$output" | rg 'PANEL_STATE_(PASS|FAIL)'
-rg -q 'PANEL_STATE_PASS' <<<"$output" || { printf '%s\n' "$output" >&2; exit 1; }
+printf '%s\n' "$output" | grep -E 'PANEL_STATE_(PASS|FAIL)'
+grep -q 'PANEL_STATE_PASS' <<<"$output" || { printf '%s\n' "$output" >&2; exit 1; }
+# A host API the widget expects but this shell lacks shows up as a warning.
+if grep -E '(WARN|ERROR).*omihomo/widget/' <<<"$output" >&2; then exit 1; fi

@@ -28,6 +28,10 @@ run = [
 description = "Installer, widget model and Quickshell service tests against fake daemons"
 run = "./tests/run"
 
+[tasks.omarchy]
+description = "Load the widget on the stable and edge Omarchy shells, fetched from GitHub"
+run = "./tests/omarchy_channels_test.sh"
+
 [tasks.vulncheck]
 description = "Scan the release build for reachable vulnerabilities"
 run = "govulncheck -tags with_gvisor,no_easytier ./..."

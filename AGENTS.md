@@ -26,6 +26,10 @@ Plugin and the daemon/CLI are updated together.
 `mise tasks` lists the tasks. Run `mise run check` before handoff, and `mise run widget` when the
 widget or installer changes. `mise run package` writes only to `dist/`.
 
+Users run stable Omarchy, while a development machine may run edge, so a widget change must load
+on both: `mise run omarchy` loads the panel on the latest stable tag and the edge branch, and CI
+runs it too. Use only shell APIs both channels have.
+
 See a widget change in `tools/screenshots/drive`: the real panel against a fake daemon, driven
 with keys and clicks, with screenshots you can read. `drive start --visible` shows it to us too.
 Stop the session when done.

@@ -69,3 +69,6 @@ jobs:
           useradd --create-home tester
           chown -R tester: .
           runuser -u tester -- env OMIHOMO_REQUIRE_QML=1 ./tests/run
+      # Users run stable Omarchy while development machines may run edge.
+      - name: stable and edge Omarchy
+        run: runuser -u tester -- ./tests/omarchy_channels_test.sh
