@@ -242,9 +242,9 @@ Item {
             title: "Check for updates"
             keyHint: "u"
             subtitle: view.updater.error !== "" ? "▲ " + view.updater.error
-              : (view.checked ? (view.updater.installedVersion !== "" ? "core " + view.updater.installedVersion : "core not installed")
+              : (view.checked ? (view.updater.installedVersion !== "" ? "core " + Model.releaseLabel(view.updater.installedVersion) : "core not installed")
                 + (view.updater.pluginVersion !== view.updater.availableVersion.split("-")[0]
-                  ? " · widget " + view.updater.pluginVersion : "") + " · latest " + view.updater.availableVersion
+                  ? " · widget " + view.updater.pluginVersion : "") + " · latest " + Model.releaseLabel(view.updater.availableVersion)
                 : (view.updater.checking ? "asking GitHub for the latest release" : "not checked yet"))
             urgentSubtitle: view.updater.error !== ""
             tag: view.updater.checking ? "checking…"
@@ -259,7 +259,7 @@ Item {
             Layout.fillWidth: true
             visible: view.updater.updateAvailable
             section: "update"
-            title: "Update to " + view.updater.availableVersion
+            title: "Update to " + Model.releaseLabel(view.updater.availableVersion)
             keyHint: "U"
             subtitle: "widget and core, in a terminal"
             tag: "update…"

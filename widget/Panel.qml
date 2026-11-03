@@ -1255,7 +1255,7 @@ Panel {
                   rowIndex: index
                   title: modelData.button + (root.updater.availableVersion !== ""
                     && (omihomo.link === "absent" || omihomo.link === "outdated" && root.updater.updateAvailable)
-                    ? " " + root.updater.availableVersion : "")
+                    ? " " + Model.releaseLabel(root.updater.availableVersion) : "")
                   keyHint: modelData.key
                   subtitle: root.setupStarted === modelData.key
                     ? "started in a terminal; " + modelData.key + " runs it again" : modelData.hint

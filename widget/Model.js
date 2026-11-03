@@ -113,6 +113,12 @@ function stateLabel(state) {
   return "Unknown"
 }
 
+// A package version as people read it: the first build of a release is just
+// the release, and a rebuild keeps its revision, so 1.1.0-1 reads 1.1.0.
+function releaseLabel(version) {
+  return String(version).replace(/-1$/, "")
+}
+
 // A failed call's error, as panel copy. The daemon's messages are written for
 // people; the code is the fallback when one arrives without a message.
 function daemonError(error) {
@@ -921,6 +927,7 @@ if (typeof module !== "undefined") {
     readStatus: readStatus,
     statusRouting: statusRouting,
     stateLabel: stateLabel,
+    releaseLabel: releaseLabel,
     daemonError: daemonError,
     readSubscriptions: readSubscriptions,
     readSubscription: readSubscription,
