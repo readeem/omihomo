@@ -490,12 +490,11 @@ func (b *builder) groups() ([]core.Group, error) {
 				g.Members = append(g.Members, name)
 			}
 		}
-		for _, v := range p.members {
-			name, _ := v.(string)
-			if name != "" && b.names[name] && name != g.Name {
+		for i, v := range p.members {
+			if name, _ := v.(string); b.names[name] && name != g.Name {
 				add(name)
 			} else {
-				b.drop("group %q: member %v does not exist", g.Name, v)
+				b.drop("group %q: member %d is not a proxy or another group", g.Name, i+1)
 			}
 		}
 		f, err := b.newFilter(p.def)

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -286,6 +287,54 @@ rules:
 	}
 	if o.count("/provider") != 1 || o.count("/ads") != 1 {
 		t.Errorf("providers fetched %d and %d times", o.count("/provider"), o.count("/ads"))
+	}
+}
+
+// syncBuffer is a log destination the daemon's goroutines can share.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestMalformedGroupMembersStayOutOfTheJournal(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/leaky", page{body: `
+proxies:
+  - {name: Tokyo, type: trojan, server: tokyo.example, port: 443, password: p}
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - Tokyo
+      - {name: Paste, type: trojan, password: hunter2-member, private-key: KEYMATERIAL}
+      - [hunter2-list]
+rules:
+  - MATCH,Proxy
+`})
+	var journal syncBuffer
+	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithLogger(slog.New(slog.NewTextHandler(&journal, nil))))...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/leaky")})
+	logged := journal.String()
+	if !strings.Contains(logged, "member 2") || !strings.Contains(logged, "member 3") {
+		t.Fatalf("journal %q does not report the dropped members", logged)
+	}
+	for _, secret := range []string{"hunter2", "KEYMATERIAL"} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("journal quotes %s: %q", secret, logged)
+		}
 	}
 }
 
