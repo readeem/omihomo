@@ -87,5 +87,45 @@ ShellRoot {
     }
   }
 
-  Component.onCompleted: Qt.callLater(next)
+  // A fake clock drives the schedule: each check moves the next one a full cache period on,
+  // and enabling before then waits for it.
+  Omihomo.UpdateService {
+    id: scheduled
+    property double now: 1000
+    property int checks: 0
+    readonly property double hour: 60 * 60 * 1000
+    enabled: false
+    commandPath: suite.fixtures + "/equal"
+    clock: function() { return now }
+    onCompleted: {
+      checks++
+      if (checks === 1) {
+        suite.equal(nextCheckAt, 1000 + 12 * hour, "the first check schedules the next at expiry")
+        now += hour
+        check()
+        suite.equal(nextCheckAt, 1000 + 13 * hour, "a later check moves the schedule")
+      } else if (checks === 2) {
+        enabled = false
+        suite.equal(nextCheckAt, 0, "disabling cancels the schedule")
+        now += 5 * hour
+        enabled = true
+        Qt.callLater(function() {
+          suite.equal(scheduled.checking, false, "enabling before expiry waits")
+          suite.equal(scheduled.nextCheckAt, 1000 + 13 * hour, "enabling keeps the expiry")
+          scheduled.enabled = false
+          scheduled.now = 1000 + 13 * scheduled.hour
+          scheduled.enabled = true
+          Qt.callLater(function() { suite.equal(scheduled.checking, true, "enabling at expiry checks") })
+        })
+      } else {
+        suite.equal(nextCheckAt, now + 12 * hour, "the expiry check schedules the next")
+        suite.next()
+      }
+    }
+  }
+
+  Component.onCompleted: {
+    equal(scheduled.nextCheckAt, 0, "a disabled service schedules nothing")
+    scheduled.enabled = true
+  }
 }

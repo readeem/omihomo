@@ -12,6 +12,10 @@ Item {
   readonly property string releaseUrl: _result.release_url || ""
   readonly property bool checking: _checking
   readonly property string error: _error
+  // When the next automatic check is due, in clock milliseconds; 0 when none is scheduled.
+  readonly property double nextCheckAt: _nextCheckAt
+  // The current time in milliseconds; tests replace it.
+  property var clock: function() { return Date.now() }
   signal completed()
 
   property var _result: ({})
@@ -19,11 +23,13 @@ Item {
   property string _error: ""
   property string _failure: ""
   property double _lastAttempt: 0
+  property double _nextCheckAt: 0
   readonly property int _cacheMs: 12 * 60 * 60 * 1000
 
   function check() {
     if (_checking) return
-    _lastAttempt = Date.now()
+    _lastAttempt = clock()
+    schedule()
     _error = ""
     _failure = ""
     _checking = true
@@ -32,8 +38,17 @@ Item {
     process.running = true
   }
 
+  function schedule() {
+    timer.stop()
+    _nextCheckAt = enabled ? _lastAttempt + _cacheMs : 0
+    if (!enabled) return
+    timer.interval = Math.max(0, _nextCheckAt - clock())
+    timer.start()
+  }
+
   function checkIfDue() {
-    if (enabled && (_lastAttempt === 0 || Date.now() - _lastAttempt >= _cacheMs)) check()
+    if (enabled && (_lastAttempt === 0 || clock() >= _lastAttempt + _cacheMs)) check()
+    else schedule()
   }
 
   function finish(message) {
@@ -79,14 +94,12 @@ Item {
     finish("")
   }
 
-  onEnabledChanged: Qt.callLater(checkIfDue)
+  onEnabledChanged: enabled ? Qt.callLater(checkIfDue) : schedule()
   Component.onCompleted: Qt.callLater(checkIfDue)
 
   Timer {
-    interval: root._cacheMs
-    repeat: true
-    running: root.enabled
-    onTriggered: root.checkIfDue()
+    id: timer
+    onTriggered: root.check()
   }
 
   Timer {
