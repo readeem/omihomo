@@ -30,7 +30,7 @@ NavRow {
     anchors.right: parent.right
     anchors.top: parent.top
     height: Style.space(22)
-    anchors.leftMargin: Style.space(4)
+    anchors.leftMargin: Style.space(ruleRow.rule && ruleRow.rule.category ? 16 : 4)
     anchors.rightMargin: Style.space(2)
     spacing: Style.space(8)
 

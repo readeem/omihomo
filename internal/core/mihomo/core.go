@@ -247,6 +247,9 @@ func prepare(cfg core.Config) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	for name, proxy := range parsed.Proxies {
+		parsed.Proxies[name] = sniffedProxy{Proxy: proxy}
+	}
 	if cfg.DNSDestination != "" {
 		name := cfg.DNSDestination
 		exists := name != globalGroup && (slices.ContainsFunc(cfg.Profile.Groups, func(g core.Group) bool { return g.Name == name }) ||
@@ -614,7 +617,7 @@ func connection(info *statistic.TrackerInfo) protocol.Connection {
 		ID:              info.UUID.String(),
 		Network:         m.NetWork.String(),
 		Inbound:         strings.ToLower(m.Type.String()),
-		Host:            m.Host,
+		Host:            m.RuleHost(),
 		Process:         m.Process,
 		SourcePort:      int(m.SrcPort),
 		DestinationPort: int(m.DstPort),

@@ -31,6 +31,28 @@ ShellRoot {
 
   property string categoryId: ""
 
+  function findRuleRow(item, index) {
+    if (item.visible && item.section === "rule" && item.rule && item.rule.index === index) return item
+    for (var i = 0; i < item.children.length; i++) {
+      var found = findRuleRow(item.children[i], index)
+      if (found) return found
+    }
+    return null
+  }
+
+  function ruleValueX(row) {
+    function find(item) {
+      if (item.text === row.rule.value) return item
+      for (var i = 0; i < item.children.length; i++) {
+        var found = find(item.children[i])
+        if (found) return found
+      }
+      return null
+    }
+    var value = find(row)
+    return value ? value.mapToItem(row, 0, 0).x : -1
+  }
+
   function clickObject(name) {
     var item = findObject(panel, name)
     if (!item) return false
@@ -347,6 +369,33 @@ ShellRoot {
         } },
       { then: function() {
           t.check(panel.ruleEntries.some(function(e) { return e.kind === "own" && e.rule.index === 5 }), true, "expand all reveals categorized rules")
+          panel.newRule()
+        } },
+      { until: function() { return panel.ruleFormOpen && panel.editing !== null }, then: function() {
+          testRoot.type("Discord")
+          panel.ruleTypeIndex = Model.RULE_TYPES.indexOf("PROCESS-NAME")
+          t.check(panel.ruleCategory, "", "new rules default to no category after a categorized rule")
+          testRoot.key(Qt.Key_Return)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.service.rules.length === 6 }, then: function() {
+          t.check(panel.service.rules[5].category, "", "Discord is saved outside the preceding category")
+          t.check(panel.service.ruleDocument[4].category.rules.length, 1, "Discord does not join the preceding category")
+        } },
+      { then: function() {
+          var categorized = testRoot.findRuleRow(panel, 5)
+          var standalone = testRoot.findRuleRow(panel, 6)
+          t.check(categorized !== null && standalone !== null, true, "both rule rows are rendered")
+          if (categorized && standalone)
+            t.check(testRoot.ruleValueX(categorized) > testRoot.ruleValueX(standalone), true, "category contents are indented relative to standalone rules")
+          panel.expandCategory(testRoot.categoryId)
+        } },
+      { then: function() {
+          t.check(panel.ruleEntries.some(function(e) { return e.kind === "own" && e.rule.index === 5 }), false, "collapsing hides the categorized rule")
+          t.check(panel.ruleEntries.some(function(e) { return e.kind === "own" && e.rule.index === 6 }), true, "collapsing keeps Discord visible outside the category")
+          panel.service.removeRule(6)
+        } },
+      { until: function() { return !panel.service.ruleSaving && panel.service.rules.length === 5 }, then: function() {
+          panel.expandCategory(testRoot.categoryId)
           panel.focusRow("rule", 4)
           testRoot.key(Qt.Key_Return)
         } },
