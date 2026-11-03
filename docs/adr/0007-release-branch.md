@@ -4,4 +4,4 @@
 
 The release workflow fast-forwards `release` to the tag after the package is public, in the approved `release` environment, with a deploy key that alone bypasses the branch's ruleset. It never moves the branch backwards, and refuses a tag that does not descend from it.
 
-The widget's update runs `omarchy plugin update` first, then the updated checkout's installer for the package, so the package is verified with the new checkout's key and both halves land on the same release. A checkout Omarchy does not manage, such as a linked development checkout, is not touched.
+The widget's update runs `omarchy plugin update` first, then the updated checkout's installer for the package, so the package is verified with the new checkout's key and both halves land on the same release. It then restarts the shell: Omarchy's plugin rescan reuses the cached QML, so only a new shell runs the updated widget. A checkout Omarchy does not manage, such as a linked development checkout, is not touched.

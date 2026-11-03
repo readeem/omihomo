@@ -59,7 +59,8 @@ omarchy restart shell
 ```
 
 Use the widget's **Install core** action to install the signed GitHub release and claim it
-in a terminal. Settings checks for new releases and updates the widget and the core together.
+in a terminal. Settings checks for new releases and updates the widget and the core together, then restarts
+the shell to load the new widget.
 
 ## Usage
 

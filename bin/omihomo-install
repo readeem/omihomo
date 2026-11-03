@@ -119,11 +119,20 @@ project_root=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 if [[ $config_home != /* ]]; then config_home=$HOME/.config; fi
 
+plugins=$(cd -P "$HOME/.config/omarchy/plugins" 2>/dev/null && pwd) || plugins=''
+managed=false
+if [[ -n $plugins && $project_root == "$plugins/dev.readeem.omihomo" ]]; then managed=true; fi
+
+# Omarchy's plugin rescan reuses the cached QML, so only a new shell loads the updated widget.
+reload_widget() {
+  $managed || return 0
+  omarchy restart shell || printf 'Run omarchy restart shell to load the updated widget.\n' >&2
+}
+
 # The widget goes first, through Omarchy, so the core is then verified with the
 # updated checkout's key and installer. A linked development checkout is left alone.
 if [[ $mode == update ]]; then
-  plugins=$(cd -P "$HOME/.config/omarchy/plugins" 2>/dev/null && pwd) || plugins=''
-  if [[ -n $plugins && $project_root == "$plugins/dev.readeem.omihomo" ]]; then
+  if $managed; then
     omarchy plugin update dev.readeem.omihomo
     # Omarchy reports a declined update as success; a new core would then strand the old widget.
     [[ $(git -C "$project_root" rev-parse HEAD) == "$(git -C "$project_root" rev-parse FETCH_HEAD)" ]] || {
@@ -153,6 +162,7 @@ if [[ $mode == check || $mode == update-core ]]; then
   [[ $status =~ ^\{\"installed\":\"([^\"]*)\",\"available\":\"([^\"]*)\" ]] || exit 1
   if [[ -n ${BASH_REMATCH[1]} && $(vercmp "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}") -le 0 ]]; then
     printf 'Core %s is up to date.\n' "${BASH_REMATCH[1]}"
+    reload_widget
     exit 0
   fi
   mode=update
@@ -165,6 +175,7 @@ if [[ $mode != claim ]]; then
   sudo /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root TERM="${TERM:-dumb}" \
     /usr/bin/bash -c "$root_script" omihomo-bootstrap "$mode" "$public_key" "$minimum"
 fi
+if [[ $mode == update ]]; then reload_widget; fi
 # Install finishes setup without taking over another account's core; claim is
 # the explicit transfer. Both pass this shell's XDG paths and start settings sync.
 if [[ $mode == install || $mode == claim ]]; then
