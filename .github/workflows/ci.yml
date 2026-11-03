@@ -45,6 +45,21 @@ jobs:
           diff <(go mod edit -json "$upstream" | jq -S .Replace) <(go mod edit -json | jq -S .Replace)
       - run: mise run vulncheck
 
+  screenshots:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: screenshots match the widget
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: tools/screenshots/fresh "$BASE"
+
   package:
     permissions:
       contents: read
@@ -69,3 +84,6 @@ jobs:
           useradd --create-home tester
           chown -R tester: .
           runuser -u tester -- env OMIHOMO_REQUIRE_QML=1 ./tests/run
+      # Users run stable Omarchy while development machines may run edge.
+      - name: stable and edge Omarchy
+        run: runuser -u tester -- ./tests/omarchy_channels_test.sh

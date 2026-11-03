@@ -5,8 +5,10 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/stage"
 out=$(realpath -m "${1:-$root}")
-wallpaper=/usr/share/omarchy/themes/tokyo-night/backgrounds/1-winding-road.webp
-[[ -e $wallpaper ]] || { printf 'capture needs %s\n' "$wallpaper" >&2; exit 2; }
+wallpaper=$(compgen -G '/usr/share/omarchy/themes/tokyo-night/backgrounds/*-winding-road.*' | head -n 1) || {
+  printf 'capture needs the Tokyo Night winding road background\n' >&2
+  exit 2
+}
 
 umask 077
 work= child= daemon=

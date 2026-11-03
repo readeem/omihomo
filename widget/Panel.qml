@@ -473,6 +473,12 @@ Panel {
     else { cursorActive = true; activateCursor() }
   }
 
+  function reorderCursor(dy) {
+    if (!cursorActive || !cursorRow) return
+    if (cursorRow.s === "rule") moveRule(cursorRow.i + 1, dy)
+    if (cursorRow.s === "category") moveCategory(ruleCategories[cursorRow.i], dy)
+  }
+
   function runHint(key) {
     if (key === "enter") acceptEdit()
     else if (key === "x") { cursorActive = true; deleteCursorRow() }
@@ -919,12 +925,6 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.editing !== null
-      reorderable: root.view === "rules"
-      onReorderRequested: function(dy) {
-        if (!root.cursorActive || !root.cursorRow) return
-        if (root.cursorRow.s === "rule") root.moveRule(root.cursorRow.i + 1, dy)
-        if (root.cursorRow.s === "category") root.moveCategory(root.ruleCategories[root.cursorRow.i], dy)
-      }
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
@@ -938,6 +938,18 @@ Panel {
       onCloseRequested: root.handleEscape()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) { root.handleTextKey(t) }
+
+      // Stable Omarchy's key catcher cannot reorder, so the panel does.
+      Shortcut {
+        sequences: ["Ctrl+Up", "Ctrl+K"]
+        enabled: root.view === "rules" && root.editing === null
+        onActivated: root.reorderCursor(-1)
+      }
+      Shortcut {
+        sequences: ["Ctrl+Down", "Ctrl+J"]
+        enabled: root.view === "rules" && root.editing === null
+        onActivated: root.reorderCursor(1)
+      }
 
       ColumnLayout {
         id: body
@@ -1243,7 +1255,7 @@ Panel {
                   rowIndex: index
                   title: modelData.button + (root.updater.availableVersion !== ""
                     && (omihomo.link === "absent" || omihomo.link === "outdated" && root.updater.updateAvailable)
-                    ? " " + root.updater.availableVersion : "")
+                    ? " " + Model.releaseLabel(root.updater.availableVersion) : "")
                   keyHint: modelData.key
                   subtitle: root.setupStarted === modelData.key
                     ? "started in a terminal; " + modelData.key + " runs it again" : modelData.hint

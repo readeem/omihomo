@@ -94,6 +94,7 @@ cat > "$test_root/bin/omarchy" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'omarchy %s\n' "$*" >> "$INSTALL_TEST_LOG"
+if [[ $* == 'restart shell' ]]; then exit "${INSTALL_TEST_RESTART_EXIT:-0}"; fi
 plugin=$HOME/.config/omarchy/plugins/dev.readeem.omihomo
 git=(git -C "$plugin" -c user.name=test -c user.email=test@example.org)
 if [[ ${INSTALL_TEST_PLUGIN_DECLINE:-0} == 1 ]]; then
@@ -171,6 +172,17 @@ INSTALL_TEST_SCRIPT="$plugins/dev.readeem.omihomo/bin/omihomo-install" INSTALL_T
 managed_checkout
 INSTALL_TEST_SCRIPT="$plugins/dev.readeem.omihomo/bin/omihomo-install" INSTALL_TEST_PLUGIN_EXIT=44 INSTALL_TEST_INSTALLED=0.9.0-1 \
   run_install 44 update 'omarchy plugin update dev.readeem.omihomo'
+# The updated script restarts the shell, the only way Omarchy loads the new widget.
+managed_checkout
+managed="$plugins/dev.readeem.omihomo/bin/omihomo-install"
+INSTALL_TEST_SCRIPT=$managed INSTALL_TEST_INSTALLED=0.9.0-1 \
+  run_install 0 update-core $'package update 1.0.0\nomarchy restart shell'
+INSTALL_TEST_SCRIPT=$managed INSTALL_TEST_INSTALLED=1.0.0-1 run_install 0 update-core 'omarchy restart shell'
+INSTALL_TEST_SCRIPT=$managed INSTALL_TEST_INSTALLED=1.0.0-1 INSTALL_TEST_RESTART_EXIT=1 \
+  run_install 0 update-core 'omarchy restart shell'
+grep -q 'omarchy restart shell' "$test_root/err"
+INSTALL_TEST_SCRIPT=$managed INSTALL_TEST_INSTALLED=0.9.0-1 INSTALL_TEST_PACKAGE_EXIT=42 \
+  run_install 42 update-core 'package update 1.0.0'
 rm -r "$plugins/dev.readeem.omihomo"
 ln -s "$test_root/project" "$plugins/dev.readeem.omihomo"
 INSTALL_TEST_SCRIPT="$plugins/dev.readeem.omihomo/bin/omihomo-install" INSTALL_TEST_INSTALLED=0.9.0-1 \
@@ -182,4 +194,4 @@ printf 'tampered\n' >> "$test_root/release"
 run_install 1 install ''
 run_install 1 check ''
 grep -q '"error":' "$test_root/out"
-printf 'PASS signed bootstrap, installation ordering, widget-first updates, upgrade guards, redirects, tampering and failure propagation\n'
+printf 'PASS signed bootstrap, installation ordering, widget-first updates, shell reloads, upgrade guards, redirects, tampering and failure propagation\n'

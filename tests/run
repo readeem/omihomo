@@ -4,6 +4,7 @@ here=$(dirname "$0")
 
 "$here/install_test.sh"
 "$here/release_test.sh"
+"$here/screenshots_test.sh"
 
 command -v node >/dev/null 2>&1 || {
   printf 'tests require node for the widget model tests\n' >&2

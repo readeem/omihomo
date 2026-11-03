@@ -85,7 +85,7 @@ test("subscription usage shows quota and expiry", () => {
     upload: 12000000000,
     download: 130000000000,
     total: 500000000000,
-    expire: Date.parse("2027-03-12T00:00:00Z") / 1000
+    expire: Date.parse("2027-03-12T12:00:00Z") / 1000
   })
   assert.equal(usage.fraction, 0.284)
   assert.match(usage.text, /142 GB of 500 GB/)
@@ -533,4 +533,11 @@ test("selector filtering puts exact choices before partial matches", () => {
   const choices = ["REMATCH-NAME", "MATCH", "DOMAIN"].map(label => ({value: label, label}))
   assert.deepEqual(Model.filterChoices(choices, " match ").map(c => c.value), ["MATCH", "REMATCH-NAME"])
   assert.deepEqual(Model.filterChoices(choices, "").map(c => c.value), choices.map(c => c.value))
+})
+
+test("release labels drop only the first build's revision", () => {
+  assert.equal(Model.releaseLabel("1.1.0-1"), "1.1.0")
+  assert.equal(Model.releaseLabel("1.1.0-2"), "1.1.0-2")
+  assert.equal(Model.releaseLabel("1.1.0-11"), "1.1.0-11")
+  assert.equal(Model.releaseLabel("1.1.0-21"), "1.1.0-21")
 })
