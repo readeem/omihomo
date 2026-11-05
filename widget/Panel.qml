@@ -939,7 +939,6 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) { root.handleTextKey(t) }
 
-      // Stable Omarchy's key catcher cannot reorder, so the panel does.
       Shortcut {
         sequences: ["Ctrl+Up", "Ctrl+K"]
         enabled: root.view === "rules" && root.editing === null
