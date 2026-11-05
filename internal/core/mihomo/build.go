@@ -95,6 +95,13 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 	raw.DNS.NameServerPolicy.Set(tailscaleDomain, tailscaleDNS)
 	raw.DNS.ProxyServerNameserverPolicy = orderedmap.New[string, any]()
 	raw.DNS.ProxyServerNameserverPolicy.Set(tailscaleDomain, tailscaleDNS)
+	raw.Sniffer.Enable = true
+	raw.Sniffer.OverrideDest = false
+	raw.Sniffer.Sniff = map[string]config.RawSniffingConfig{
+		"HTTP": {Ports: []string{"80", "8080", "8880"}},
+		"TLS":  {Ports: []string{"443", "8443"}},
+		"QUIC": {Ports: []string{"443", "8443"}},
+	}
 
 	raw.Tun.Enable = cfg.TUN
 	raw.Tun.Device = tunDevice
@@ -331,11 +338,10 @@ func ruleLine(r core.Rule) (string, error) {
 	return strings.Join(append([]string{typ, r.Value, r.Target}, r.Params...), ","), nil
 }
 
-// stoppedConfig is what runs while the proxy is off: no inbounds, no TUN and
-// no DNS, so nothing reaches the engine.
 func stoppedConfig() *config.RawConfig {
 	raw := config.DefaultRawConfig()
-	raw.Mode = tunnel.Direct
+	raw.Mode = tunnel.Rule
+	raw.Rule = []string{"MATCH,REJECT"}
 	raw.LogLevel = log.WARNING
 	raw.FindProcessMode = process.FindProcessAlways
 	raw.GeoXUrl = config.RawGeoXUrl{}
