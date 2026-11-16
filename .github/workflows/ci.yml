@@ -36,13 +36,13 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo install -m 0755 /dev/null /usr/bin/pacman
           ./tests/package_boundary_test.sh
-      # A replace only applies in the main module, so ours copies mihomo's;
-      # a bump that changes theirs must change ours.
+      # Keep mihomo's replacements alongside our local Hysteria receive-order fix.
       - name: mihomo replace
         run: |
           version=$(go list -m -f '{{.Version}}' github.com/metacubex/mihomo)
           upstream=$(go mod download -json "github.com/metacubex/mihomo@$version" | jq -r .GoMod)
-          diff <(go mod edit -json "$upstream" | jq -S .Replace) <(go mod edit -json | jq -S .Replace)
+          diff <(go mod edit -json "$upstream" | jq -S .Replace) \
+            <(go mod edit -json | jq -S '[.Replace[] | select(.Old.Path != "github.com/metacubex/sing-quic")]')
       - run: mise run vulncheck
 
   screenshots:

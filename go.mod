@@ -9,7 +9,10 @@ godebug default=go1.20
 require (
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/metacubex/bbolt v0.0.0-20260706163408-d4ec34ad7c48
+	github.com/metacubex/http v0.1.8
 	github.com/metacubex/mihomo v1.19.34
+	github.com/metacubex/quic-go v0.61.1-0.20260727080200-2548683b76f4
+	github.com/metacubex/tls v0.1.9
 	github.com/miekg/dns v1.1.73
 	github.com/peterbourgon/ff/v3 v3.4.0
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a
@@ -72,7 +75,6 @@ require (
 	github.com/metacubex/gvisor v0.0.0-20260922041103-e2cbcd6e7400 // indirect
 	github.com/metacubex/hkdf v0.1.0 // indirect
 	github.com/metacubex/hpke v0.1.0 // indirect
-	github.com/metacubex/http v0.1.8 // indirect
 	github.com/metacubex/jls-quic-go v0.0.0-20260727080412-732f2fc9a34d // indirect
 	github.com/metacubex/jls-tls v0.0.0-20260723084315-67adc0e2f796 // indirect
 	github.com/metacubex/jsonv2 v0.0.0-20260721082349-16b4998c8f89 // indirect
@@ -82,7 +84,6 @@ require (
 	github.com/metacubex/mlkem v0.1.0 // indirect
 	github.com/metacubex/nftables v0.0.0-20260426003805-208c2c1ba2cb // indirect
 	github.com/metacubex/qpack v0.6.0 // indirect
-	github.com/metacubex/quic-go v0.61.1-0.20260727080200-2548683b76f4 // indirect
 	github.com/metacubex/randv2 v0.2.0 // indirect
 	github.com/metacubex/restls-client-go v0.1.9 // indirect
 	github.com/metacubex/sevenzip v1.6.4 // indirect
@@ -99,7 +100,6 @@ require (
 	github.com/metacubex/tailscale v0.0.0-20260821153257-ff0ecd818181 // indirect
 	github.com/metacubex/tailscale-wireguard-go v0.0.0-20260725073821-e61ab99cede2 // indirect
 	github.com/metacubex/tfo-go v0.0.0-20261026151606-08d83ec08c84 // indirect
-	github.com/metacubex/tls v0.1.9 // indirect
 	github.com/metacubex/utls v1.9.0-alpha.1 // indirect
 	github.com/metacubex/wazero v0.0.0-20260628025728-9ae6bdcf2a7d // indirect
 	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f // indirect
@@ -150,3 +150,5 @@ require (
 // module. Without it the binary is about 10 MB larger
 // (golang/protobuf#1704). CI fails when it drifts from mihomo's.
 replace google.golang.org/protobuf => github.com/metacubex/protobuf-go v0.0.0-20260306035419-7ceee0674686
+
+replace github.com/metacubex/sing-quic => ./third_party/sing-quic
