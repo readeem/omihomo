@@ -30,9 +30,10 @@ func TestRealityClientHelloOffersHybridKeyExchange(t *testing.T) {
 		wantHybrid        bool
 	}{
 		{name: "chrome default", fingerprint: "chrome", wantHybrid: true},
+		{name: "firefox default", fingerprint: "firefox", wantHybrid: true},
 		{name: "explicit hybrid", fingerprint: "chrome", hybrid: new(true), wantHybrid: true},
 		{name: "explicit legacy", fingerprint: "chrome", hybrid: new(false)},
-		{name: "fingerprint preserved", fingerprint: "firefox", hybrid: new(true)},
+		{name: "legacy fingerprint preserved", fingerprint: "firefox120", hybrid: new(true)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hellos := make(chan bool, 1)
