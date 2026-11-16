@@ -131,6 +131,14 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 		if m == nil {
 			m = map[string]any{}
 		}
+		if reality, ok := m["reality-opts"].(map[string]any); ok && reality != nil {
+			if _, explicit := reality["support-x25519mlkem768"]; !explicit {
+				// Modern REALITY requires the hybrid share that Mihomo strips by default.
+				reality = maps.Clone(reality)
+				reality["support-x25519mlkem768"] = true
+				m["reality-opts"] = reality
+			}
+		}
 		m["name"], m["type"] = px.Name, px.Type
 		raw.Proxy = append(raw.Proxy, m)
 	}
