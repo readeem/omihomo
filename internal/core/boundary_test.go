@@ -20,26 +20,27 @@ func goList(t *testing.T, args ...string) []string {
 	return strings.Split(strings.TrimSpace(string(out)), "\n")
 }
 
-// Everything but the mihomo core speaks to the engine through core.Core.
-func TestOnlyTheCoreImportsMihomo(t *testing.T) {
-	for _, line := range goList(t, "-tags", "with_gvisor", "-f", `{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}}`, "github.com/readeem/omihomo/...") {
+func TestOnlyTheAdaptersImportProxyEngines(t *testing.T) {
+	engines := map[string]string{
+		mihomo:                      "mihomo",
+		"github.com/xtls/xray-core": "xray",
+	}
+	for _, line := range goList(t, "-tags", "with_gvisor", "-f", `{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}`, "github.com/readeem/omihomo/...") {
 		pkg, imports, _ := strings.Cut(line, " ")
-		if pkg == "github.com/readeem/omihomo/internal/core/mihomo" {
-			continue
-		}
 		for imp := range strings.FieldsSeq(imports) {
-			if imp == mihomo || strings.HasPrefix(imp, mihomo+"/") {
-				t.Errorf("%s imports %s", pkg, imp)
+			for root, adapter := range engines {
+				if pkg != "github.com/readeem/omihomo/internal/core/"+adapter && (imp == root || strings.HasPrefix(imp, root+"/")) {
+					t.Errorf("%s imports %s", pkg, imp)
+				}
 			}
 		}
 	}
 }
 
-// The controller, with its listener, secret and the self-update only it
-// calls, is never linked.
-func TestTheBinaryHasNoController(t *testing.T) {
+func TestTheBinaryOmitsMihomoControllerAndXrayCLI(t *testing.T) {
 	for _, dep := range goList(t, "-tags", "with_gvisor", "-deps", "github.com/readeem/omihomo/cmd/omihomo") {
-		if dep == mihomo+"/hub" || strings.HasPrefix(dep, mihomo+"/hub/route") {
+		if dep == mihomo+"/hub" || strings.HasPrefix(dep, mihomo+"/hub/route") ||
+			dep == "github.com/xtls/xray-core/main" || strings.HasPrefix(dep, "github.com/xtls/xray-core/main/distro/") {
 			t.Errorf("the binary links %s", dep)
 		}
 	}

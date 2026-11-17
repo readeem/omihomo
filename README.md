@@ -5,7 +5,7 @@
   Omihomo
 </h1>
 
-**The [mihomo](https://wiki.metacubex.one) proxy core, run from the Omarchy bar.**
+**The [mihomo](https://wiki.metacubex.one) and [Xray](https://xtls.github.io/en/) proxy cores, run from the Omarchy bar.**
 
 Subscriptions, groups, latency, rules, TUN, and live connections, one keypress away.
 
@@ -19,7 +19,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 
 ## Features
 
-- **One-click core.** Start, stop, and install the proxy from the bar. The icon dims when the core is off.
+- **One-click core.** Start, stop, and install the proxy from the bar. Switch between mihomo and Xray in Settings.
 - **Subscriptions.** Paste a URL, and Omihomo imports it, names it, and refreshes it on the provider's schedule.
 - **Groups and configs.** Pick a config, latency-test one or a whole group, and choose the primary group. Latency is colour-coded.
 - **Live readout.** A traffic graph, uptime, and the egress IP with its round trip through the selected config.
@@ -39,7 +39,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
   </tr>
   <tr>
     <td align="center"><img src="assets/screenshots/rules.png" alt="Rules view testing a hostname against the rules"><br><sub>Rule tester and your rules</sub></td>
-    <td align="center"><img src="assets/screenshots/settings.png" alt="Settings with mode, TUN, autostart, and Tailscale"><br><sub>Mode, TUN, autostart, and Tailscale</sub></td>
+    <td align="center"><img src="assets/screenshots/settings.png" alt="Settings with the mihomo and Xray core selector"><br><sub>Settings and core selection</sub></td>
     <td></td>
   </tr>
 </table>
@@ -80,6 +80,14 @@ The key hints at the bottom of the panel show the rest, and `omihomo -h` lists t
 
 A subscription URL may return a full mihomo YAML config or raw share links. The daemon refreshes
 it on the provider's schedule, 12 hours by default, and a failed refresh keeps the cached content.
+
+Choose **mihomo** or **Xray** at the bottom of Settings, or run `omihomo set core mihomo` or
+`omihomo set core xray`. The choice applies to every subscription. A running proxy restarts
+automatically. A stopped proxy stays off. Xray lists any incompatible entries it skips in
+a confirmation dialog before switching. Reopen the list with **Compatibility warnings** in
+Settings. On the CLI, review `confirm_warnings` and rerun `omihomo set core --confirm <token> xray`
+with the returned `confirmation` token. Use mihomo for automatic groups, per-connection
+inspection and closing, or TUN acceleration.
 
 ## What it changes on your system
 
@@ -123,7 +131,7 @@ in [tests/README.md](tests/README.md), and publishing in [docs/release.md](docs/
 
 GNU General Public License, version 3 only (`GPL-3.0-only`). See [LICENSE](LICENSE).
 
-The daemon embeds mihomo, which is licensed under GPL-3.0.
+The daemon embeds mihomo (GPL-3.0) and Xray-core (MPL-2.0).
 
 Code contributed before the change to GPL-3.0-only was released under the MIT License. Its copyright
 and permission notice is preserved below.

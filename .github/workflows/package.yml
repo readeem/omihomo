@@ -114,6 +114,7 @@ jobs:
           cmp /usr/bin/omihomo-update "dist/omihomo-update-$VERSION-x86_64"
           omihomo version | grep -q "^omihomo v$VERSION "
           grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
+          grep -q '^==> github.com/xtls/xray-core/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
           systemctl is-enabled omihomo.socket omihomo.service
           test -f /usr/lib/systemd/user/omihomo-apply.path
           test -f /usr/lib/systemd/user/omihomo-apply.service

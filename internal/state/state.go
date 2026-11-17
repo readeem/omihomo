@@ -37,6 +37,7 @@ const (
 // was on.
 type Settings struct {
 	protocol.Settings
+	Core  string               `json:"core,omitempty"`
 	Rules []protocol.RuleEntry `json:"rules"`
 	// Running is whether the proxy was on, restored when the daemon starts.
 	Running bool `json:"running"`

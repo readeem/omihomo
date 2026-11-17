@@ -21,6 +21,7 @@ const json = (name) => JSON.parse(read(name))
 const lines = (name) => read(name).split("\n").filter((line) => line !== "").map((line) => JSON.parse(line))
 
 const status = {
+  core: "mihomo", core_choices: ["mihomo", "xray"],
   state: "on", detail: "", active_subscription: "Aerowave", ...json("settings/settings.json"),
   tailscale_present: true, started_at: after === "--after" ? Date.now() : Number(started) * 1000,
   tun_bypass: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
@@ -76,6 +77,7 @@ function ruleSnapshot() {
 }
 
 let requireDirect = false
+let xrayWarnings = ["Rule 3 (PROCESS-NAME) skipped", "Rule 14 (GEOIP) skipped"]
 let nextDownload = 0
 const pendingDownloads = new Map()
 
@@ -122,6 +124,7 @@ function findGroup(name) {
 // Each op answers { result } or { error }, or a promise of one.
 const ops = {
   "test.direct-fallback": args => { requireDirect = args.enabled !== false; return { result: {} } },
+  "test.core-warnings": args => { xrayWarnings = args.warnings; return { result: {} } },
   "downloads.list": () => ({ result: snapshots.downloads() }),
   "downloads.respond": args => {
     const pending = pendingDownloads.get(args.id)
@@ -163,6 +166,17 @@ const ops = {
     push("status", "rules")
     return { result: status }
   },
+  "core.select": args => later(400, () => {
+    if (!status.core_choices.includes(args.name)) return fail("invalid", "unknown core")
+    const warnings = args.name === "xray" ? xrayWarnings : []
+    if (status.core !== args.name && warnings.length && args.confirmation !== "mock-confirmation")
+      return { result: { ...status, confirm_warnings: warnings, confirmation: "mock-confirmation" } }
+    if (status.core !== args.name && running()) status.started_at = Date.now()
+    status.core = args.name
+    status.core_warnings = warnings
+    push("status", "groups", "rules")
+    return { result: status }
+  }),
   "settings.apply": (args) => {
     const { mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group, dns_destination } = args.settings
     if (!["rule", "global", "direct"].includes(mode)) return fail("invalid", `unknown mode ${mode}`)
@@ -265,7 +279,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 3, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 4, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk

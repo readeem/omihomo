@@ -96,7 +96,7 @@ func (d *server) loadProfile(sub state.Subscription) (core.Profile, error) {
 	if err != nil {
 		return core.Profile{}, err
 	}
-	doc, err := profile.Read(snap.Body, d.core.ParseLinks)
+	doc, err := profile.Read(snap.Body, d.activeCore().ParseLinks)
 	if err != nil {
 		return core.Profile{}, err
 	}
@@ -139,7 +139,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 	rejected := func(err error) *downloadError {
 		return &downloadError{err: fail(protocol.CodeRejected, "%v", err), answered: true}
 	}
-	doc, err := profile.Read(resp.Body, d.core.ParseLinks)
+	doc, err := profile.Read(resp.Body, d.activeCore().ParseLinks)
 	if err != nil {
 		return nil, rejected(err)
 	}
@@ -254,6 +254,9 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 		d.mu.Lock()
 		d.profile = dl.profile
 		d.mu.Unlock()
+	}
+	if activate {
+		d.updateCoreCompatibility()
 	}
 	d.log.Info("subscription added", "subscription", sub.Name, "active", activate)
 	d.publish(ctx)
@@ -394,6 +397,9 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	}); err != nil {
 		return nil, err
 	}
+	if active {
+		d.updateCoreCompatibility()
+	}
 	d.log.Info("subscription refreshed", "subscription", sub.Name)
 	d.publish(ctx)
 	return describe(sub, active), nil
@@ -460,6 +466,7 @@ func (d *server) activateSubscription(ctx context.Context, name string) (any, *p
 		d.detail = ""
 	}
 	d.mu.Unlock()
+	d.updateCoreCompatibility()
 	d.log.Info("subscription activated", "subscription", sub.Name)
 	d.publish(ctx)
 	return d.status(), nil
@@ -494,6 +501,7 @@ func (d *server) removeSubscription(ctx context.Context, name string) (any, *pro
 	if err := d.store.RemoveSnapshot(sub.ID); err != nil {
 		d.log.Warn("remove a subscription's content", "subscription", sub.Name, "err", err)
 	}
+	d.updateCoreCompatibility()
 	d.log.Info("subscription removed", "subscription", sub.Name)
 	d.publish(ctx)
 	return protocol.Empty{}, nil
@@ -502,8 +510,8 @@ func (d *server) removeSubscription(ctx context.Context, name string) (any, *pro
 // ensureGeodata downloads the geodata files p needs that are missing. A
 // file that cannot be downloaded fails the call: the rules that need it
 // would not load. The caller holds opMu.
-func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
-	for _, f := range d.core.Geodata(p) {
+func (d *server) ensureGeodata(ctx context.Context, c core.Core, p core.Profile) error {
+	for _, f := range c.Geodata(p) {
 		if _, err := os.Stat(f.Path); err == nil {
 			continue
 		} else if !errors.Is(err, fs.ErrNotExist) {
@@ -513,7 +521,7 @@ func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
 		if err != nil {
 			return err
 		}
-		err = d.installGeodata(f, tmp, p)
+		err = installGeodata(c, f, tmp, p)
 		os.Remove(tmp)
 		if err != nil {
 			return err
@@ -558,9 +566,9 @@ func (d *server) downloadGeodata(ctx context.Context, f core.GeodataFile) (strin
 // installGeodata puts the download at tmp in place as f once the core finds
 // it usable for p: what is in place keeps working until then. The caller
 // holds opMu, so p is what runs and what is stored.
-func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) error {
+func installGeodata(c core.Core, f core.GeodataFile, tmp string, p core.Profile) error {
 	name := filepath.Base(f.Path)
-	if err := d.core.InstallGeodata(f, tmp, p); err != nil {
+	if err := c.InstallGeodata(f, tmp, p); err != nil {
 		return fmt.Errorf("the geodata %s that downloaded is not usable: %w", name, err)
 	}
 	return nil
@@ -573,8 +581,10 @@ func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) 
 func (d *server) refreshGeodata(ctx context.Context) {
 	d.mu.Lock()
 	p := runConfig(d.settings, d.profile).Profile
+	name := d.coreNameLocked()
 	d.mu.Unlock()
-	for _, f := range d.core.Geodata(p) {
+	c := d.coreFor(name)
+	for _, f := range c.Geodata(p) {
 		info, err := os.Stat(f.Path)
 		if err != nil || d.cfg.now().Sub(info.ModTime()) < geodataAge {
 			continue
@@ -584,8 +594,11 @@ func (d *server) refreshGeodata(ctx context.Context) {
 			d.opMu.Lock()
 			d.mu.Lock()
 			current := runConfig(d.settings, d.profile).Profile
+			sameCore := name == d.coreNameLocked()
 			d.mu.Unlock()
-			err = d.installGeodata(f, tmp, current)
+			if sameCore {
+				err = installGeodata(c, f, tmp, current)
+			}
 			d.opMu.Unlock()
 			os.Remove(tmp)
 		}

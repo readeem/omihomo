@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 3
+  readonly property int protocolVersion: 4
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -35,6 +35,11 @@ Item {
   property string daemonVersion: ""
   readonly property bool ready: link === "ready"
 
+  property string coreName: ""
+  property var coreChoices: []
+  property var coreWarnings: []
+  property var coreConfirmation: null
+  property string pendingCore: ""
   property string coreState: "unknown"
   property string coreDetail: ""
   property string activeSubscription: ""
@@ -88,7 +93,7 @@ Item {
   readonly property bool groupsReady: apiReady && streamsReady(["groups"])
   // One run of one subscription. Anything read from the core belongs to the
   // runtime it was read from, and is dropped when this changes.
-  readonly property string runtimeKey: activeSubscription + "|" + startedMs
+  readonly property string runtimeKey: coreName + "|" + activeSubscription + "|" + startedMs
 
   property var pendingDownloads: []
 
@@ -319,6 +324,7 @@ Item {
   // more slowly: the owner may claim the install, or update it, meanwhile.
   function disconnected() {
     pendingDownloads = []
+    coreConfirmation = null
     helloTimer.stop()
     if (link === "ready" || link === "connecting") link = "connecting"
     failPending()
@@ -453,6 +459,9 @@ Item {
     var previousRuntime = runtimeKey
     var previousPrimaryGroup = configuredPrimaryGroup
     var wasRunning = coreRunning
+    coreName = status.coreName
+    coreChoices = status.coreChoices
+    coreWarnings = status.coreWarnings
     coreState = status.state
     coreDetail = status.detail
     activeSubscription = status.activeSubscription
@@ -508,7 +517,11 @@ Item {
   // Everything the daemon said, for when there is no daemon to talk to.
   function forgetAll() {
     pendingDownloads = []
+    coreConfirmation = null
     streamErrors = ({})
+    coreName = ""
+    coreChoices = []
+    coreWarnings = []
     coreState = link === "absent" ? "not-installed" : "unknown"
     coreDetail = ""
     activeSubscription = ""
@@ -634,10 +647,28 @@ Item {
     }
   }
 
+  function setCore(name, confirmation) {
+    if (busy || !streamsReady(["status"]) || name === coreName || coreChoices.indexOf(name) < 0) return
+    pendingCore = name
+    reportDone("Switching to " + (name === "xray" ? "Xray" : "mihomo") + "…")
+    _coreCall = call("core.select", { name: name, confirmation: confirmation || "" }, function(result, error) {
+      root._coreCall = 0
+      root.pendingCore = ""
+      if (error) return root.reportError(error, "core-select")
+      root.reportDone("")
+      if (result && Array.isArray(result.confirm_warnings) && result.confirm_warnings.length > 0)
+        root.coreConfirmation = { name: name, warnings: result.confirm_warnings, token: result.confirmation }
+    })
+    if (_coreCall === 0) {
+      pendingCore = ""
+      reportDone("")
+    }
+  }
+
   // Optimistic settings last until command completion; confirmed values arrive
   // on the status stream.
   function changeSetting(args, desired, pending, message, scope) {
-    if (!streamsReady(["status"]) || _settingsCall !== 0 || _ruleCall !== 0) return false
+    if (!streamsReady(["status"]) || _settingsCall !== 0 || _ruleCall !== 0 || pendingCore !== "") return false
     var idle = desired !== "" ? root[desired] : null
     if (desired !== "") root[desired] = pending
     reportDone(message || "")

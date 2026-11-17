@@ -14,7 +14,8 @@ Item {
   readonly property var rows: ({
     mode: modeRow, dns: dnsSelector, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
-    checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow
+    checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow,
+    coreMihomo: coreCard, coreXray: coreCard, coreWarnings: coreCard
   })
 
   readonly property var updater: panel.updater
@@ -44,8 +45,10 @@ Item {
     anchors.bottomMargin: pickerDock.visible ? Style.space(8) : 0
     contentWidth: width
     contentHeight: settingsColumn.implicitHeight
-    // Arming uninstall grows the last card with its warning; keep it in view.
-    onContentHeightChanged: if (panel.uninstallArmed) contentY = Math.max(0, contentHeight - height)
+    onContentHeightChanged: {
+      if (panel.uninstallArmed) view.reveal("uninstall")
+      else if (panel.at("coreMihomo") || panel.at("coreXray") || panel.at("coreWarnings")) view.reveal("coreXray")
+    }
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     interactive: contentHeight > height
@@ -346,6 +349,79 @@ Item {
             text: "Removes the omihomo package and stops the service. Subscriptions and settings stay in /var/lib/omihomo."
             color: view.theme.dim
             wrapMode: Text.WordWrap
+          }
+        }
+      }
+      SectionLine {
+        theme: view.theme
+        visible: coreCard.visible
+        Layout.fillWidth: true
+        Layout.topMargin: Style.space(8)
+        title: "PROXY CORE"
+      }
+
+      Rectangle {
+        id: coreCard
+        visible: view.service.coreChoices.length > 1
+        Layout.fillWidth: true
+        implicitHeight: coreColumn.implicitHeight + Style.space(16)
+        radius: view.theme.cardRadius
+        color: view.theme.fill
+        border.width: 1
+        border.color: view.theme.line
+
+        ColumnLayout {
+          id: coreColumn
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.margins: Style.space(8)
+          spacing: Style.space(6)
+
+          RowLayout {
+            Layout.fillWidth: true
+            spacing: Style.space(6)
+
+            SmallButton {
+              theme: view.theme
+              Layout.fillWidth: true
+              text: "mihomo"
+              primary: view.service.coreName === "mihomo"
+              enabled: view.service.ready && !view.service.busy
+              hasCursor: view.panel.at("coreMihomo")
+              onHovered: function(on) { if (on) view.panel.focusRow("coreMihomo") }
+              onClicked: view.service.setCore("mihomo")
+            }
+
+            SmallButton {
+              theme: view.theme
+              Layout.fillWidth: true
+              text: "Xray"
+              primary: view.service.coreName === "xray"
+              enabled: view.service.ready && !view.service.busy
+              hasCursor: view.panel.at("coreXray")
+              onHovered: function(on) { if (on) view.panel.focusRow("coreXray") }
+              onClicked: view.service.setCore("xray")
+            }
+          }
+
+          PanelText {
+            theme: view.theme
+            Layout.fillWidth: true
+            text: view.service.pendingCore !== "" ? view.service.actionStatus
+              : (view.panel.errorAt("core-select") ? view.service.lastError : "")
+            color: view.panel.errorAt("core-select") ? view.theme.urgent : view.theme.dim
+            visible: text !== ""
+            wrapMode: Text.Wrap
+          }
+
+          SmallButton {
+            theme: view.theme
+            text: "Compatibility warnings"
+            visible: view.service.coreWarnings.length > 0
+            hasCursor: view.panel.at("coreWarnings")
+            onHovered: function(on) { if (on) view.panel.focusRow("coreWarnings") }
+            onClicked: view.panel.showingCoreWarnings = true
           }
         }
       }

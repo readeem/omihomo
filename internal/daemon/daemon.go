@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -33,6 +34,8 @@ type Daemon interface {
 type ConfigOpt func(*config)
 
 type config struct {
+	xray             core.Core
+	forcedCore       string
 	ownerFile        string
 	version          string
 	log              *slog.Logger
@@ -53,6 +56,14 @@ type config struct {
 // file is read on every connection, so claiming ownership needs no restart.
 func WithOwnerFile(path string) ConfigOpt {
 	return func(c *config) { set(&c.ownerFile, path, path != "") }
+}
+
+func WithXrayCore(xray core.Core) ConfigOpt {
+	return func(c *config) { c.xray = xray }
+}
+
+func WithForcedCore(name string) ConfigOpt {
+	return func(c *config) { c.forcedCore = name }
 }
 
 // WithVersion is the version the greeting reports.
@@ -162,6 +173,9 @@ type server struct {
 	// restorePending is set while the proxy should be on, as it was before
 	// the daemon restarted, but has not come up yet.
 	restorePending bool
+	coreWarnings   []string
+	coreRules      map[ruleKey]bool
+	coreConfirmKey string
 
 	// pubMu orders pushes, so a client never sees an older value of a state
 	// stream after a newer one.
@@ -199,22 +213,25 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	d := &server{
+		core:           c,
+		cfg:            cfg,
+		log:            cfg.log,
+		store:          store,
+		downloads:      map[string]*pendingDownload{},
+		state:          protocol.StateStopped,
+		sessions:       map[*session]struct{}{},
+		addAsked:       map[string]time.Time{},
+		lastPushed:     map[string][]byte{},
+		coreConfirmKey: rand.Text(),
+	}
 	if cfg.transport == nil {
 		network := uplink.Network{}
-		cfg.transport = fetch.RoutedTransport(c.DialDownload, network.DialContext)
+		cfg.transport = fetch.RoutedTransport(func(ctx context.Context, network, address string) (net.Conn, error) {
+			return d.activeCore().DialDownload(ctx, network, address)
+		}, network.DialContext)
 	}
-	d := &server{
-		core:       c,
-		cfg:        cfg,
-		log:        cfg.log,
-		store:      store,
-		fetcher:    fetch.New(cfg.transport),
-		downloads:  map[string]*pendingDownload{},
-		state:      protocol.StateStopped,
-		sessions:   map[*session]struct{}{},
-		addAsked:   map[string]time.Time{},
-		lastPushed: map[string][]byte{},
-	}
+	d.fetcher = fetch.New(cfg.transport)
 	if d.settings, err = store.Settings(); err != nil {
 		return nil, err
 	}
@@ -238,6 +255,7 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 		}
 		d.profile = p
 	}
+	d.updateCoreCompatibility()
 	return d, nil
 }
 
@@ -270,7 +288,7 @@ func (d *server) Run(ctx context.Context, listeners ...net.Listener) error {
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
-	if err := d.core.Stop(stopCtx); err != nil {
+	if err := d.activeCore().Stop(stopCtx); err != nil {
 		d.log.Error("stop the core on shutdown", "err", err)
 	}
 	select {
@@ -378,12 +396,12 @@ func (d *server) tick(ctx context.Context) {
 			continue
 		}
 		if d.listening(protocol.StreamTraffic) {
-			if v, err := d.core.Traffic(ctx); err == nil {
+			if v, err := d.activeCore().Traffic(ctx); err == nil {
 				d.broadcast(protocol.StreamTraffic, v)
 			}
 		}
 		if d.listening(protocol.StreamConnections) {
-			if v, err := d.core.Connections(ctx); err == nil {
+			if v, err := d.activeCore().Connections(ctx); err == nil {
 				d.broadcast(protocol.StreamConnections, v)
 			}
 		}

@@ -26,6 +26,9 @@ Panel {
 
   property string removeArmed: ""
   property bool uninstallArmed: false
+  property bool showingCoreWarnings: false
+  readonly property Item activePrompt: directPrompt.visible ? directPrompt
+    : (compatibilityPrompt.visible ? compatibilityPrompt : null)
   property int ruleTypeIndex: 0
   property int editingRule: 0
   property bool ruleFormOpen: false
@@ -68,7 +71,7 @@ Panel {
   readonly property var setup: {
     switch (omihomo.link) {
     case "absent": return { section: "SETUP", title: "Core not installed",
-      text: "Omihomo runs mihomo as a system service that this panel controls. Installing it:",
+      text: "Omihomo runs the proxy as a system service that this panel controls. Installing it:",
       steps: ["verifies the latest signed release on GitHub", "installs the omihomo package",
         "claims the core for this account"],
       actions: [{ button: "Install core", tag: "install…", key: "i", hint: "asks for your password in a terminal",
@@ -232,7 +235,8 @@ Panel {
     : Model.formatDelay(omihomo.egressLatency)
 
   readonly property bool errorInView: omihomo.lastError !== "" && (view === "subs"
-    ? omihomo.errorScope.indexOf("sub:") === 0 : omihomo.errorScope === view)
+    ? omihomo.errorScope.indexOf("sub:") === 0
+    : omihomo.errorScope === view || view === "settings" && omihomo.errorScope === "core-select")
   readonly property bool headerError: omihomo.lastError !== "" && !errorInView
   readonly property string headerMessage: headerError ? omihomo.lastError
     : omihomo.actionStatus
@@ -289,6 +293,8 @@ Panel {
       if (updater.updateAvailable) rows.push({ s: "update" })
       if (updater.releaseUrl !== "") rows.push({ s: "releaseNotes" })
       rows.push({ s: "uninstall" })
+      if (omihomo.coreChoices.length > 1) rows.push({ s: "coreMihomo" }, { s: "coreXray" })
+      if (omihomo.coreWarnings.length > 0) rows.push({ s: "coreWarnings" })
       break
     }
     return rows
@@ -385,6 +391,9 @@ Panel {
     case "update": updateOmihomo(); break
     case "releaseNotes": openReleaseNotes(); break
     case "uninstall": uninstallCore(); break
+    case "coreMihomo": omihomo.setCore("mihomo"); break
+    case "coreXray": omihomo.setCore("xray"); break
+    case "coreWarnings": showingCoreWarnings = true; break
     }
   }
 
@@ -810,23 +819,24 @@ Panel {
       rulesView.valueField.text = ""
       editing = null
       omihomo.clearMessages()
-      Qt.callLater(function() {
-        if (omihomo.pendingDownloads.length > 0) directPrompt.forceActiveFocus()
-        else keyCatcher.forceActiveFocus()
-      })
+      Qt.callLater(focusPrompt)
+    } else {
+      showingCoreWarnings = false
+      omihomo.coreConfirmation = null
     }
   }
 
+  function focusPrompt() {
+    if (opened) (activePrompt || keyCatcher).forceActiveFocus()
+  }
+
+  onActivePromptChanged: Qt.callLater(focusPrompt)
   onNavRowsChanged: clampCursor()
 
   Connections {
     target: omihomo
     function onPendingDownloadsChanged() {
       if (omihomo.pendingDownloads.length > 0) root.open()
-      Qt.callLater(function() {
-        if (omihomo.pendingDownloads.length > 0) directPrompt.forceActiveFocus()
-        else keyCatcher.forceActiveFocus()
-      })
     }
     function onErrorScopeChanged() {
       var scope = omihomo.errorScope
@@ -914,7 +924,7 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: omihomo.pendingDownloads.length > 0 ? directPrompt : keyCatcher
+    focusTarget: root.activePrompt || keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
     // Setup is one card, so the panel fits it instead of the views' height.
     contentHeight: panel.cappedContentHeight(omihomo.installed ? Style.space(720) : body.implicitHeight)
@@ -1390,12 +1400,37 @@ Panel {
         }
       }
     }
-    DirectDownloadPrompt {
+    PanelPrompt {
       id: directPrompt
+      objectName: "directDownloadPrompt"
       anchors.fill: parent
       theme: root.theme
-      download: omihomo.pendingDownloads.length > 0 ? omihomo.pendingDownloads[0] : null
+      readonly property var download: omihomo.pendingDownloads.length > 0 ? omihomo.pendingDownloads[0] : null
+      title: "Download without your proxy?"
+      acceptText: "Allow once · y"
+      messages: download ? [download.label,
+        "Your proxy could not connect. A direct download exposes your IP to the server and the destination to your network provider. HTTPS still protects the contents.",
+        "Allow only this download. Permission expires after use."] : []
       onDecided: function(allow) { omihomo.decideDownload(download.id, allow) }
+    }
+
+    PanelPrompt {
+      id: compatibilityPrompt
+      objectName: "compatibilityPrompt"
+      anchors.fill: parent
+      theme: root.theme
+      readonly property var confirmation: omihomo.coreConfirmation
+      visible: !directPrompt.visible && messages.length > 0
+      title: confirmation ? "Switch to Xray?" : "Compatibility warnings"
+      acceptText: confirmation ? "Switch · y" : ""
+      messages: confirmation ? ["Xray will skip these entries."].concat(confirmation.warnings)
+        : (root.showingCoreWarnings ? omihomo.coreWarnings : [])
+      onDecided: function(accept) {
+        const request = confirmation
+        omihomo.coreConfirmation = null
+        root.showingCoreWarnings = false
+        if (accept && request) omihomo.setCore(request.name, request.token)
+      }
     }
   }
 }

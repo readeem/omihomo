@@ -1,7 +1,6 @@
 // Package core is the boundary between the daemon and the proxy engine it
-// hosts. The daemon owns settings, state and clients; a Core only runs what
-// it is given. Nothing outside an implementation of this package knows which
-// engine that is.
+// hosts. The daemon owns settings, state and clients. A Core runs the
+// configuration the daemon gives it.
 package core
 
 import (
@@ -160,6 +159,12 @@ type Core interface {
 	// broken database can end the process, and one without what the rules
 	// match fails them, so either leaves what is in place.
 	InstallGeodata(f GeodataFile, path string, p Profile) error
+}
+
+// Compatibility reports what an adapter can load from a config before it starts.
+type Compatibility struct {
+	Warnings []string
+	Rules    []protocol.Rule
 }
 
 // GeodataFile is one geodata file a profile needs: Path is absolute, URL is
