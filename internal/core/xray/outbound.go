@@ -69,7 +69,6 @@ type Outbound struct {
 	ctx       context.Context
 	handler   *proxyman.Handler
 	bootstrap *proxyman.Handler
-	udp       bool
 }
 
 type socketPolicy struct {
@@ -157,7 +156,7 @@ func New(configs []core.Proxy, network Network) (*Outbounds, error) {
 	}
 	for tag, proxy := range supported {
 		bootstrap, _ := manager.GetHandler(tag + "-bootstrap").(*proxyman.Handler)
-		o.byName[proxy.Name] = &Outbound{owner.(context.Context), manager.GetHandler(tag).(*proxyman.Handler), bootstrap, supportsUDP(proxy)}
+		o.byName[proxy.Name] = &Outbound{ctx: owner.(context.Context), handler: manager.GetHandler(tag).(*proxyman.Handler), bootstrap: bootstrap}
 	}
 	return o, nil
 }
@@ -175,8 +174,6 @@ func (o *Outbounds) Close() error {
 	return nil
 }
 
-func (o *Outbound) SupportUDP() bool { return o.udp }
-
 func needsBootstrapPool(p core.Proxy) bool {
 	opts := fields(p.Options)
 	if !isDomain(opts.string("server")) {
@@ -188,14 +185,6 @@ func needsBootstrapPool(p core.Proxy) bool {
 	default:
 		return p.Type == "hysteria2"
 	}
-}
-
-func supportsUDP(p core.Proxy) bool {
-	switch p.Type {
-	case "hysteria2", "trojan", "ss":
-		return true
-	}
-	return false
 }
 
 type bootstrapLookup struct{}

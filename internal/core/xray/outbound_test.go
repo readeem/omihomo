@@ -149,7 +149,7 @@ func TestHysteria2CarriesStreamsAndDatagrams(t *testing.T) {
 		t.Fatal("Hysteria 2 with skip-cert-verify should retain its Mihomo adapter")
 	}
 	out = engine.Get("h2")
-	if out == nil || !out.SupportUDP() {
+	if out == nil {
 		t.Fatal("Hysteria 2 with Salamander is missing its Xray outbound")
 	}
 	stream, err := out.DialContext(ctx, "127.0.0.1", targetPort)
@@ -187,6 +187,79 @@ func TestHysteria2CarriesStreamsAndDatagrams(t *testing.T) {
 		if err != nil || n != len(echo) || binary.BigEndian.Uint32(echo[:]) != uint32(i) || source.String() != target.String() {
 			t.Fatalf("UDP datagram %d = %x from %v: %v", i, echo[:n], source, err)
 		}
+	}
+}
+
+func TestVLESSTransportsCarryDatagrams(t *testing.T) {
+	const uuid = "92d696db-0166-464e-91bb-b65f72b3d665"
+	for _, network := range []string{"tcp", "xhttp"} {
+		t.Run(network, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			defer cancel()
+
+			packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer packet.Close()
+			packetDone := make(chan struct{})
+			go func() {
+				defer close(packetDone)
+				buf := make([]byte, 2048)
+				n, peer, err := packet.ReadFrom(buf)
+				if err == nil {
+					_, _ = packet.WriteTo(append([]byte("reply:"), buf[:n]...), peer)
+				}
+			}()
+			defer func() { packet.Close(); <-packetDone }()
+
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			port := listener.Addr().(*net.TCPAddr).Port
+			listener.Close()
+			stream := map[string]any{"network": network}
+			if network == "xhttp" {
+				stream["xhttpSettings"] = map[string]string{"mode": "packet-up"}
+			}
+			startServer(t, map[string]any{"inbounds": []any{map[string]any{
+				"listen": "127.0.0.1", "port": port, "protocol": "vless",
+				"settings":       map[string]any{"decryption": "none", "clients": []any{map[string]string{"id": uuid}}},
+				"streamSettings": stream,
+			}}})
+
+			options := map[string]any{
+				"server": "127.0.0.1", "port": port, "uuid": uuid, "network": network,
+			}
+			if network == "xhttp" {
+				options["alpn"] = []any{"http/1.1"}
+				options["xhttp-opts"] = map[string]any{"mode": "packet-up"}
+			}
+			engine, err := xray.New([]core.Proxy{{Name: network, Type: "vless", Options: options}}, localNetwork{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer engine.Close()
+			out := engine.Get(network)
+			if out == nil {
+				t.Fatal("missing native VLESS outbound")
+			}
+			target := packet.LocalAddr().(*net.UDPAddr)
+			datagrams, err := out.ListenPacket(ctx, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer datagrams.Close()
+			if _, err := datagrams.WriteTo([]byte("ping"), target); err != nil {
+				t.Fatal(err)
+			}
+			var got [32]byte
+			n, source, err := datagrams.ReadFrom(got[:])
+			if err != nil || string(got[:n]) != "reply:ping" || source.String() != target.String() {
+				t.Fatalf("UDP reply = %q from %v: %v", got[:n], source, err)
+			}
+		})
 	}
 }
 

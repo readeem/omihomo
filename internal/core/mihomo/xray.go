@@ -27,15 +27,14 @@ func (rt *runtime) useXray(engine *xray.Outbounds) {
 		p := rt.parsed.Proxies[entry.Name].(sniffedProxy).Proxy.(*adapter.Proxy)
 		p.ProxyAdapter = &preferredOutbound{
 			ProxyAdapter: p.ProxyAdapter.(outbound.ProxyAdapter),
-			native:       native, nativeUDP: native.SupportUDP(),
+			native:       native,
 		}
 	}
 }
 
 type preferredOutbound struct {
 	outbound.ProxyAdapter
-	native    *xray.Outbound
-	nativeUDP bool
+	native *xray.Outbound
 }
 
 func (p *preferredOutbound) DialContext(ctx context.Context, metadata *constant.Metadata) (constant.Conn, error) {
@@ -55,9 +54,6 @@ func (p *preferredOutbound) DialContext(ctx context.Context, metadata *constant.
 }
 
 func (p *preferredOutbound) ListenPacketContext(ctx context.Context, metadata *constant.Metadata) (constant.PacketConn, error) {
-	if !p.nativeUDP {
-		return p.ProxyAdapter.ListenPacketContext(ctx, metadata)
-	}
 	target := sniffedDestination(metadata).Clone()
 	if err := p.ResolveUDP(ctx, target); err != nil {
 		return nil, err
