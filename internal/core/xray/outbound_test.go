@@ -2,12 +2,14 @@ package xray_test
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -68,11 +70,14 @@ func TestHysteria2CarriesStreamsAndDatagrams(t *testing.T) {
 	originDone := make(chan struct{})
 	go func() {
 		defer close(originDone)
-		conn, err := origin.Accept()
-		if err == nil {
-			defer conn.Close()
+		for range 2 {
+			conn, err := origin.Accept()
+			if err != nil {
+				return
+			}
 			conn.SetDeadline(time.Now().Add(8 * time.Second))
 			io.CopyN(conn, conn, 4)
+			conn.Close()
 		}
 	}()
 	defer func() { origin.Close(); <-originDone }()
@@ -106,18 +111,48 @@ func TestHysteria2CarriesStreamsAndDatagrams(t *testing.T) {
 	}
 	startServer(t, settings)
 
-	engine, err := xray.New([]core.Proxy{{Name: "h2", Type: "hysteria2", Options: map[string]any{
-		"server": "127.0.0.1", "port": port, "password": "test", "obfs": "salamander", "obfs-password": "test mask",
-	}}}, localNetwork{})
+	targetPort := uint16(origin.Addr().(*net.TCPAddr).Port)
+	bootstrapped := make(chan struct{}, 1)
+	var out *xray.Outbound
+	network := packetBootstrapNetwork{bootstrap: func(ctx context.Context) error {
+		conn, err := out.DialContext(xray.WithBootstrapLookup(ctx), "127.0.0.1", targetPort)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		deadline, _ := ctx.Deadline()
+		conn.SetDeadline(deadline)
+		if _, err := conn.Write([]byte("boot")); err != nil {
+			return err
+		}
+		var echo [4]byte
+		if _, err := io.ReadFull(conn, echo[:]); err != nil {
+			return err
+		}
+		bootstrapped <- struct{}{}
+		return nil
+	}}
+	engine, err := xray.New([]core.Proxy{
+		{Name: "h2", Type: "hysteria2", Options: map[string]any{
+			"server": "proxy.example", "sni": "127.0.0.1", "port": port, "password": "test",
+			"obfs": "salamander", "obfs-password": "test mask",
+		}},
+		{Name: "h2-unverified", Type: "hysteria2", Options: map[string]any{
+			"server": "127.0.0.1", "port": port, "password": "test", "skip-cert-verify": true,
+		}},
+	}, network)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer engine.Close()
-	out := engine.Get("h2")
+	if engine.Get("h2-unverified") != nil {
+		t.Fatal("Hysteria 2 with skip-cert-verify should retain its Mihomo adapter")
+	}
+	out = engine.Get("h2")
 	if out == nil || !out.SupportUDP() {
 		t.Fatal("Hysteria 2 with Salamander is missing its Xray outbound")
 	}
-	stream, err := out.DialContext(ctx, "127.0.0.1", uint16(origin.Addr().(*net.TCPAddr).Port))
+	stream, err := out.DialContext(ctx, "127.0.0.1", targetPort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +164,11 @@ func TestHysteria2CarriesStreamsAndDatagrams(t *testing.T) {
 	var echo [4]byte
 	if _, err := io.ReadFull(stream, echo[:]); err != nil || string(echo[:]) != "ping" {
 		t.Fatalf("TCP echo %q: %v", echo, err)
+	}
+	select {
+	case <-bootstrapped:
+	default:
+		t.Fatal("the cold hostname-based outbound did not bootstrap through itself")
 	}
 
 	target := packet.LocalAddr().(*net.UDPAddr)
@@ -148,6 +188,24 @@ func TestHysteria2CarriesStreamsAndDatagrams(t *testing.T) {
 			t.Fatalf("UDP datagram %d = %x from %v: %v", i, echo[:n], source, err)
 		}
 	}
+}
+
+type packetBootstrapNetwork struct {
+	localNetwork
+	bootstrap func(context.Context) error
+}
+
+func (n packetBootstrapNetwork) ListenPacket(ctx context.Context, address string, opts xray.SocketOptions) (net.PacketConn, *net.UDPAddr, error) {
+	if !opts.Bootstrap {
+		if err := n.bootstrap(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, nil, err
+	}
+	return n.localNetwork.ListenPacket(ctx, net.JoinHostPort("127.0.0.1", port), opts)
 }
 
 func startServer(t *testing.T, settings map[string]any) {
@@ -214,7 +272,7 @@ func TestPooledTransportsUseSeparateBootstrapSockets(t *testing.T) {
 				"listen": "127.0.0.1", "port": port, "protocol": "vless",
 				"settings": map[string]any{"decryption": "none", "clients": []any{map[string]string{"id": uuid}}},
 				"streamSettings": map[string]any{"network": name,
-					"grpcSettings":  map[string]string{"serviceName": "test"},
+					"grpcSettings":  map[string]string{"serviceName": "GunService"},
 					"xhttpSettings": map[string]string{"path": "/test", "mode": "packet-up"},
 				},
 			}}})
@@ -222,7 +280,6 @@ func TestPooledTransportsUseSeparateBootstrapSockets(t *testing.T) {
 			network := &bootstrapNetwork{dialed: make(chan bool, 32)}
 			engine, err := xray.New([]core.Proxy{{Name: name, Type: "vless", Options: map[string]any{
 				"server": "proxy.example", "port": port, "uuid": uuid, "network": name,
-				"grpc-opts":  map[string]any{"grpc-service-name": "test"},
 				"xhttp-opts": map[string]any{"path": "/test", "mode": "packet-up"},
 			}}}, network)
 			if err != nil {
@@ -270,6 +327,132 @@ func TestPooledTransportsUseSeparateBootstrapSockets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWebSocketTLSUsesTheConfiguredHost(t *testing.T) {
+	names := make(chan string, 4)
+	server := httptest.NewUnstartedServer(nil)
+	server.TLS = &tls.Config{GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		names <- hello.ServerName
+		return nil, io.EOF
+	}}
+	server.StartTLS()
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	for _, kind := range []string{"vless", "vmess"} {
+		t.Run(kind, func(t *testing.T) {
+			engine, err := xray.New([]core.Proxy{
+				webSocketProxy(kind, port, ""),
+				webSocketProxy(kind, port, "tls.example"),
+			}, localNetwork{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer engine.Close()
+			for _, tc := range []struct{ name, want string }{
+				{"", "websocket.example"},
+				{"tls.example", "tls.example"},
+			} {
+				out := engine.Get(tc.name)
+				if out == nil {
+					t.Fatalf("missing native %s WebSocket outbound", kind)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				dialed := make(chan error, 1)
+				go func() {
+					conn, err := out.DialContext(ctx, "127.0.0.1", 1)
+					if err == nil {
+						conn.Close()
+					}
+					dialed <- err
+				}()
+				select {
+				case name := <-names:
+					if name != tc.want {
+						t.Errorf("TLS name = %q, want %q", name, tc.want)
+					}
+				case err := <-dialed:
+					t.Fatalf("dial finished before TLS negotiation: %v", err)
+				case <-time.After(5 * time.Second):
+					t.Fatal("no TLS ClientHello")
+				}
+				cancel()
+				<-dialed
+			}
+		})
+	}
+}
+
+func webSocketProxy(kind string, port int, name string) core.Proxy {
+	return core.Proxy{Name: name, Type: kind, Options: map[string]any{
+		"server": "127.0.0.1", "port": port, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+		"network": "ws", "tls": true, "servername": name,
+		"ws-opts": map[string]any{"headers": map[string]any{"hOsT": "websocket.example"}},
+	}}
+}
+
+func TestClosingXHTTPConnectionCancelsItsRequests(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	get, post := make(chan struct{}, 1), make(chan struct{}, 1)
+	canceled := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			get <- struct{}{}
+		} else {
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				return
+			}
+			post <- struct{}{}
+		}
+		select {
+		case <-r.Context().Done():
+			canceled <- r.Method
+		case <-ctx.Done():
+		}
+	}))
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	engine, err := xray.New([]core.Proxy{{Name: "split", Type: "vless", Options: map[string]any{
+		"server": "127.0.0.1", "port": port, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+		"network": "xhttp", "xhttp-opts": map[string]any{"mode": "packet-up"},
+	}}}, localNetwork{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	out := engine.Get("split")
+	if out == nil {
+		t.Fatal("missing the native XHTTP outbound")
+	}
+	conn, err := out.DialContext(ctx, "127.0.0.1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	conn.SetWriteDeadline(deadline)
+	if _, err := conn.Write([]byte("test")); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []<-chan struct{}{get, post} {
+		select {
+		case <-request:
+		case <-ctx.Done():
+			t.Fatal("XHTTP did not start both requests")
+		}
+	}
+	conn.Close()
+	seen := make(map[string]bool)
+	for len(seen) < 2 {
+		select {
+		case method := <-canceled:
+			seen[method] = true
+		case <-ctx.Done():
+			t.Fatalf("server saw client cancellation for %v, want GET and POST", seen)
+		}
 	}
 }
 

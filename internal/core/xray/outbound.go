@@ -124,20 +124,17 @@ func New(configs []core.Proxy, network Network) (*Outbounds, error) {
 		cfg.Outbound = append(cfg.Outbound, config)
 		// Pooled transports can dial with a context unrelated to the request
 		// that needs DNS. Keep recursive bootstrap on a separate pool.
-		switch opts.string("network") {
-		case "grpc", "xhttp", "splithttp":
-			if isDomain(opts.string("server")) {
-				bootstrapTag, bootstrapKey := tag+"-bootstrap", key+"-bootstrap"
-				bootstrap, reason := proxyOutbound(bootstrapTag, bootstrapKey, p)
-				if reason != "" {
-					o.Close()
-					return nil, errors.New("could not configure the Xray bootstrap outbound")
-				}
-				options.Bootstrap = true
-				policies.Store(bootstrapKey, socketPolicy{ctx, network, options})
-				o.keys = append(o.keys, bootstrapKey)
-				cfg.Outbound = append(cfg.Outbound, bootstrap)
+		if needsBootstrapPool(p) {
+			bootstrapTag, bootstrapKey := tag+"-bootstrap", key+"-bootstrap"
+			bootstrap, reason := proxyOutbound(bootstrapTag, bootstrapKey, p)
+			if reason != "" {
+				o.Close()
+				return nil, errors.New("could not configure the Xray bootstrap outbound")
 			}
+			options.Bootstrap = true
+			policies.Store(bootstrapKey, socketPolicy{ctx, network, options})
+			o.keys = append(o.keys, bootstrapKey)
+			cfg.Outbound = append(cfg.Outbound, bootstrap)
 		}
 	}
 	if len(supported) == 0 {
@@ -179,6 +176,19 @@ func (o *Outbounds) Close() error {
 }
 
 func (o *Outbound) SupportUDP() bool { return o.udp }
+
+func needsBootstrapPool(p core.Proxy) bool {
+	opts := fields(p.Options)
+	if !isDomain(opts.string("server")) {
+		return false
+	}
+	switch opts.string("network") {
+	case "grpc", "xhttp", "splithttp":
+		return true
+	default:
+		return p.Type == "hysteria2"
+	}
+}
 
 func supportsUDP(p core.Proxy) bool {
 	switch p.Type {
@@ -242,7 +252,7 @@ func (o *Outbound) DialContext(ctx context.Context, host string, port uint16) (n
 	}()
 	select {
 	case <-ready:
-		return client, nil
+		return &sessionConn{Conn: client, cancel: cancel}, nil
 	case <-done:
 	case <-ctx.Done():
 	case <-o.ctx.Done():
@@ -259,6 +269,16 @@ func (o *Outbound) DialContext(ctx context.Context, host string, port uint16) (n
 }
 
 type attemptKey struct{}
+
+type sessionConn struct {
+	net.Conn
+	cancel context.CancelFunc
+}
+
+func (c *sessionConn) Close() error {
+	c.cancel()
+	return c.Conn.Close()
+}
 
 type tcpAttempt struct {
 	internet.Dialer

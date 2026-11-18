@@ -27,6 +27,14 @@ for series in "$root"/patches/*/module; do
   copy="$work/${dir##*/}"
   cp -R -- "$src" "$copy"
   chmod -R u+w "$copy"
+  if [[ ! -x $work/modulehash ]]; then
+    go build -mod=readonly -o "$work/modulehash" ./tools/modulehash
+  fi
+  if [[ -n $(find "$copy" ! -type d ! -type f -print -quit) ||
+        $("$work/modulehash" "$copy" "$module@$version") != "$sum" ]]; then
+    printf 'Module source failed checksum verification for %s@%s\n' "$module" "$version" >&2
+    exit 1
+  fi
   for patch in "$dir"/*.patch; do
     printf 'Applying %s to %s@%s\n' "${patch##*/}" "$module" "$version" >&2
     git -C "$copy" apply --no-index -- "$patch"

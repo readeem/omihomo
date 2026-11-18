@@ -16,9 +16,9 @@ require (
 	github.com/miekg/dns v1.1.73
 	github.com/peterbourgon/ff/v3 v3.4.0
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a
-	github.com/vishvananda/netlink v1.3.1
 	github.com/xtls/xray-core v1.260327.1-0.20261109052709-676eaf66f8f0
 	go.yaml.in/yaml/v3 v3.0.6
+	golang.org/x/mod v0.43.0
 	golang.org/x/sys v0.50.0
 	google.golang.org/protobuf v1.36.12
 )
@@ -146,6 +146,7 @@ require (
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
 	github.com/u-root/uio v0.0.0-20230220225925-ffce2a382923 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect

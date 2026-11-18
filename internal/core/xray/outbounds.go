@@ -85,7 +85,7 @@ func proxyOutbound(tag, socketKey string, p core.Proxy) (*xcore.OutboundHandlerC
 		if cipher == "" {
 			cipher = "auto"
 		}
-		settings["vnext"] = []fields{{"address": server, "port": n, "users": []fields{{"id": options.string("uuid"), "security": cipher}}}}
+		settings["id"], settings["security"] = options.string("uuid"), cipher
 	case "hysteria2":
 		return hysteriaOutbound(tag, socketKey, options, server, n)
 	case "trojan":
@@ -148,6 +148,7 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 	if network == "" {
 		network = "tcp"
 	}
+	var websocketHost string
 	stream.Network = &network
 	switch network {
 	case "tcp", "raw":
@@ -157,6 +158,15 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 			return nil, "unsupported WebSocket option " + key
 		}
 		headers := headerStrings(ws.object("headers"))
+		for _, key := range slices.Sorted(maps.Keys(headers)) {
+			if strings.EqualFold(key, "Host") {
+				if websocketHost != "" && websocketHost != headers[key] {
+					return nil, "conflicting WebSocket Host headers"
+				}
+				websocketHost = headers[key]
+				delete(headers, key)
+			}
+		}
 		path, err := url.Parse(ws.string("path"))
 		if err != nil || path.IsAbs() || path.Host != "" {
 			return nil, "invalid WebSocket path"
@@ -172,13 +182,17 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 		if query.Has("ed") {
 			return nil, "WebSocket early data defers connection setup"
 		}
-		stream.WSSettings = &conf.WebSocketConfig{Path: path.String(), Headers: headers}
+		stream.WSSettings = &conf.WebSocketConfig{Path: path.String(), Host: websocketHost, Headers: headers}
 	case "grpc":
 		grpc := opts.object("grpc-opts")
 		if grpc.string("grpc-user-agent") != "" {
 			return nil, "unsupported gRPC user agent"
 		}
-		stream.GRPCSettings = &conf.GRPCConfig{ServiceName: grpc.string("grpc-service-name")}
+		service := grpc.string("grpc-service-name")
+		if service == "" {
+			service = "GunService"
+		}
+		stream.GRPCSettings = &conf.GRPCConfig{ServiceName: service}
 	case "xhttp", "splithttp":
 		xhttp := opts.object("xhttp-opts")
 		if key := xhttp.unsupported("path", "host", "mode", "headers", "no-grpc-header", "x-padding-bytes"); key != "" {
@@ -199,6 +213,9 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 	}
 
 	sni := opts.string("servername")
+	if sni == "" && !tlsRequired {
+		sni = websocketHost
+	}
 	if sni == "" {
 		sni = opts.string("sni")
 	}
