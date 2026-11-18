@@ -595,7 +595,15 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
 	}
 	rules := protocol.PruneCategories(args.Rules)
-	if in == next.Settings && reflect.DeepEqual(rules, next.Rules) {
+	current := next.Settings
+	current.Core = in.Core
+	if in == current && reflect.DeepEqual(rules, next.Rules) && d.preferredCore(in.Core) == d.preferredCore(next.Core) {
+		if in.Core != next.Core {
+			next.Core = in.Core
+			if err := d.saveSettings(next); err != nil {
+				return nil, err
+			}
+		}
 		return d.status(), nil
 	}
 	next.Settings, next.Rules = in, rules

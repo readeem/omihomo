@@ -9,7 +9,27 @@ import (
 	"github.com/readeem/omihomo/internal/core/fakecore"
 	"github.com/readeem/omihomo/internal/daemon"
 	"github.com/readeem/omihomo/internal/protocol"
+	"github.com/readeem/omihomo/internal/state"
 )
+
+func TestSavingTheDefaultCoreDoesNotReapplyIt(t *testing.T) {
+	engine := fakecore.New()
+	h := serveCore(t, os.Getuid(), engine, daemon.WithCores(protocol.CoreMihomo, protocol.CoreXray))
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	engine.FailApply(errors.New("a preference edit must not reapply the core"))
+	s := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Core: protocol.CoreMihomo}))
+	if s.Core != protocol.CoreMihomo || s.State != protocol.StateOn {
+		t.Fatalf("status after saving the default: %+v", s)
+	}
+	store, err := state.Open(h.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings, err := store.Settings(); err != nil || settings.Core != protocol.CoreMihomo {
+		t.Fatalf("saved default = %q, %v", settings.Core, err)
+	}
+}
 
 func TestCorePreferencePersistsAndKeepsTheRunningCore(t *testing.T) {
 	engine := fakecore.New()
