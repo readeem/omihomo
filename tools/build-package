@@ -14,17 +14,9 @@ mkdir -p dist
 work=$(mktemp -d "$root/dist/.package-XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/$name" "$work/build"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_gvisor,no_easytier -trimpath \
-  -ldflags "-s -w -X github.com/readeem/omihomo/internal/cli.Version=v$version" \
-  -o "$work/$name/omihomo" ./cmd/omihomo
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' \
-  -o "$work/$name/omihomo-update" ./cmd/omihomo-update
+tools/with-go-patches tools/stage-release "$work/$name" "$work/vendor" "$version"
 install -m755 "$work/$name/omihomo-update" "dist/omihomo-update-$version-x86_64"
 (cd dist && sha256sum "omihomo-update-$version-x86_64" > "omihomo-update-$version-x86_64.sha256")
-install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles packaging/omihomo-apply.path packaging/omihomo-apply.service LICENSE "$work/$name/"
-go mod vendor -o "$work/vendor"
-(cd "$work" && find vendor -type f \( -name 'LICEN[CS]E*' -o -name 'COPYING*' -o -name 'NOTICE*' -o -name 'PATENTS*' \) |
-  LC_ALL=C sort | while read -r file; do printf '==> %s <==\n' "${file#vendor/}"; cat "$file"; echo; done) > "$work/$name/THIRD_PARTY_LICENSES"
 tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --numeric-owner \
   -C "$work" -cf - "$name" | gzip -n > "dist/$name-x86_64.tar.gz"
 (cd dist && sha256sum "$name-x86_64.tar.gz" > "$name-x86_64.tar.gz.sha256")

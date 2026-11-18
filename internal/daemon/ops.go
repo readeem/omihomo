@@ -114,11 +114,11 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		}
 		return d.stop(ctx)
 	case protocol.OpSetCore:
-		var args protocol.CoreSelectionArgs
+		var args protocol.NameArgs
 		if err := decode(req.Args, &args); err != nil {
 			return nil, err
 		}
-		return d.switchCore(ctx, args)
+		return d.switchCore(ctx, args.Name)
 	case protocol.OpApply:
 		var args protocol.ApplyArgs
 		if err := decode(req.Args, &args); err != nil {
@@ -129,7 +129,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
 		}
-		groups, err := d.activeCore().Groups(ctx)
+		groups, err := d.core.Groups(ctx)
 		if err != nil {
 			return nil, coreError(err)
 		}
@@ -155,7 +155,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
 		}
-		conns, err := d.activeCore().Connections(ctx)
+		conns, err := d.core.Connections(ctx)
 		if err != nil {
 			return nil, coreError(err)
 		}
@@ -211,13 +211,12 @@ func (d *server) status() protocol.Status {
 		active = sub.Name
 	}
 	var choices []string
-	if d.cfg.xray != nil && d.cfg.forcedCore == "" {
+	if d.cfg.xrayPreferred && d.cfg.forcedCore == "" {
 		choices = []string{protocol.CoreMihomo, protocol.CoreXray}
 	}
 	return protocol.Status{
-		Core:               d.coreNameLocked(),
+		Core:               d.preferredCore(d.settings.Core),
 		CoreChoices:        choices,
-		CoreWarnings:       d.coreWarnings,
 		State:              d.state,
 		Detail:             d.detail,
 		ActiveSubscription: active,
@@ -247,7 +246,7 @@ func (d *server) snapshot(ctx context.Context, stream string) any {
 	case protocol.StreamStatus:
 		return d.status()
 	case protocol.StreamGroups:
-		groups, err := d.activeCore().Groups(ctx)
+		groups, err := d.core.Groups(ctx)
 		if err != nil {
 			groups = []protocol.Group{}
 		}
@@ -388,11 +387,11 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 	d.setState(protocol.StateStarting, "")
 	d.publish(ctx)
 	d.mu.Lock()
-	cfg := runConfig(d.settings, d.profile)
+	cfg := d.runConfig(d.settings, d.profile)
 	d.mu.Unlock()
-	err := d.ensureGeodata(ctx, d.activeCore(), cfg.Profile)
+	err := d.ensureGeodata(ctx, d.core, cfg.Profile)
 	if err == nil {
-		err = d.activeCore().Apply(ctx, cfg)
+		err = d.core.Apply(ctx, cfg)
 	}
 	if err != nil {
 		d.log.Error("start the proxy", "err", err)
@@ -400,7 +399,6 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 		d.publish(ctx)
 		return coreError(err)
 	}
-	d.updateCoreCompatibility()
 	d.log.Info("proxy started")
 	d.setState(protocol.StateOn, "")
 	d.publish(ctx)
@@ -413,7 +411,7 @@ func (d *server) stop(ctx context.Context) (any, *protocol.Error) {
 	d.mu.Lock()
 	d.restorePending = false
 	d.mu.Unlock()
-	if err := d.activeCore().Stop(ctx); err != nil {
+	if err := d.core.Stop(ctx); err != nil {
 		d.log.Error("stop the proxy", "err", err)
 		return nil, coreError(err)
 	}
@@ -526,19 +524,19 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 	if !d.running() {
 		// Nothing runs, but what is stored is what the next start runs, so
 		// the core checks it, with the geodata that takes.
-		cfg := runConfig(next, p)
-		if err := d.ensureGeodata(ctx, d.activeCore(), cfg.Profile); err != nil {
+		cfg := d.runConfig(next, p)
+		if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 			return fail(protocol.CodeFetch, "%v", err)
 		}
-		if err := d.activeCore().Check(ctx, cfg); err != nil {
+		if err := d.core.Check(ctx, cfg); err != nil {
 			return fail(protocol.CodeCore, "the core would not run it: %v", err)
 		}
 		return nil
 	}
-	cfg := runConfig(next, p)
-	err := d.ensureGeodata(ctx, d.activeCore(), cfg.Profile)
+	cfg := d.runConfig(next, p)
+	err := d.ensureGeodata(ctx, d.core, cfg.Profile)
 	if err == nil {
-		err = d.activeCore().Apply(ctx, cfg)
+		err = d.core.Apply(ctx, cfg)
 	}
 	if err != nil {
 		d.log.Error("apply a change", "err", err)
@@ -559,11 +557,11 @@ func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Pro
 	if runs && d.running() {
 		return d.reapply(ctx, s, p)
 	}
-	cfg := runConfig(s, p)
-	if err := d.ensureGeodata(ctx, d.activeCore(), cfg.Profile); err != nil {
+	cfg := d.runConfig(s, p)
+	if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 		return fail(protocol.CodeFetch, "%v", err)
 	}
-	if err := d.activeCore().Check(ctx, cfg); err != nil {
+	if err := d.core.Check(ctx, cfg); err != nil {
 		return fail(protocol.CodeRejected, "the core would not run it: %v", err)
 	}
 	return nil
@@ -602,7 +600,6 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	if err := d.commitSettings(ctx, next, p); err != nil {
 		return nil, err
 	}
-	d.updateCoreCompatibility()
 	d.publish(ctx)
 	return d.status(), nil
 }
@@ -637,11 +634,11 @@ func (d *server) selectProxy(ctx context.Context, args protocol.SelectArgs) (any
 	if err := validName("proxy", args.Proxy); err != nil {
 		return nil, err
 	}
-	if err := d.activeCore().Select(ctx, args.Group, args.Proxy); err != nil {
+	if err := d.core.Select(ctx, args.Group, args.Proxy); err != nil {
 		return nil, coreError(err)
 	}
 	d.publish(ctx)
-	groups, err := d.activeCore().Groups(ctx)
+	groups, err := d.core.Groups(ctx)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -660,7 +657,7 @@ func (d *server) testDelay(ctx context.Context, args protocol.DelayArgs) (any, *
 	if err := validNames("proxy", args.Proxies); err != nil {
 		return nil, err
 	}
-	delays, err := d.activeCore().TestDelay(ctx, args.Group, args.Proxies)
+	delays, err := d.core.TestDelay(ctx, args.Group, args.Proxies)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -672,7 +669,7 @@ func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	_, out := compileRules(d.settings.Rules, d.profile)
-	cfg := runConfig(d.settings, d.profile)
+	cfg := d.runConfig(d.settings, d.profile)
 	for _, r := range core.IntegrationRules(cfg) {
 		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " "),
 			Source: protocol.SourceOmihomo, Category: "omihomo", Disabled: d.settings.OmihomoRulesDisabled, Inactive: d.settings.OmihomoRulesDisabled})
@@ -684,11 +681,6 @@ func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error)
 	caught := false
 	for i := range out {
 		if out[i].Inactive {
-			continue
-		}
-		if d.coreRules != nil && !d.coreRules[runtimeRuleKey(out[i])] {
-			out[i].Inactive = true
-			out[i].InactiveReason = "Unavailable with Xray"
 			continue
 		}
 		out[i].Unreachable = caught
@@ -714,7 +706,7 @@ func (d *server) closeConnections(ctx context.Context, args protocol.CloseArgs) 
 	} else if err := validNames("connection id", ids); err != nil {
 		return nil, err
 	}
-	if err := d.activeCore().CloseConnections(ctx, ids); err != nil {
+	if err := d.core.CloseConnections(ctx, ids); err != nil {
 		return nil, coreError(err)
 	}
 	return protocol.Empty{}, nil
@@ -728,7 +720,7 @@ func (d *server) egress(ctx context.Context) (any, *protocol.Error) {
 	defer cancel()
 	client := &http.Client{Transport: &http.Transport{
 		Proxy:             nil,
-		DialContext:       d.activeCore().DialContext,
+		DialContext:       d.core.DialContext,
 		DisableKeepAlives: true,
 	}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.cfg.egressURL, nil)

@@ -548,35 +548,18 @@ ShellRoot {
           panel.openView("settings")
           panel.focusRow("coreXray")
           panel.scrollCursorIntoView()
-          var warnings = Array.from({length: 30}, function(_, i) { return "Rule " + (i + 1) + " (PROCESS-NAME) skipped" })
-          panel.service.call("test.core-warnings", {warnings: warnings}, function() { testRoot.clickButton("Xray") })
         } },
-      { name: "warn before switching", until: function() { return testRoot.findObject(panel, "compatibilityPrompt") !== null }, then: function() {
-          t.check(panel.service.coreName, "mihomo", "the running core stays active while confirmation is open")
-          t.check(testRoot.clickButton("Compatibility warnings"), false, "Settings has no button before warnings are accepted")
-          var scroll = testRoot.settingsScroll(testRoot.findObject(panel, "compatibilityPrompt"))
-          t.check(scroll.contentHeight > scroll.height, true, "long warning lists are scrollable")
-          key(Qt.Key_PageDown)
+      { name: "select Xray preferred", until: function() {
+          return panel.service.streamsReady(["status"]) && panel.at("coreXray")
+        }, then: function() {
+          t.check(testRoot.clickButton("Xray preferred"), true, "select the preferred outbound engine")
         } },
-      { name: "scroll warnings with PageDown", until: function() {
-          const prompt = testRoot.findObject(panel, "compatibilityPrompt")
-          return prompt !== null && testRoot.settingsScroll(prompt).contentY > 0
-        }, then: function() { key(Qt.Key_Escape) } },
-      { name: "cancel the core switch", until: function() { return panel.service.coreConfirmation === null }, then: function() {
-          t.check(testRoot.findObject(panel, "compatibilityPrompt"), null, "Escape cancels the switch")
-          t.check(panel.service.coreName, "mihomo", "cancel keeps the current core")
-          t.check(testRoot.clickButton("Xray"), true, "the user can try the switch again")
+      { name: "switch to Xray preferred", until: function() { return !panel.service.busy && panel.service.coreName === "xray" }, then: function() {
+          t.check(panel.service.coreState, "on", "the proxy keeps running after switching")
+          t.check(testRoot.clickButton("mihomo"), true, "switch back to mihomo")
         } },
-      { until: function() { return testRoot.findObject(panel, "compatibilityPrompt") !== null }, then: function() {
-          type("y")
-        } },
-      { until: function() { return !panel.service.busy && panel.service.coreName === "xray" }, then: function() {
-          t.check(panel.service.coreState, "on", "confirm switches and leaves the proxy running")
-          t.check(testRoot.clickButton("Compatibility warnings"), true, "accepted warnings can be reopened")
-        } },
-      { until: function() { return testRoot.findObject(panel, "compatibilityPrompt") !== null }, then: function() {
-          t.check(testRoot.findObject(panel, "compatibilityPrompt").acceptText, "", "the warning list has no switch action")
-          key(Qt.Key_Escape)
+      { name: "switch back to mihomo", until: function() { return !panel.service.busy && panel.service.coreName === "mihomo" }, then: function() {
+          t.check(panel.service.coreState, "on", "the proxy keeps running after switching back")
         } }
     ]
   }

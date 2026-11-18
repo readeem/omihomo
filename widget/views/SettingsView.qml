@@ -15,7 +15,7 @@ Item {
     mode: modeRow, dns: dnsSelector, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
     checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow,
-    coreMihomo: coreCard, coreXray: coreCard, coreWarnings: coreCard
+    coreMihomo: coreCard, coreXray: coreCard
   })
 
   readonly property var updater: panel.updater
@@ -47,7 +47,7 @@ Item {
     contentHeight: settingsColumn.implicitHeight
     onContentHeightChanged: {
       if (panel.uninstallArmed) view.reveal("uninstall")
-      else if (panel.at("coreMihomo") || panel.at("coreXray") || panel.at("coreWarnings")) view.reveal("coreXray")
+      else if (panel.at("coreMihomo") || panel.at("coreXray")) view.reveal("coreXray")
     }
     clip: true
     boundsBehavior: Flickable.StopAtBounds
@@ -357,7 +357,7 @@ Item {
         visible: coreCard.visible
         Layout.fillWidth: true
         Layout.topMargin: Style.space(8)
-        title: "PROXY CORE"
+        title: "PREFERRED CORE"
       }
 
       Rectangle {
@@ -396,7 +396,7 @@ Item {
             SmallButton {
               theme: view.theme
               Layout.fillWidth: true
-              text: "Xray"
+              text: "Xray preferred"
               primary: view.service.coreName === "xray"
               enabled: view.service.ready && !view.service.busy
               hasCursor: view.panel.at("coreXray")
@@ -415,14 +415,6 @@ Item {
             wrapMode: Text.Wrap
           }
 
-          SmallButton {
-            theme: view.theme
-            text: "Compatibility warnings"
-            visible: view.service.coreWarnings.length > 0
-            hasCursor: view.panel.at("coreWarnings")
-            onHovered: function(on) { if (on) view.panel.focusRow("coreWarnings") }
-            onClicked: view.panel.showingCoreWarnings = true
-          }
         }
       }
     }

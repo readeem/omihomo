@@ -26,9 +26,7 @@ Panel {
 
   property string removeArmed: ""
   property bool uninstallArmed: false
-  property bool showingCoreWarnings: false
-  readonly property Item activePrompt: directPrompt.visible ? directPrompt
-    : (compatibilityPrompt.visible ? compatibilityPrompt : null)
+  readonly property Item activePrompt: directPrompt.visible ? directPrompt : null
   property int ruleTypeIndex: 0
   property int editingRule: 0
   property bool ruleFormOpen: false
@@ -294,7 +292,6 @@ Panel {
       if (updater.releaseUrl !== "") rows.push({ s: "releaseNotes" })
       rows.push({ s: "uninstall" })
       if (omihomo.coreChoices.length > 1) rows.push({ s: "coreMihomo" }, { s: "coreXray" })
-      if (omihomo.coreWarnings.length > 0) rows.push({ s: "coreWarnings" })
       break
     }
     return rows
@@ -393,7 +390,6 @@ Panel {
     case "uninstall": uninstallCore(); break
     case "coreMihomo": omihomo.setCore("mihomo"); break
     case "coreXray": omihomo.setCore("xray"); break
-    case "coreWarnings": showingCoreWarnings = true; break
     }
   }
 
@@ -820,9 +816,6 @@ Panel {
       editing = null
       omihomo.clearMessages()
       Qt.callLater(focusPrompt)
-    } else {
-      showingCoreWarnings = false
-      omihomo.coreConfirmation = null
     }
   }
 
@@ -1414,23 +1407,5 @@ Panel {
       onDecided: function(allow) { omihomo.decideDownload(download.id, allow) }
     }
 
-    PanelPrompt {
-      id: compatibilityPrompt
-      objectName: "compatibilityPrompt"
-      anchors.fill: parent
-      theme: root.theme
-      readonly property var confirmation: omihomo.coreConfirmation
-      visible: !directPrompt.visible && messages.length > 0
-      title: confirmation ? "Switch to Xray?" : "Compatibility warnings"
-      acceptText: confirmation ? "Switch · y" : ""
-      messages: confirmation ? ["Xray will skip these entries."].concat(confirmation.warnings)
-        : (root.showingCoreWarnings ? omihomo.coreWarnings : [])
-      onDecided: function(accept) {
-        const request = confirmation
-        omihomo.coreConfirmation = null
-        root.showingCoreWarnings = false
-        if (accept && request) omihomo.setCore(request.name, request.token)
-      }
-    }
   }
 }

@@ -42,7 +42,7 @@ jobs:
           version=$(go list -m -f '{{.Version}}' github.com/metacubex/mihomo)
           upstream=$(go mod download -json "github.com/metacubex/mihomo@$version" | jq -r .GoMod)
           diff <(go mod edit -json "$upstream" | jq -S '[.Replace[] | select(.Old.Path != "google.golang.org/protobuf")]') \
-            <(go mod edit -json | jq -S '[.Replace[] | select(.Old.Path != "github.com/metacubex/sing-quic")]')
+            <(go mod edit -json | jq -S '.Replace // []')
       - run: mise run vulncheck
 
   screenshots:

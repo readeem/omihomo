@@ -337,39 +337,8 @@ func (a *app) setCommand() *ffcli.Command {
 }
 
 func (a *app) setCoreCommand() *ffcli.Command {
-	fs := a.flags("core")
-	pretty := fs.Bool("pretty", false, "indent the JSON result")
-	confirm := fs.String("confirm", "", "accept the warning preview with its confirmation token")
-	cmd := &ffcli.Command{Name: "core", FlagSet: fs,
-		ShortUsage: "omihomo set core [--pretty] [--confirm <token>] <mihomo|xray>",
-		ShortHelp:  "select the proxy core and restart it if running"}
-	cmd.Exec = func(ctx context.Context, args []string) error {
-		if len(args) != 1 {
-			return usage(cmd, "core takes one argument")
-		}
-		c, err := dial(ctx)
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-		req := protocol.CoreSelectionArgs{Name: args[0], Confirmation: *confirm}
-		var result protocol.CoreSelection
-		if err := c.Call(ctx, protocol.OpSetCore, req, &result); err != nil {
-			return err
-		}
-		data, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		if err := a.print(data, *pretty); err != nil {
-			return err
-		}
-		if len(result.ConfirmWarnings) > 0 {
-			return &exitError{code: ExitState, err: errors.New("review confirm_warnings and rerun with --confirm followed by the confirmation token")}
-		}
-		return nil
-	}
-	return cmd
+	return a.call("core", "omihomo set core [--pretty] <mihomo|xray>",
+		"choose the preferred proxy transport", nargs(1, protocol.OpSetCore, func(args []string) any { return protocol.NameArgs{Name: args[0]} }))
 }
 
 // builtinTargets are the targets every subscription has.

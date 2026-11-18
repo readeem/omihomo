@@ -96,7 +96,7 @@ func (d *server) loadProfile(sub state.Subscription) (core.Profile, error) {
 	if err != nil {
 		return core.Profile{}, err
 	}
-	doc, err := profile.Read(snap.Body, d.activeCore().ParseLinks)
+	doc, err := profile.Read(snap.Body, d.core.ParseLinks)
 	if err != nil {
 		return core.Profile{}, err
 	}
@@ -139,7 +139,7 @@ func (d *server) download(ctx context.Context, name, url string) (*download, *do
 	rejected := func(err error) *downloadError {
 		return &downloadError{err: fail(protocol.CodeRejected, "%v", err), answered: true}
 	}
-	doc, err := profile.Read(resp.Body, d.activeCore().ParseLinks)
+	doc, err := profile.Read(resp.Body, d.core.ParseLinks)
 	if err != nil {
 		return nil, rejected(err)
 	}
@@ -254,9 +254,6 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 		d.mu.Lock()
 		d.profile = dl.profile
 		d.mu.Unlock()
-	}
-	if activate {
-		d.updateCoreCompatibility()
 	}
 	d.log.Info("subscription added", "subscription", sub.Name, "active", activate)
 	d.publish(ctx)
@@ -397,9 +394,6 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	}); err != nil {
 		return nil, err
 	}
-	if active {
-		d.updateCoreCompatibility()
-	}
 	d.log.Info("subscription refreshed", "subscription", sub.Name)
 	d.publish(ctx)
 	return describe(sub, active), nil
@@ -466,7 +460,6 @@ func (d *server) activateSubscription(ctx context.Context, name string) (any, *p
 		d.detail = ""
 	}
 	d.mu.Unlock()
-	d.updateCoreCompatibility()
 	d.log.Info("subscription activated", "subscription", sub.Name)
 	d.publish(ctx)
 	return d.status(), nil
@@ -501,7 +494,6 @@ func (d *server) removeSubscription(ctx context.Context, name string) (any, *pro
 	if err := d.store.RemoveSnapshot(sub.ID); err != nil {
 		d.log.Warn("remove a subscription's content", "subscription", sub.Name, "err", err)
 	}
-	d.updateCoreCompatibility()
 	d.log.Info("subscription removed", "subscription", sub.Name)
 	d.publish(ctx)
 	return protocol.Empty{}, nil
@@ -580,11 +572,9 @@ func installGeodata(c core.Core, f core.GeodataFile, tmp string, p core.Profile)
 // current when it began.
 func (d *server) refreshGeodata(ctx context.Context) {
 	d.mu.Lock()
-	p := runConfig(d.settings, d.profile).Profile
-	name := d.coreNameLocked()
+	p := d.runConfig(d.settings, d.profile).Profile
 	d.mu.Unlock()
-	c := d.coreFor(name)
-	for _, f := range c.Geodata(p) {
+	for _, f := range d.core.Geodata(p) {
 		info, err := os.Stat(f.Path)
 		if err != nil || d.cfg.now().Sub(info.ModTime()) < geodataAge {
 			continue
@@ -593,12 +583,9 @@ func (d *server) refreshGeodata(ctx context.Context) {
 		if err == nil {
 			d.opMu.Lock()
 			d.mu.Lock()
-			current := runConfig(d.settings, d.profile).Profile
-			sameCore := name == d.coreNameLocked()
+			current := d.runConfig(d.settings, d.profile).Profile
 			d.mu.Unlock()
-			if sameCore {
-				err = installGeodata(c, f, tmp, current)
-			}
+			err = installGeodata(d.core, f, tmp, current)
 			d.opMu.Unlock()
 			os.Remove(tmp)
 		}

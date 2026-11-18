@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ import (
 	"github.com/metacubex/mihomo/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/core/xray"
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/uplink"
 )
@@ -64,6 +66,7 @@ type Core struct {
 	uplink      uplink.Network
 	log         *slog.Logger
 	tap         *logTap
+	xrayNetwork xray.Network
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
@@ -106,7 +109,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 		log = slog.Default()
 	}
 	constant.SetHomeDir(home)
-	return &Core{log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName}, nil
+	return &Core{log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}}, nil
 }
 
 func privateDir(dir string) error {
@@ -169,6 +172,20 @@ var afterRestoreStop = func() {}
 
 // run applies rt and commits it once everything it asks for came up.
 func (c *Core) run(rt *runtime) error {
+	c.mu.Lock()
+	previous := c.current
+	c.mu.Unlock()
+	if rt.cfg.XrayPreferred {
+		engine := previous.xray
+		if engine == nil || !reflect.DeepEqual(previous.cfg.Profile.Proxies, rt.cfg.Profile.Proxies) {
+			var err error
+			engine, err = xray.New(rt.cfg.Profile.Proxies, c.xrayNetwork)
+			if err != nil {
+				return err
+			}
+		}
+		rt.useXray(engine)
+	}
 	stop := c.tap.watch()
 	// These bootstrap clients are installed before health checks can dial.
 	// Only this private adapter can discover or bind to uplink DNS.
@@ -187,6 +204,9 @@ func (c *Core) run(rt *runtime) error {
 	c.mu.Unlock()
 	resolver.ProxyServerHostResolver = newBootstrapResolver(normalDNS, resolver.ProxyServerHostResolver)
 	if err := started(rt.cfg, stop()); err != nil {
+		if rt.xray != previous.xray {
+			c.closeXray(rt.xray)
+		}
 		return err
 	}
 	c.commit(rt)
@@ -231,6 +251,7 @@ func started(cfg core.Config, logged []string) error {
 // match order with their sources, the groups in profile order, and the type
 // each proxy and group was given.
 type runtime struct {
+	xray   *xray.Outbounds
 	cfg    core.Config
 	parsed *config.Config
 	rules  []protocol.Rule
@@ -317,9 +338,13 @@ func parse(raw *config.RawConfig) (parsed *config.Config, err error) {
 func (c *Core) commit(rt *runtime) {
 	rt.parsed = nil
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	previous := c.current.xray
 	c.running, c.current = true, rt
 	c.generation++
+	c.mu.Unlock()
+	if previous != rt.xray {
+		c.closeXray(previous)
+	}
 }
 
 // restore puts back the config that ran before a failed apply, or leaves
@@ -346,12 +371,22 @@ func (c *Core) Stop(ctx context.Context) error {
 	return nil
 }
 
+func (c *Core) closeXray(outbounds *xray.Outbounds) {
+	if outbounds != nil {
+		if err := outbounds.Close(); err != nil {
+			c.log.Warn("close Xray outbounds", "err", err)
+		}
+	}
+}
+
 func (c *Core) stop() {
 	c.mu.Lock()
+	previous := c.current.xray
 	c.running, c.current = false, &runtime{}
 	c.generation++
 	generation := c.generation
 	c.mu.Unlock()
+	c.closeXray(previous)
 	parsed, err := parse(stoppedConfig())
 	if err != nil {
 		// The stopped config is fixed, so this is a bug. TUN is what must

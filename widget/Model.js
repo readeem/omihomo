@@ -60,7 +60,6 @@ function defaultStatus() {
     state: "unknown",
     coreName: "",
     coreChoices: [],
-    coreWarnings: [],
     detail: "",
     activeSubscription: "",
     primaryGroup: "",
@@ -83,9 +82,6 @@ function readStatus(data) {
     coreName: text(data.core),
     coreChoices: Array.isArray(data.core_choices) ? data.core_choices.filter(function(name) {
       return name === "mihomo" || name === "xray"
-    }) : [],
-    coreWarnings: Array.isArray(data.core_warnings) ? data.core_warnings.filter(function(warning) {
-      return typeof warning === "string"
     }) : [],
     detail: text(data.detail),
     activeSubscription: text(data.active_subscription),

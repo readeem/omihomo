@@ -498,6 +498,8 @@ func exportFixture(ctx context.Context, body []byte) (map[string]string, error) 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "--internal-export-selections")
+	// Bound race detector worker allocations inside the helper's memory limit.
+	cmd.Env = append(os.Environ(), "GOMAXPROCS=2")
 	cmd.Stdin = bytes.NewReader(body)
 	output, err := cmd.Output()
 	if err != nil {

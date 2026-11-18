@@ -15,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 4
+	Version = 5
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -116,7 +116,7 @@ const (
 	OpStart = "start" // nil -> Status
 	OpStop  = "stop"  // nil -> Status
 
-	OpSetCore = "core.select" // CoreSelectionArgs -> CoreSelection
+	OpSetCore = "core.select" // NameArgs -> Status
 
 	OpApply = "settings.apply" // ApplyArgs -> Status
 
@@ -183,7 +183,6 @@ type Empty struct{}
 type Status struct {
 	Core               string   `json:"core,omitempty"`
 	CoreChoices        []string `json:"core_choices,omitempty"`
-	CoreWarnings       []string `json:"core_warnings,omitempty"`
 	State              string   `json:"state"`
 	Detail             string   `json:"detail"`
 	ActiveSubscription string   `json:"active_subscription"`
@@ -202,19 +201,6 @@ type Status struct {
 	StartedAt int64 `json:"started_at"`
 	// TUNBypass lists the CIDRs TUN routes around, for the rule tester.
 	TUNBypass []string `json:"tun_bypass"`
-}
-
-type CoreSelectionArgs struct {
-	Name         string `json:"name"`
-	Confirmation string `json:"confirmation,omitempty"`
-}
-
-type CoreSelection struct {
-	Status
-	// Send Confirmation back after reviewing the warnings. It is valid only
-	// for the configuration the daemon used to produce this preview.
-	ConfirmWarnings []string `json:"confirm_warnings,omitempty"`
-	Confirmation    string   `json:"confirmation,omitempty"`
 }
 
 // StreamsArgs names streams to subscribe to or drop.

@@ -19,7 +19,7 @@ trap cleanup EXIT
 # Each suite runs as its own Quickshell config against its own fake daemons
 # (fixtures/fake-daemon.js), one per behaviour, so no state leaks between
 # suites. `none.sock` is never created: no daemon answers there.
-go build -o "$test_root/omihomo" "$project_root/cmd/omihomo"
+"$project_root/tools/with-go-patches" go build -o "$test_root/omihomo" ./cmd/omihomo
 cat > "$test_root/edit" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -46,7 +46,7 @@ for suite in service_state_test live_state_test; do
   start_daemon ok --latency 150
   start_daemon fail --latency 50 --fail start,settings.apply,subscriptions.add
   start_daemon old --protocol 0
-  start_daemon new --protocol 5
+  start_daemon new --protocol 6
   start_daemon refuse --refuse
   start_daemon busy --busy-once
   for name in ok fail old new refuse busy; do

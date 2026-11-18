@@ -109,14 +109,15 @@ func compileRules(entries []protocol.RuleEntry, p core.Profile) ([]core.Rule, []
 	return effective, listed
 }
 
-func runConfig(s state.Settings, p core.Profile) core.Config {
+func (d *server) runConfig(s state.Settings, p core.Profile) core.Config {
 	rules, _ := compileRules(s.Rules, p)
 	if !s.SubscriptionRulesDisabled {
 		rules = append(rules, p.Rules...)
 	}
 	p.Rules = rules
 	return core.Config{
-		Mode: s.Mode, TUN: s.TUN, TUNRedirect: s.TUNRedirect, Tailscale: s.Tailscale,
+		XrayPreferred: d.preferredCore(s.Core) == protocol.CoreXray,
+		Mode:          s.Mode, TUN: s.TUN, TUNRedirect: s.TUNRedirect, Tailscale: s.Tailscale,
 		TailnetProxy: s.TailnetProxy, OmihomoRulesDisabled: s.OmihomoRulesDisabled,
 		PrimaryGroup: s.PrimaryGroup, DNSDestination: s.DNSDestination, TUNBypass: bypass(s), Profile: p,
 	}

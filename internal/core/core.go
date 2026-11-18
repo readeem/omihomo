@@ -16,6 +16,7 @@ import (
 // typed settings and the active subscription; a Core never reads settings of
 // its own and never fetches anything.
 type Config struct {
+	XrayPreferred        bool
 	Mode                 string
 	TUN                  bool
 	TUNRedirect          bool
@@ -159,12 +160,6 @@ type Core interface {
 	// broken database can end the process, and one without what the rules
 	// match fails them, so either leaves what is in place.
 	InstallGeodata(f GeodataFile, path string, p Profile) error
-}
-
-// Compatibility reports what an adapter can load from a config before it starts.
-type Compatibility struct {
-	Warnings []string
-	Rules    []protocol.Rule
 }
 
 // GeodataFile is one geodata file a profile needs: Path is absolute, URL is

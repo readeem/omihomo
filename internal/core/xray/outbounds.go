@@ -51,15 +51,9 @@ func buildOutbound(tag, kind string, settings fields, stream *conf.StreamConfig)
 	return c.Build()
 }
 
-func proxyOutbound(tag string, p core.Proxy, tun bool) (*xcore.OutboundHandlerConfig, string) {
+func proxyOutbound(tag, socketKey string, p core.Proxy) (*xcore.OutboundHandlerConfig, string) {
 	options := fields(p.Options)
 	kind := p.Type
-	if kind == "direct" {
-		if key := options.unsupported(); key != "" {
-			return nil, "unsupported option " + key
-		}
-		return configuredOutbound(tag, "freedom", nil, socketSettings(tun))
-	}
 	server, port := options.string("server"), options["port"]
 	n, ok := port.(int)
 	if !ok || n < 1 || n > 65535 || !safeHost(server) {
@@ -92,6 +86,8 @@ func proxyOutbound(tag string, p core.Proxy, tun bool) (*xcore.OutboundHandlerCo
 			cipher = "auto"
 		}
 		settings["vnext"] = []fields{{"address": server, "port": n, "users": []fields{{"id": options.string("uuid"), "security": cipher}}}}
+	case "hysteria2":
+		return hysteriaOutbound(tag, socketKey, options, server, n)
 	case "trojan":
 		allowed = append(allowed, "password")
 		settings["password"] = options.string("password")
@@ -99,12 +95,6 @@ func proxyOutbound(tag string, p core.Proxy, tun bool) (*xcore.OutboundHandlerCo
 		allowed = append(allowed, "cipher", "password")
 		kind = "shadowsocks"
 		settings["method"], settings["password"] = options.string("cipher"), options.string("password")
-	case "socks5", "http":
-		allowed = append(allowed, "username", "password")
-		if kind == "socks5" {
-			kind = "socks"
-		}
-		settings["user"], settings["pass"] = options.string("username"), options.string("password")
 	default:
 		return nil, "unsupported protocol"
 	}
@@ -114,7 +104,7 @@ func proxyOutbound(tag string, p core.Proxy, tun bool) (*xcore.OutboundHandlerCo
 	if encoding := options.string("packet-encoding"); encoding != "" && encoding != "xudp" {
 		return nil, "unsupported packet encoding"
 	}
-	stream, reason := proxyStream(options, server, tun, p.Type == "trojan")
+	stream, reason := proxyStream(options, server, socketKey, p.Type == "trojan")
 	if reason != "" {
 		return nil, reason
 	}
@@ -146,25 +136,10 @@ func isDomain(host string) bool {
 	})
 }
 
-func socketSettings(tun bool) *conf.StreamConfig {
-	sock := &conf.SocketConfig{DomainStrategy: "ForceIP"}
-	if tun {
-		sock.Mark = tunMark
-	}
-	return &conf.StreamConfig{SocketSettings: sock}
-}
-
-func proxyStream(opts fields, server string, tun, trojan bool) (*conf.StreamConfig, string) {
-	stream := socketSettings(tun)
-	sock := stream.SocketSettings
-	sock.TFO = opts["tfo"]
-	sock.TcpMptcp = opts["mptcp"] == true
+func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf.StreamConfig, string) {
+	stream := &conf.StreamConfig{SocketSettings: &conf.SocketConfig{Interface: socketKey}}
 	switch opts.string("ip-version") {
-	case "", "dual":
-	case "ipv4":
-		sock.DomainStrategy = "ForceIPv4"
-	case "ipv6":
-		sock.DomainStrategy = "ForceIPv6"
+	case "", "dual", "ipv4", "ipv6", "ipv4-prefer", "ipv6-prefer":
 	default:
 		return nil, "unsupported IP version preference"
 	}
@@ -194,10 +169,8 @@ func proxyStream(opts fields, server string, tun, trojan bool) (*conf.StreamConf
 			query.Set("ed", strconv.Itoa(n))
 			path.RawQuery = query.Encode()
 		}
-		if value := query.Get("ed"); value != "" {
-			if n, err := strconv.ParseUint(value, 10, 16); err != nil || n > 8192 {
-				return nil, "unsupported WebSocket early-data size"
-			}
+		if query.Has("ed") {
+			return nil, "WebSocket early data defers connection setup"
 		}
 		stream.WSSettings = &conf.WebSocketConfig{Path: path.String(), Headers: headers}
 	case "grpc":
@@ -249,7 +222,7 @@ func proxyStream(opts fields, server string, tun, trojan bool) (*conf.StreamConf
 		stream.Security = "reality"
 		stream.REALITYSettings = &conf.REALITYConfig{ServerName: sni, Fingerprint: fingerprint,
 			PublicKey: reality.string("public-key"), ShortId: reality.string("short-id")}
-	} else if opts["tls"] == true || trojan {
+	} else if opts["tls"] == true || tlsRequired {
 		var alpn []string
 		values, _ := opts["alpn"].([]any)
 		for _, value := range values {
@@ -258,7 +231,7 @@ func proxyStream(opts fields, server string, tun, trojan bool) (*conf.StreamConf
 			}
 		}
 		stream.Security = "tls"
-		stream.TLSSettings = &conf.TLSConfig{ServerName: sni, Fingerprint: fingerprint, ALPN: (*conf.StringList)(&alpn)}
+		stream.TLSSettings = &conf.TLSConfig{UseSystemCA: true, ServerName: sni, Fingerprint: fingerprint, ALPN: (*conf.StringList)(&alpn)}
 	}
 	return stream, ""
 }

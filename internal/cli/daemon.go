@@ -18,7 +18,6 @@ import (
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/core/fakecore"
 	"github.com/readeem/omihomo/internal/core/mihomo"
-	"github.com/readeem/omihomo/internal/core/xray"
 	"github.com/readeem/omihomo/internal/daemon"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -59,7 +58,7 @@ func (a *app) daemonCommand() *ffcli.Command {
 			}
 			log.Info("hosting mihomo", "version", mihomo.Version, "home", *home)
 			c = m
-			opts = append(opts, daemon.WithXrayCore(xray.New(7890, m.ParseLinks)), daemon.WithForcedCore(*coreName))
+			opts = append(opts, daemon.WithXrayPreference(), daemon.WithForcedCore(*coreName))
 		default:
 			return usage(cmd, "unknown core %q", *coreName)
 		}

@@ -98,7 +98,7 @@ start() {
   : >"$log"
   stage "$session" "$here/drive.qml"
   [[ -n $core ]] || { rm "$session/installed"; mkfifo "$session/install"; }
-  (cd "$root" && go build -o "$session/omihomo" ./cmd/omihomo) 9>&-
+  "$root/tools/with-go-patches" go build -o "$session/omihomo" ./cmd/omihomo 9>&-
   setsid timeout 1h "$0" _supervise "${panel_env[@]}" "${platform[@]}" \
     OMIHOMO_DRIVE_CLI="$session/omihomo" </dev/null >>"$log" 2>&1 &
   exec 9>&-

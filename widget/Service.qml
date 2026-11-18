@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 4
+  readonly property int protocolVersion: 5
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -37,8 +37,6 @@ Item {
 
   property string coreName: ""
   property var coreChoices: []
-  property var coreWarnings: []
-  property var coreConfirmation: null
   property string pendingCore: ""
   property string coreState: "unknown"
   property string coreDetail: ""
@@ -324,7 +322,6 @@ Item {
   // more slowly: the owner may claim the install, or update it, meanwhile.
   function disconnected() {
     pendingDownloads = []
-    coreConfirmation = null
     helloTimer.stop()
     if (link === "ready" || link === "connecting") link = "connecting"
     failPending()
@@ -461,7 +458,6 @@ Item {
     var wasRunning = coreRunning
     coreName = status.coreName
     coreChoices = status.coreChoices
-    coreWarnings = status.coreWarnings
     coreState = status.state
     coreDetail = status.detail
     activeSubscription = status.activeSubscription
@@ -517,11 +513,9 @@ Item {
   // Everything the daemon said, for when there is no daemon to talk to.
   function forgetAll() {
     pendingDownloads = []
-    coreConfirmation = null
     streamErrors = ({})
     coreName = ""
     coreChoices = []
-    coreWarnings = []
     coreState = link === "absent" ? "not-installed" : "unknown"
     coreDetail = ""
     activeSubscription = ""
@@ -647,17 +641,15 @@ Item {
     }
   }
 
-  function setCore(name, confirmation) {
+  function setCore(name) {
     if (busy || !streamsReady(["status"]) || name === coreName || coreChoices.indexOf(name) < 0) return
     pendingCore = name
-    reportDone("Switching to " + (name === "xray" ? "Xray" : "mihomo") + "…")
-    _coreCall = call("core.select", { name: name, confirmation: confirmation || "" }, function(result, error) {
+    reportDone("Switching to " + (name === "xray" ? "Xray preferred" : "mihomo") + "…")
+    _coreCall = call("core.select", { name: name }, function(result, error) {
       root._coreCall = 0
       root.pendingCore = ""
       if (error) return root.reportError(error, "core-select")
       root.reportDone("")
-      if (result && Array.isArray(result.confirm_warnings) && result.confirm_warnings.length > 0)
-        root.coreConfirmation = { name: name, warnings: result.confirm_warnings, token: result.confirmation }
     })
     if (_coreCall === 0) {
       pendingCore = ""
