@@ -584,6 +584,11 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	d.mu.Unlock()
 
 	in := args.Settings
+	if in.Core == "" {
+		in.Core = next.Core
+	} else if err := d.checkCore(in.Core); err != nil {
+		return nil, err
+	}
 	if in.DNSDestination != "" && (in.DNSDestination == "GLOBAL" || !(slices.ContainsFunc(p.Groups, func(g core.Group) bool { return g.Name == in.DNSDestination }) || slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == in.DNSDestination }))) {
 		return nil, fail(protocol.CodeNotFound, "DNS destination %q is unavailable in the active subscription", in.DNSDestination)
 	}

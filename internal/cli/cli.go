@@ -298,7 +298,17 @@ func (a *app) setCommand() *ffcli.Command {
 		})
 	}
 	return a.group("set", "omihomo set <setting> [--pretty] <value>", "change a setting",
-		a.setCoreCommand(),
+		setting("core", "<mihomo|xray>", "choose the preferred proxy transport",
+			func(v string) (change, error) {
+				name := protocol.CoreName(v)
+				if name != protocol.CoreMihomo && name != protocol.CoreXray {
+					return nil, fmt.Errorf("core must be mihomo or xray")
+				}
+				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
+					s.Settings.Core = name
+					return nil
+				}, nil
+			}),
 		setting("mode", "<rule|global|direct>", "route by rules, everything through the proxy, or nothing",
 			func(v string) (change, error) {
 				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
@@ -334,13 +344,6 @@ func (a *app) setCommand() *ffcli.Command {
 		toggle("tailnet-proxy", "send the tailnet to the proxy server",
 			func(s *protocol.Settings) *bool { return &s.TailnetProxy }),
 	)
-}
-
-func (a *app) setCoreCommand() *ffcli.Command {
-	return a.call("core", "omihomo set core [--pretty] <mihomo|xray>",
-		"choose the preferred proxy transport", nargs(1, protocol.OpSetCore, func(args []string) any {
-			return protocol.CoreArgs{Name: protocol.CoreName(args[0])}
-		}))
 }
 
 // builtinTargets are the targets every subscription has.

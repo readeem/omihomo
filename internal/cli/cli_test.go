@@ -272,6 +272,27 @@ func TestSettingsFilesHoldTheChanges(t *testing.T) {
 	}
 }
 
+func TestCorePreferenceLivesInSettings(t *testing.T) {
+	serve(t, os.Getuid(), daemon.WithCores(protocol.CoreMihomo, protocol.CoreXray))
+	if code, _, errOut := run(t, "", "set", "core", "xray"); code != cli.ExitOK {
+		t.Fatalf("set core: %d %s", code, errOut)
+	}
+	dir, err := settings.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil || !strings.Contains(string(saved), `"core": "xray"`) {
+		t.Fatalf("saved core: %s (%v)", saved, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"core":"mihomo","mode":"rule"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := run(t, "", "apply"); code != cli.ExitOK || !strings.Contains(out, `"core":"mihomo"`) {
+		t.Fatalf("apply core: %d %s %s", code, out, errOut)
+	}
+}
+
 func TestUsageErrorsNeverReachTheDaemon(t *testing.T) {
 	t.Setenv("OMIHOMO_SOCKET", filepath.Join(t.TempDir(), "none"))
 	for _, args := range [][]string{

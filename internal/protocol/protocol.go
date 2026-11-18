@@ -213,6 +213,8 @@ type StreamsArgs struct {
 
 // Settings are the owner's typed choices, as their settings.json holds them.
 type Settings struct {
+	// Empty preserves a preference saved before the owner file held it.
+	Core                      CoreName        `json:"core,omitempty"`
 	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
 	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
 	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`

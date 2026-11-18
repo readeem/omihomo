@@ -14,12 +14,19 @@ func (d *server) preferredCore(saved protocol.CoreName) protocol.CoreName {
 	return d.cfg.cores[0]
 }
 
-func (d *server) switchCore(ctx context.Context, name protocol.CoreName) (protocol.Status, *protocol.Error) {
+func (d *server) checkCore(name protocol.CoreName) *protocol.Error {
 	if name != protocol.CoreMihomo && name != protocol.CoreXray {
-		return protocol.Status{}, fail(protocol.CodeInvalid, "core must be mihomo or xray")
+		return fail(protocol.CodeInvalid, "core must be mihomo or xray")
 	}
 	if d.preferredCore(name) != name {
-		return protocol.Status{}, fail(protocol.CodeConflict, "%s is unavailable in this daemon", name)
+		return fail(protocol.CodeConflict, "%s is unavailable in this daemon", name)
+	}
+	return nil
+}
+
+func (d *server) switchCore(ctx context.Context, name protocol.CoreName) (protocol.Status, *protocol.Error) {
+	if err := d.checkCore(name); err != nil {
+		return protocol.Status{}, err
 	}
 
 	d.opMu.Lock()

@@ -164,17 +164,13 @@ const ops = {
     push("status", "rules")
     return { result: status }
   },
-  "core.select": args => later(400, () => {
-    if (!status.core_choices.includes(args.name)) return fail("invalid", "unknown core")
-    status.core = args.name
-    push("status", "groups", "rules")
-    return { result: status }
-  }),
   "settings.apply": (args) => {
+    if (args.settings.core && !status.core_choices.includes(args.settings.core)) return fail("invalid", "unknown core")
     const { mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group, dns_destination } = args.settings
     if (!["rule", "global", "direct"].includes(mode)) return fail("invalid", `unknown mode ${mode}`)
     if (primary_group !== "" && !findGroup(primary_group)) return fail("not_found", `no group ${primary_group}`)
     Object.assign(status, { dns_destination: dns_destination || "", mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group: primary_group || "Proxy" })
+    if (args.settings.core) status.core = args.settings.core
     status.omihomo_rules_disabled = args.settings.omihomo_rules_disabled === true
     status.subscription_rules_disabled = args.settings.subscription_rules_disabled === true
     userRules = args.rules

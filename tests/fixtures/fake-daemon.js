@@ -135,13 +135,9 @@ const ops = {
     publish()
     return { result: status }
   },
-  "core.select": (client, args) => later(() => {
-    if (!status.core_choices.includes(args.name)) return failure("invalid", "unknown core")
-    status.core = args.name
-    publish()
-    return { result: status }
-  }),
   "settings.apply": (client, a) => {
+    if (a.settings.core && !status.core_choices.includes(a.settings.core))
+      return failure("invalid", "unknown core")
     if (!["rule", "global", "direct"].includes(a.settings.mode))
       return failure("invalid", "mode must be rule, global or direct")
     if (a.settings.tailscale === true && !status.tailscale_present)
