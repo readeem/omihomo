@@ -442,6 +442,51 @@ func TestGRPCPreservesRequestFields(t *testing.T) {
 	}
 }
 
+func TestGRPCReceivesReplyAfterWriteEOF(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			return
+		}
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("Trailer", "Grpc-Status")
+		// One gRPC message carrying a Hunk with the VLESS reply header and payload.
+		w.Write([]byte("\x00\x00\x00\x00\x09\x0a\x07\x00\x00reply"))
+		w.Header().Set("Grpc-Status", "0")
+	}))
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	defer server.Close()
+
+	engine, err := xray.New([]core.Proxy{{Name: "gun", Type: "vless", Options: map[string]any{
+		"server": "127.0.0.1", "port": server.Listener.Addr().(*net.TCPAddr).Port,
+		"network": "grpc", "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+	}}}, localNetwork{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	conn, err := engine.Get("gun").DialContext(ctx, "127.0.0.1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	conn.SetDeadline(deadline)
+	if _, err := io.WriteString(conn, "request"); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.(interface{ CloseWrite() error }).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	var reply [5]byte
+	if _, err := io.ReadFull(conn, reply[:]); err != nil || string(reply[:]) != "reply" {
+		t.Fatalf("reply after write EOF = %q, %v", reply, err)
+	}
+}
+
 func TestClosingXHTTPConnectionCancelsItsRequests(t *testing.T) {
 	for _, cleartextHTTP2 := range []bool{false, true} {
 		name := "HTTP1"
