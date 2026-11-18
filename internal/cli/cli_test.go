@@ -165,8 +165,8 @@ func TestSubscriptionAndSettingsCommands(t *testing.T) {
 	if code, _, _ := run(t, "", "set", "dns-destination", "Missing"); code != cli.ExitNotFound {
 		t.Fatalf("unknown DNS destination exit %d", code)
 	}
-	if code, _, _ := run(t, "", "sub", "update", "Work"); code != cli.ExitState {
-		t.Fatalf("an update right after the add exit %d", code)
+	if code, out, errOut := run(t, "", "sub", "update", "Work"); code != cli.ExitOK || !strings.Contains(out, `"name":"Work"`) {
+		t.Fatalf("an update right after the add: %d %q %s", code, out, errOut)
 	}
 	if code, _, _ := run(t, "", "rule", "add", "DOMAIN-SUFFIX", "example.com", "Proxy"); code != cli.ExitOK {
 		t.Fatalf("rule add exit %d", code)

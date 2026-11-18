@@ -637,17 +637,14 @@ func TestAFailedRefreshKeepsWhatWorks(t *testing.T) {
 	}
 }
 
-func TestManualRefreshesAreSpacedOut(t *testing.T) {
+func TestManualRefreshBypassesIntervalButHonorsRetryAfter(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{body: workYAML, header: map[string]string{"Profile-Update-Interval": "1"}})
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
 	name := protocol.NameArgs{Name: "127.0.0.1"}
-	if err := callErr(t, c, protocol.OpSubscriptionUpdate, name); err.Code != protocol.CodeConflict {
-		t.Fatalf("an update right after the add = %v", err)
-	}
-	h.clock.advance(time.Minute)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
 	o.set("/work", page{status: http.StatusTooManyRequests, header: map[string]string{"Retry-After": "7200"}})
 	callErr(t, c, protocol.OpSubscriptionUpdate, name)
 	h.clock.advance(time.Hour)
@@ -657,7 +654,7 @@ func TestManualRefreshesAreSpacedOut(t *testing.T) {
 	}
 	h.clock.advance(time.Hour)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, name)
-	if n := o.count("/work"); n != 3 {
+	if n := o.count("/work"); n != 4 {
 		t.Fatalf("the server was asked %d times", n)
 	}
 }

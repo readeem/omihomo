@@ -22,9 +22,7 @@ import (
 const (
 	// maxProviders bounds the providers one subscription has downloaded.
 	maxProviders = 64
-	// manualGap is the least time between two requests to one
-	// subscription's server that the owner asks for.
-	manualGap = time.Minute
+	addGap       = time.Minute
 	// A refresh that gets no answer is retried after retryFirst, doubling
 	// up to the subscription's interval. One the server refuses, or whose
 	// content is unusable, waits a whole interval, asked for or not.
@@ -194,13 +192,13 @@ func (d *server) addSubscription(ctx context.Context, url string) (any, *protoco
 	}
 	now := d.cfg.now()
 	for u, at := range d.addAsked {
-		if now.Sub(at) >= manualGap {
+		if now.Sub(at) >= addGap {
 			delete(d.addAsked, u)
 		}
 	}
 	if at, ok := d.addAsked[url]; ok {
 		return nil, fail(protocol.CodeConflict, "this URL was asked %s ago; try again in %s",
-			now.Sub(at).Round(time.Second), at.Add(manualGap).Sub(now).Round(time.Second))
+			now.Sub(at).Round(time.Second), at.Add(addGap).Sub(now).Round(time.Second))
 	}
 	if initial {
 		ctx = context.WithValue(ctx, initialDownload{}, true)
@@ -304,25 +302,10 @@ func (d *server) updateSubscription(ctx context.Context, name string) (any, *pro
 	return d.refresh(ctx, sub.ID, true)
 }
 
-// mayAsk says why the owner may not ask sub's server now, or nil.
-func mayAsk(sub state.Subscription, now time.Time) *protocol.Error {
-	if wait := time.UnixMilli(sub.LastAttempt).Add(manualGap).Sub(now); wait > 0 {
-		return fail(protocol.CodeConflict, "%s was asked %s ago; try again in %s",
-			sub.Name, now.Sub(time.UnixMilli(sub.LastAttempt)).Round(time.Second), wait.Round(time.Second))
-	}
-	if sub.HeldUntil > ms(now) {
-		return fail(protocol.CodeConflict, "%s cannot be asked again until %s",
-			sub.Name, time.UnixMilli(sub.HeldUntil).Format(time.DateTime))
-	}
-	return nil
-}
-
 // refresh downloads subscription id again and, when it works, makes it the
 // subscription's content, running it if it is active and the proxy runs.
-// Whatever fails leaves the content that worked before in place. The
-// deadlines are read under refreshMu, so a request queued behind another
-// sees what that one recorded: a manual one is refused, and a scheduled one
-// that is no longer due does nothing.
+// The deadlines are read under refreshMu so queued requests see the retry
+// state recorded by the preceding refresh.
 func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *protocol.Error) {
 	d.refreshMu.Lock()
 	defer d.refreshMu.Unlock()
@@ -336,11 +319,12 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	if i < 0 {
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
 	}
-	if manual {
-		if err := mayAsk(sub, d.cfg.now()); err != nil {
-			return nil, err
+	if now := ms(d.cfg.now()); manual {
+		if sub.HeldUntil > now {
+			return nil, fail(protocol.CodeConflict, "%s cannot be asked again until %s",
+				sub.Name, time.UnixMilli(sub.HeldUntil).Format(time.DateTime))
 		}
-	} else if nextUpdate(sub) > ms(d.cfg.now()) {
+	} else if nextUpdate(sub) > now {
 		return nil, nil
 	}
 

@@ -60,7 +60,7 @@ type Subscription struct {
 	Download        *int64 `json:"download"`
 	Total           *int64 `json:"total"`
 	Expire          *int64 `json:"expire"`
-	// LastAttempt is the last request to the server, whatever came of it.
+	// LastAttempt includes attempts that never reached the server.
 	LastAttempt int64 `json:"last_attempt"`
 	// RetryAt, when set, is the earliest next automatic request after a
 	// failure.

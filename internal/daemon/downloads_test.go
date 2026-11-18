@@ -119,6 +119,44 @@ proxy-providers:
 	}
 }
 
+func TestManualRefreshCanRetryAfterDecliningScheduledDownload(t *testing.T) {
+	origin := newOrigin(t)
+	origin.set("/work", page{body: workYAML, header: titled("Work")})
+	var proxyDown atomic.Bool
+	dial := (&net.Dialer{}).DialContext
+	transport := fetch.RoutedTransport(func(ctx context.Context, network, address string) (net.Conn, error) {
+		if proxyDown.Load() {
+			return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+		}
+		return dial(ctx, network, address)
+	}, dial)
+	transport.TLSClientConfig.RootCAs = origin.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	h := serve(t, os.Getuid(), daemon.WithTransport(transport), daemon.WithRefreshCheck(10*time.Millisecond))
+	c := h.dial(t)
+	sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: origin.url("/work")})
+	call[protocol.Empty](t, c, protocol.OpSubscribe, protocol.StreamsArgs{
+		Streams: []string{protocol.StreamDownloads, protocol.StreamSubscriptions},
+	})
+	next(t, c, protocol.StreamSubscriptions)
+	proxyDown.Store(true)
+	h.clock.advance(time.Duration(sub.Interval) * time.Second)
+	pending := nextDownload(t, c)
+	call[protocol.Empty](t, c, protocol.OpDownloadDecision, protocol.DownloadDecisionArgs{ID: pending.ID})
+
+	var scheduled protocol.SubscriptionList
+	if err := json.Unmarshal(next(t, c, protocol.StreamSubscriptions), &scheduled); err != nil {
+		t.Fatal(err)
+	}
+	if result := scheduled.Subscriptions[0]; !strings.Contains(result.Error, "declined") || result.NextUpdate <= h.clock.Now().UnixMilli() {
+		t.Fatalf("declining did not schedule the next automatic retry: %+v", result)
+	}
+	proxyDown.Store(false)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: sub.Name})
+	if n := origin.count("/work"); n != 2 {
+		t.Fatalf("origin got %d requests, want the initial download and manual refresh", n)
+	}
+}
+
 func TestPolicyRefusalNeverRequestsDirectApproval(t *testing.T) {
 	transport := fetch.RoutedTransport(func(context.Context, string, string) (net.Conn, error) {
 		return nil, &net.OpError{Op: "dial", Err: uplink.ErrDownloadAddress}
