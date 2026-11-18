@@ -205,6 +205,10 @@ func TestDelay(t *testing.T) {
 	var rejectIPv4 atomic.Bool
 	var ipv6Requests atomic.Int32
 	ipv4 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Redirect(w, r, "/trace", http.StatusFound)
+			return
+		}
 		if rejectIPv4.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -213,6 +217,10 @@ func TestDelay(t *testing.T) {
 	}))
 	defer ipv4.Close()
 	ipv6 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Redirect(w, r, "/trace", http.StatusFound)
+			return
+		}
 		ipv6Requests.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	}))

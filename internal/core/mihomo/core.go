@@ -628,7 +628,7 @@ func measureDelay(ctx context.Context, proxy constant.Proxy, url string) int {
 	if ctx.Err() != nil {
 		return 0
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0
 	}
