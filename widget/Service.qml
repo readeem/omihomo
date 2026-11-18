@@ -70,12 +70,12 @@ Item {
   property string _desiredMode: ""
   property var _desiredDNSDestination: null
 
-  // The panel is usable once the daemon is greeted and has said what it is
-  // doing. A connection that drops keeps the last status, so a daemon
-  // restarting under socket activation does not flash the install card.
+  // Keep the last installation status across socket activation, but wait for
+  // a fresh status before showing the proxy as running or accepting commands.
   readonly property bool installed: coreState !== "unknown" && coreState !== "not-installed"
     && link !== "absent" && link !== "refused" && link !== "outdated" && link !== "newer"
-  readonly property bool coreRunning: coreState === "on" || coreState === "degraded"
+  property bool _statusKnown: false
+  readonly property bool coreRunning: _statusKnown && (coreState === "on" || coreState === "degraded")
   readonly property bool coreActive: _desiredCoreRunning === -1 ? coreRunning : _desiredCoreRunning === 1
   readonly property bool tunActive: _desiredTunEnabled === -1 ? tunEnabled : _desiredTunEnabled === 1
   readonly property bool tunRedirectActive: _desiredTunRedirect === -1
@@ -161,6 +161,7 @@ Item {
   property int _ruleCall: 0
   property int _selectCall: 0
   property int _delayCall: 0
+  property var _testingConfigs: []
   property int _egressCall: 0
   property int _closeCall: 0
 
@@ -187,7 +188,9 @@ Item {
   }
 
   function streamsReady(streams) {
-    return ready && streams.every(function(stream) { return !root.streamErrors[stream] })
+    return ready && streams.every(function(stream) {
+      return !root.streamErrors[stream] && (stream !== "status" || root._statusKnown)
+    })
   }
 
   function reportDone(message) {
@@ -320,12 +323,16 @@ Item {
   // a backoff. A daemon that turned this panel away is asked again too, but
   // more slowly: the owner may claim the install, or update it, meanwhile.
   function disconnected() {
+    if (link === "ready") link = "connecting"
+    _statusKnown = false
     pendingDownloads = []
     helloTimer.stop()
-    if (link === "ready" || link === "connecting") link = "connecting"
+    clearDesired()
+    forgetRuntime()
+    clearTrace()
+    _traceQueued = false
+    traceTesting = false
     failPending()
-    downloadRate = 0
-    uploadRate = 0
     reconnectTimer.restart()
   }
 
@@ -340,8 +347,8 @@ Item {
       link = "refused"
       forgetAll()
     }
+    disconnected()
     hangUp()
-    reconnectTimer.restart()
   }
 
   // Quickshell's Socket crashes when it is closed from inside its own
@@ -436,7 +443,7 @@ Item {
       root._egressCall = 0
       if (root._traceQueued) return root.runQueuedTrace()
       root.traceTesting = false
-      if (runtime !== root.runtimeKey || group !== root.primaryGroup || config !== root.currentConfig) return
+      if (!root.apiReady || runtime !== root.runtimeKey || group !== root.primaryGroup || config !== root.currentConfig) return
       var egress = Model.readEgress(result)
       // Keep the last known values. The row says "failed" until the next
       // check, then a successful result replaces them.
@@ -478,6 +485,7 @@ Item {
     tailnetProxy = status.tailnetProxy
     startedMs = status.startedMs
     routing = Model.statusRouting(status)
+    _statusKnown = true
     if (_desiredCoreRunning !== -1 && coreRunning === (_desiredCoreRunning === 1))
       _desiredCoreRunning = -1
     if (_desiredTunEnabled !== -1 && tunEnabled === (_desiredTunEnabled === 1))
@@ -514,6 +522,7 @@ Item {
   }
 
   function forgetRuntime() {
+    cancelDelayTest()
     applyGroups(null)
     applyConnections(null)
     applyTraffic(null)
@@ -521,6 +530,7 @@ Item {
 
   // Everything the daemon said, for when there is no daemon to talk to.
   function forgetAll() {
+    _statusKnown = false
     pendingDownloads = []
     streamErrors = ({})
     coreName = ""
@@ -643,6 +653,7 @@ Item {
   function toggleCore() {
     if (!streamsReady(["status"]) || !installed || _coreCall !== 0) return
     var desired = coreActive ? 0 : 1
+    if (desired === 0) cancelDelayTest()
     _desiredCoreRunning = desired
     reportDone(desired === 1 ? "Starting the proxy…" : "Stopping the proxy…")
     _coreCall = call(desired === 1 ? "start" : "stop", null, function(result, error) {
@@ -841,6 +852,7 @@ Item {
   }
 
   function configTestState(name) {
+    if (_testingConfigs.indexOf(name) >= 0) return "testing"
     var result = configTestResults[String(name)]
     return result ? String(result.state || "") : ""
   }
@@ -849,13 +861,6 @@ Item {
     var result = configTestResults[String(name)]
     if (result && result.state === "success") return Number(result.delay) || 0
     return Model.historyDelay(configEntries[String(name)])
-  }
-
-  function startConfigTests(names) {
-    var next = Object.assign({}, configTestResults)
-    for (let i = 0; i < names.length; i++)
-      next[String(names[i])] = { state: "testing", delay: 0 }
-    configTestResults = next
   }
 
   // Publish the whole batch once. Config rows then move straight from
@@ -874,11 +879,13 @@ Item {
   // `proxies` names the configs to test; empty tests the whole group, which
   // the core does concurrently.
   function runDelayTest(group, names, whole) {
-    var runtime = runtimeKey
-    startConfigTests(names)
-    var args = whole ? { group: group } : { group: group, proxies: names }
-    _delayCall = call("delay.test", args, function(result, error) {
+    const runtime = runtimeKey
+    const args = whole ? { group: group } : { group: group, proxies: names }
+    const id = call("delay.test", args, function(result, error) {
+      if (root._delayCall !== id) return
       root._delayCall = 0
+      root._testingConfigs = []
+      delayTimer.stop()
       if (runtime !== root.runtimeKey || !root.groupsReady) return
       root.finishConfigTests(names, error ? {} : Model.readDelays(result))
       if (!whole) return
@@ -886,7 +893,29 @@ Item {
       tested[group] = Date.now()
       root.groupTestedAt = tested
     })
-    if (_delayCall === 0) finishConfigTests(names, {})
+    if (id === 0) return
+    _delayCall = id
+    _testingConfigs = names
+    delayTimer.restart()
+  }
+
+  function cancelDelayTest() {
+    if (_delayCall === 0) return
+    const id = _delayCall
+    _delayCall = 0
+    _testingConfigs = []
+    delete _pending[id]
+    delayTimer.stop()
+    call("delay.cancel", { id: id })
+  }
+
+  Timer {
+    id: delayTimer
+    interval: 7000
+    onTriggered: {
+      root.cancelDelayTest()
+      root.reportError({ code: "core_failed", message: "Latency test timed out" }, "configs")
+    }
   }
 
   function testConfig(name) {

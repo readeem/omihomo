@@ -50,13 +50,15 @@ import (
 // before any core is constructed, including regexes nested in downloaded rules.
 func init() { regexp2.DefaultMatchTimeout = 25 * time.Millisecond }
 
-// delayURL is what a delay test fetches, as the widget always has.
-var delayURL = "http://www.gstatic.com/generate_204"
+var (
+	delayURL     = core.TraceIPv4URL
+	delayIPv6URL = core.TraceIPv6URL
+)
 
 const (
 	drainTick    = 20 * time.Millisecond
 	delayTimeout = 5 * time.Second
-	// Proxies tested at once by one delay test.
+	// Probes in flight across all tests, including any still unwinding after timeout.
 	delayParallel = 16
 )
 
@@ -67,6 +69,7 @@ type Core struct {
 	log         *slog.Logger
 	tap         *logTap
 	xrayNetwork xray.Network
+	delaySlots  chan struct{}
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
@@ -109,7 +112,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 		log = slog.Default()
 	}
 	constant.SetHomeDir(home)
-	return &Core{log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}}, nil
+	return &Core{log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}, nil
 }
 
 func privateDir(dir string) error {
@@ -536,50 +539,86 @@ func (c *Core) Select(ctx context.Context, group, proxy string) error {
 }
 
 func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (map[string]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g, err := c.group(group)
 	if err != nil {
 		return nil, err
 	}
-	members := map[string]constant.Proxy{}
-	for _, p := range g.Proxies() {
-		members[p.Name()] = p
-	}
-	var tested []constant.Proxy
-	if len(proxies) == 0 {
-		tested = g.Proxies()
-	}
-	for _, name := range proxies {
-		p, ok := members[name]
-		if !ok {
-			return nil, fmt.Errorf("proxy %q in group %q: %w", name, group, core.ErrNotFound)
+	tested := g.Proxies()
+	if len(proxies) != 0 {
+		members := make(map[string]constant.Proxy, len(tested))
+		for _, p := range tested {
+			members[p.Name()] = p
 		}
-		tested = append(tested, p)
+		tested = make([]constant.Proxy, 0, len(proxies))
+		for _, name := range proxies {
+			p, ok := members[name]
+			if !ok {
+				return nil, fmt.Errorf("proxy %q in group %q: %w", name, group, core.ErrNotFound)
+			}
+			tested = append(tested, p)
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, delayTimeout)
+	batch, cancel := context.WithTimeout(ctx, delayTimeout)
 	defer cancel()
-	var (
-		mu  sync.Mutex
-		wg  sync.WaitGroup
-		out = make(map[string]int, len(tested))
-		sem = make(chan struct{}, delayParallel)
-	)
-	for _, p := range tested {
-		wg.Go(func() {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			delay, err := p.URLTest(ctx, delayURL, nil)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				out[p.Name()] = 0
-			} else {
-				out[p.Name()] = max(1, int(delay))
-			}
-		})
+	type measurement struct {
+		name  string
+		delay int
 	}
-	wg.Wait()
-	return out, nil
+	results := make(chan measurement, len(tested))
+	out := make(map[string]int, len(tested))
+	for _, p := range tested {
+		out[p.Name()] = 0
+	}
+	started := 0
+schedule:
+	for _, p := range tested {
+		select {
+		case <-batch.Done():
+			break schedule
+		case c.delaySlots <- struct{}{}:
+		}
+		if batch.Err() != nil {
+			<-c.delaySlots
+			break
+		}
+		started++
+		go func() {
+			defer func() { <-c.delaySlots }()
+			results <- measurement{p.Name(), probeDelay(batch, p)}
+		}()
+	}
+
+	for range started {
+		select {
+		case result := <-results:
+			out[result.name] = result.delay
+		case <-batch.Done():
+			for len(results) != 0 {
+				result := <-results
+				out[result.name] = result.delay
+			}
+			return out, ctx.Err()
+		}
+	}
+	return out, ctx.Err()
+}
+
+func probeDelay(ctx context.Context, proxy constant.Proxy) int {
+	// Leave time for an IPv6-only exit when the IPv4 dial times out.
+	ipv4, cancel := context.WithTimeout(ctx, delayTimeout/2)
+	delay, err := proxy.URLTest(ipv4, delayURL, nil)
+	cancel()
+	if err != nil && ctx.Err() == nil {
+		delay, err = proxy.URLTest(ctx, delayIPv6URL, nil)
+	}
+	if err != nil {
+		return 0
+	}
+	return max(1, int(delay))
 }
 
 func (c *Core) Rules(ctx context.Context) ([]protocol.Rule, error) {

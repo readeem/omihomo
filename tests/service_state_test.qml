@@ -120,8 +120,8 @@ ShellRoot {
       } },
     { name: "the connection drops", until: function() { return svc.link === "connecting" }, then: function() {
         t.check(svc.installed, true, "a dropped connection keeps the panel")
-        t.check(svc.coreState, "on", "a dropped connection keeps the last status")
-        t.check(svc.groups.length, 1, "a dropped connection keeps the groups")
+        t.check(svc.coreRunning, false, "a dropped connection stops showing a running proxy")
+        t.check(svc.groups.length, 0, "a dropped connection clears the old groups")
         t.check(svc.busy, false, "a dropped connection fails what was in flight")
         t.check(svc.call("status"), 0, "nothing is sent without a connection")
       } },

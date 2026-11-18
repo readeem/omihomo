@@ -116,8 +116,17 @@ ColumnLayout {
 
     PanelText {
       theme: view.theme
-      text: view.service.pingTestsRunning ? "testing…" : view.panel.testedText
+      visible: !view.service.pingTestsRunning
+      text: view.panel.testedText
       color: view.theme.dim
+    }
+
+    SmallButton {
+      theme: view.theme
+      visible: view.service.pingTestsRunning
+      text: "cancel test"
+      tooltipText: "Cancel latency test · D"
+      onClicked: view.service.cancelDelayTest()
     }
 
     Item { Layout.fillWidth: true }

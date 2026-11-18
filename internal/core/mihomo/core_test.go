@@ -206,9 +206,9 @@ func TestDelay(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	old := delayURL
-	delayURL = srv.URL
-	defer func() { delayURL = old }()
+	old4, old6 := delayURL, delayIPv6URL
+	delayURL, delayIPv6URL = srv.URL, srv.URL
+	defer func() { delayURL, delayIPv6URL = old4, old6 }()
 
 	c := running(t, testConfig())
 	delays, err := c.TestDelay(t.Context(), "Proxy", nil)
@@ -235,6 +235,11 @@ func TestDelay(t *testing.T) {
 	}
 	if _, err := c.TestDelay(t.Context(), "Nowhere", nil); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("unknown group = %v, want ErrNotFound", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := c.TestDelay(ctx, "Proxy", nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled group test returned %v", err)
 	}
 }
 

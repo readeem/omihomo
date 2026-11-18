@@ -47,6 +47,13 @@ ShellRoot {
         t.check(svc.configTestState("Fail"), "failed", "a group failure is recorded")
         t.check(svc.groupTestedAt.Proxy > 0, true, "a group test records when it ran")
       } },
+    { name: "cancel group test", then: function() {
+        svc.testGroup("Proxy")
+        t.check(svc.pingTestsRunning, true, "a second group test starts")
+        svc.cancelDelayTest()
+        t.check(svc.pingTestsRunning, false, "cancel stops waiting immediately")
+        t.check(svc.configDelay("Pass"), 91, "cancel preserves the previous measurement")
+      } },
     // Opening the panel on a stopped proxy checks nothing; the start does.
     { name: "first egress", until: function() { return !svc.traceTesting && svc.egressIp !== "" }, then: function() {
         t.check(svc.egressIp, "203.0.113.7", "the egress check reports the exit address")

@@ -217,6 +217,7 @@ Panel {
   readonly property int closedLogged: omihomo.connectionLog.length - omihomo.openConnectionCount
 
   readonly property string statusText: {
+    if (!omihomo.streamsReady(["status"]) && omihomo.link === "connecting") return "RECONNECTING"
     var parts = [Model.stateLabel(omihomo.coreState).toUpperCase()]
     if (omihomo.coreRunning) {
       if (omihomo.effectiveMode !== "") parts.push(omihomo.effectiveMode + " mode")
@@ -432,7 +433,10 @@ Panel {
     }
     if (view === "configs") {
       if (key === "d") testSelectedConfig()
-      else if (key === "D") omihomo.testGroup(browsedGroup)
+      else if (key === "D") {
+        if (omihomo.pingTestsRunning) omihomo.cancelDelayTest()
+        else omihomo.testGroup(browsedGroup)
+      }
       else if (key === "g") cycleGroup(1)
       else if (key === "p") omihomo.setPrimaryGroup(browsedGroup)
       else if (key === "/") openFilter()
@@ -507,7 +511,7 @@ Panel {
     switch (name) {
     case "configs": return [
       { keys: "↵", label: "select", key: "enter" }, { keys: "d", label: "test", key: "d" },
-      { keys: "D", label: "test all", key: "D" }, { keys: "g", label: "group", key: "g" },
+      { keys: "D", label: omihomo.pingTestsRunning ? "cancel test" : "test all", key: "D" }, { keys: "g", label: "group", key: "g" },
       { keys: "s", label: "core", key: "s" }]
     case "subs": return [
       { keys: "↵", label: "activate", key: "enter" }, { keys: "u", label: "update", key: "u" },
@@ -1104,17 +1108,29 @@ Panel {
             Layout.topMargin: -Style.space(4)
           }
 
-          RowLayout {
+          GridLayout {
+            id: readouts
+            readonly property bool wideEgress: omihomo.egressIpv6 !== "" || omihomo.egressIp.indexOf(":") >= 0
             visible: !root.compactHeader && omihomo.installed
             Layout.fillWidth: true
-            spacing: Style.space(8)
+            columns: 3
+            columnSpacing: Style.space(8)
+            rowSpacing: Style.space(6)
 
-            Readout { theme: root.theme; live: omihomo.coreActive; Layout.horizontalStretchFactor: 1; label: "UPTIME"; value: root.uptimeText; Layout.alignment: Qt.AlignTop }
             Readout {
               theme: root.theme
               live: omihomo.coreActive
-              Layout.horizontalStretchFactor: 2
-              Layout.alignment: Qt.AlignTop
+              Layout.row: 0
+              Layout.column: 0
+              label: "UPTIME"
+              value: root.uptimeText
+            }
+            Readout {
+              theme: root.theme
+              live: omihomo.coreActive
+              Layout.row: readouts.wideEgress ? 1 : 0
+              Layout.column: readouts.wideEgress ? 0 : 1
+              Layout.columnSpan: readouts.wideEgress ? 3 : 1
               wrap: true
               label: "EGRESS"
               value: root.egressText
@@ -1125,8 +1141,8 @@ Panel {
             Readout {
               theme: root.theme
               live: omihomo.coreActive
-              Layout.horizontalStretchFactor: 1
-              Layout.alignment: Qt.AlignTop
+              Layout.row: 0
+              Layout.column: readouts.wideEgress ? 1 : 2
               label: "LATENCY"
               value: root.latencyText
               faded: omihomo.traceFailed && !omihomo.traceTesting

@@ -128,6 +128,7 @@ const (
 	OpRules              = "rules.list"             // nil -> RuleList
 	OpGroups             = "groups.list"            // nil -> GroupList
 	OpSelect             = "groups.select"          // SelectArgs -> Group
+	OpDelayCancel        = "delay.cancel"           // DelayCancelArgs -> Empty
 	OpDelayTest          = "delay.test"             // DelayArgs -> DelayResult
 	OpConnections        = "connections.list"       // nil -> Connections
 	OpCloseConnections   = "connections.close"      // CloseArgs -> Empty
@@ -359,6 +360,10 @@ type DelayArgs struct {
 
 // DelayResult maps each tested proxy to its delay in milliseconds; 0 is a
 // failed test.
+type DelayCancelArgs struct {
+	ID uint64 `json:"id"`
+}
+
 type DelayResult struct {
 	Delays map[string]int `json:"delays"`
 }

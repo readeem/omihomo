@@ -380,6 +380,57 @@ func TestGroups(t *testing.T) {
 	}
 }
 
+type stalledDelayCore struct {
+	*fakecore.Core
+	started chan struct{}
+}
+
+func (c stalledDelayCore) TestDelay(ctx context.Context, group string, proxies []string) (map[string]int, error) {
+	close(c.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestCancelDelayLeavesControlAvailable(t *testing.T) {
+	engine := stalledDelayCore{Core: fakecore.New(), started: make(chan struct{})}
+	h := serveCore(t, os.Getuid(), engine)
+	call[protocol.Status](t, h.dial(t), protocol.OpStart, nil)
+	conn, replies := raw(t, h)
+	fmt.Fprintln(conn, `{"id":1,"op":"delay.test","args":{"group":"Proxy"}}`)
+	select {
+	case <-engine.started:
+	case <-time.After(time.Second):
+		t.Fatal("delay test did not start")
+	}
+	fmt.Fprintln(conn, `{"id":2,"op":"stop"}`)
+	if !replies.Scan() || !strings.Contains(replies.Text(), `"state":"stopped"`) {
+		t.Fatalf("stop while the delay test was running: %s", replies.Text())
+	}
+
+	fmt.Fprintln(conn, `{"id":3,"op":"delay.cancel","args":{"id":1}}`)
+	for range 2 {
+		if !replies.Scan() {
+			t.Fatal("no reply to the canceled test")
+		}
+		var reply protocol.Envelope
+		if err := protocol.Decode(replies.Bytes(), &reply); err != nil {
+			t.Fatal(err)
+		}
+		switch reply.ID {
+		case 1:
+			if reply.Error == nil || !strings.Contains(reply.Error.Message, "context canceled") {
+				t.Fatalf("delay test reply: %s", replies.Text())
+			}
+		case 3:
+			if reply.Error != nil {
+				t.Fatalf("delay cancellation reply: %s", replies.Text())
+			}
+		default:
+			t.Fatalf("unexpected reply: %s", replies.Text())
+		}
+	}
+}
+
 func TestRulesAndConnections(t *testing.T) {
 	h := serve(t, os.Getuid())
 	c := h.dial(t)

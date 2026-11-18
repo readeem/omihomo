@@ -165,6 +165,7 @@ const ops = {
     push("groups", groups())
     return { result: group }
   }),
+  "delay.cancel": () => ({ result: {} }),
   "delay.test": (client, a) => later(() => {
     if (!running()) return failure("not_running", "the proxy is not running")
     const names = a.proxies && a.proxies.length > 0 ? a.proxies : Object.keys(delays)

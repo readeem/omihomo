@@ -21,6 +21,7 @@ type session struct {
 	closeOnce sync.Once
 	inFlight  chan struct{}
 	calls     sync.WaitGroup
+	delays    sync.Map // request ID -> context.CancelFunc
 
 	// streams is guarded by d.mu.
 	streams map[string]bool
@@ -106,16 +107,39 @@ func (s *session) serve(ctx context.Context) {
 			s.reply(req.ID, nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "a request needs an id and an op"})
 			continue
 		}
+		if req.Op == protocol.OpDelayCancel {
+			var args protocol.DelayCancelArgs
+			if err := decode(req.Args, &args); err != nil {
+				s.reply(req.ID, nil, err)
+				continue
+			}
+			if cancelDelay, ok := s.delays.Load(args.ID); ok {
+				cancelDelay.(context.CancelFunc)()
+			}
+			s.reply(req.ID, nil, nil)
+			continue
+		}
 		select {
 		case s.inFlight <- struct{}{}:
 		default:
 			s.reply(req.ID, nil, &protocol.Error{Code: protocol.CodeBusy, Message: "too many calls in flight"})
 			continue
 		}
+		callCtx, callCancel := context.WithTimeout(ctx, callTimeout)
+		if req.Op == protocol.OpDelayTest {
+			if _, loaded := s.delays.LoadOrStore(req.ID, callCancel); loaded {
+				callCancel()
+				<-s.inFlight
+				s.reply(req.ID, nil, fail(protocol.CodeBadRequest, "delay test id already in use"))
+				continue
+			}
+		}
 		s.calls.Go(func() {
 			defer func() { <-s.inFlight }()
-			callCtx, callCancel := context.WithTimeout(ctx, callTimeout)
 			defer callCancel()
+			if req.Op == protocol.OpDelayTest {
+				defer s.delays.Delete(req.ID)
+			}
 			result, perr := s.d.handle(callCtx, s, req)
 			s.reply(req.ID, result, perr)
 		})

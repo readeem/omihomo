@@ -669,7 +669,6 @@ func (d *server) testDelay(ctx context.Context, args protocol.DelayArgs) (any, *
 	if err != nil {
 		return nil, coreError(err)
 	}
-	d.publish(ctx)
 	return protocol.DelayResult{Delays: delays}, nil
 }
 
