@@ -204,7 +204,9 @@ const ops = {
     allConnections.filter((c) => args.all || args.ids.includes(c.id)).forEach((c) => closed.add(c.id))
     return { result: {} }
   },
-  "egress.check": () => ({ result: { ip: "203.0.113.47", latency: 85 } }),
+  "egress.check": () => ({ result: {
+    ip: "203.0.113.47", ipv6: "2001:db8:1234:abcd:5678:ef01:2345:6789", latency: 85
+  } }),
   "subscriptions.add": (args) => later(600, () => {
     let name
     try { name = new URL(args.url).hostname } catch (e) {}
