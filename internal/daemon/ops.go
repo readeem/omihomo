@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -167,10 +169,11 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		}
 		return d.closeConnections(ctx, args)
 	case protocol.OpEgress:
-		if err := decode(req.Args, &struct{}{}); err != nil {
+		var args protocol.EgressArgs
+		if err := decode(req.Args, &args); err != nil {
 			return nil, err
 		}
-		return d.egress(ctx)
+		return d.egress(ctx, args)
 	case protocol.OpSubscriptions:
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
@@ -717,39 +720,85 @@ func (d *server) closeConnections(ctx context.Context, args protocol.CloseArgs) 
 	return protocol.Empty{}, nil
 }
 
-func (d *server) egress(ctx context.Context) (any, *protocol.Error) {
+func (d *server) egress(ctx context.Context, args protocol.EgressArgs) (any, *protocol.Error) {
 	if !d.running() {
 		return nil, fail(protocol.CodeNotRunning, "the proxy is not running")
 	}
+	dial := d.core.DialContext
+	if args != (protocol.EgressArgs{}) {
+		if err := validName("group", args.Group); err != nil {
+			return nil, err
+		}
+		if err := validName("proxy", args.Proxy); err != nil {
+			return nil, err
+		}
+		groups, err := d.core.Groups(ctx)
+		if err != nil {
+			return nil, coreError(err)
+		}
+		if !slices.ContainsFunc(groups, func(g protocol.Group) bool {
+			return g.Name == args.Group && slices.ContainsFunc(g.Members, func(p protocol.Proxy) bool { return p.Name == args.Proxy })
+		}) {
+			return nil, fail(protocol.CodeNotFound, "proxy %q in group %q is unavailable", args.Proxy, args.Group)
+		}
+		dial = func(ctx context.Context, _, address string) (net.Conn, error) {
+			return d.core.DialProxy(ctx, args.Proxy, address)
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	client := &http.Client{Transport: &http.Transport{
-		Proxy:             nil,
-		DialContext:       d.core.DialContext,
-		DisableKeepAlives: true,
-	}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.cfg.egressURL, nil)
+	client := &http.Client{
+		Transport:     &http.Transport{DialContext: dial, DisableKeepAlives: true},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	var ipv4, ipv6 protocol.Egress
+	var err4, err6 error
+	var wg sync.WaitGroup
+	wg.Go(func() { ipv4, err4 = probeEgress(ctx, client, d.cfg.egressURL, true) })
+	if d.cfg.ipv6EgressURL != "" {
+		wg.Go(func() { ipv6, err6 = probeEgress(ctx, client, d.cfg.ipv6EgressURL, false) })
+	}
+	wg.Wait()
+
+	switch {
+	case err4 == nil:
+		ipv4.IPv6 = ipv6.IP
+		return ipv4, nil
+	case ipv6.IP != "":
+		ipv6.IPv6 = ipv6.IP
+		return ipv6, nil
+	default:
+		return nil, fail(protocol.CodeCore, "egress check failed: %v", errors.Join(err4, err6))
+	}
+}
+
+func probeEgress(ctx context.Context, client *http.Client, url string, ipv4 bool) (protocol.Egress, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fail(protocol.CodeInternal, "%v", err)
+		return protocol.Egress{}, err
 	}
 	began := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fail(protocol.CodeCore, "egress check failed: %v", err)
+		return protocol.Egress{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fail(protocol.CodeCore, "egress check failed: %s", resp.Status)
+		return protocol.Egress{}, errors.New(resp.Status)
 	}
 	ip, err := traceIP(io.LimitReader(resp.Body, 64<<10))
 	if err != nil {
-		return nil, fail(protocol.CodeCore, "egress check failed: %v", err)
+		return protocol.Egress{}, err
 	}
-	latency := max(1, int(time.Since(began).Milliseconds()))
-	return protocol.Egress{IP: ip, Latency: latency}, nil
+	if ip.Is4() != ipv4 {
+		return protocol.Egress{}, fmt.Errorf("the trace returned an address from the wrong family")
+	}
+	return protocol.Egress{IP: ip.String(), Latency: max(1, int(time.Since(began).Milliseconds()))}, nil
 }
 
-func traceIP(r io.Reader) (string, error) {
+func traceIP(r io.Reader) (netip.Addr, error) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		value, ok := strings.CutPrefix(scanner.Text(), "ip=")
@@ -757,10 +806,10 @@ func traceIP(r io.Reader) (string, error) {
 			continue
 		}
 		addr, err := netip.ParseAddr(strings.TrimSpace(value))
-		if err != nil {
-			return "", errors.New("the trace has no valid address")
+		if err != nil || addr.Zone() != "" {
+			return netip.Addr{}, errors.New("the trace has no valid address")
 		}
-		return addr.String(), nil
+		return addr.Unmap(), nil
 	}
-	return "", errors.New("the trace has no address")
+	return netip.Addr{}, errors.New("the trace has no address")
 }

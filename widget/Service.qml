@@ -129,6 +129,7 @@ Item {
   property var trafficHistory: []
   readonly property int trafficHistoryCap: 60
   property string egressIp: ""
+  property string egressIpv6: ""
   property int egressLatency: 0
   property bool traceTesting: false
   property bool traceFailed: false
@@ -170,8 +171,6 @@ Item {
     || _ruleCall !== 0 || _selectCall !== 0 || _closeCall !== 0
   readonly property bool ruleSaving: _ruleCall !== 0
   readonly property bool pingTestsRunning: _delayCall !== 0
-
-  signal configChanged()
 
   function reportError(error, scope) {
     lastError = Model.daemonError(error)
@@ -424,15 +423,20 @@ Item {
   function refreshTrace() {
     if (!apiReady) return
     traceTesting = true
-    if (pendingConfig !== "" || _egressCall !== 0) {
+    if (!groupsReady || !proxiesLoaded || pendingConfig !== "" || _egressCall !== 0) {
       _traceQueued = true
       return
     }
     _traceQueued = false
-    _egressCall = call("egress.check", null, function(result, error) {
+    const runtime = runtimeKey
+    const group = primaryGroup
+    const config = currentConfig
+    const args = config !== "" ? { group: group, proxy: config } : null
+    _egressCall = call("egress.check", args, function(result, error) {
       root._egressCall = 0
       if (root._traceQueued) return root.runQueuedTrace()
       root.traceTesting = false
+      if (runtime !== root.runtimeKey || group !== root.primaryGroup || config !== root.currentConfig) return
       var egress = Model.readEgress(result)
       // Keep the last known values. The row says "failed" until the next
       // check, then a successful result replaces them.
@@ -442,7 +446,10 @@ Item {
       }
       root.traceFailed = false
       root.egressIp = egress.ip
+      root.egressIpv6 = egress.ipv6
       root.egressLatency = egress.latency
+      if (config !== "" && root.configTestState(config) !== "testing")
+        root.finishConfigTests([config], { [config]: egress.latency })
     })
     if (_egressCall === 0) traceTesting = false
   }
@@ -488,12 +495,7 @@ Item {
     var runtimeChanged = runtimeKey !== previousRuntime
     var primaryChanged = configuredPrimaryGroup !== previousPrimaryGroup
     if (runtimeChanged) forgetRuntime()
-    if (primaryChanged) {
-      egressIp = ""
-      egressLatency = 0
-      traceFailed = false
-      if (_egressCall !== 0) _traceQueued = true
-    }
+    if (runtimeChanged || primaryChanged) clearTrace()
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
@@ -502,6 +504,13 @@ Item {
       _traceQueued = false
     }
     if (panelOpen && apiReady && (!wasRunning || runtimeChanged || primaryChanged)) refreshTrace()
+  }
+
+  function clearTrace() {
+    egressIp = ""
+    egressIpv6 = ""
+    egressLatency = 0
+    traceFailed = false
   }
 
   function forgetRuntime() {
@@ -532,6 +541,7 @@ Item {
     subscriptions = []
     applyRules(null)
     forgetRuntime()
+    clearTrace()
     traceTesting = false
     _traceQueued = false
     clearDesired()
@@ -548,6 +558,8 @@ Item {
   }
 
   function applyGroups(data) {
+    const previousGroup = primaryGroup
+    const previousConfig = currentConfig
     var parsed = Model.readGroups(data)
     groups = parsed.groups
     configEntries = parsed.configs
@@ -555,7 +567,11 @@ Item {
     if (data === null) {
       configTestResults = ({})
       groupTestedAt = ({})
+      return
     }
+    const routeChanged = previousGroup !== primaryGroup || previousConfig !== currentConfig
+    if (routeChanged) clearTrace()
+    if (routeChanged || _traceQueued) refreshTrace()
   }
 
   function applyRules(data) {
@@ -818,7 +834,6 @@ Item {
         root.reportError(error, "configs")
       } else {
         root.reportDone("")
-        root.configChanged()
       }
       root.runQueuedTrace()
     })

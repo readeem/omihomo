@@ -39,6 +39,7 @@ type config struct {
 	log              *slog.Logger
 	tick             time.Duration
 	egressURL        string
+	ipv6EgressURL    string
 	tailscalePresent func() bool
 	tailscaleSync    func(context.Context, bool) error
 	maxClients       int
@@ -70,10 +71,9 @@ func WithLogger(l *slog.Logger) ConfigOpt { return func(c *config) { set(&c.log,
 // WithTick is how often the traffic and connections streams push.
 func WithTick(d time.Duration) ConfigOpt { return func(c *config) { set(&c.tick, d, d > 0) } }
 
-// WithEgressURL is fetched by egress.check. It must answer with a
-// Cloudflare-style trace: "ip=<addr>" lines.
-func WithEgressURL(url string) ConfigOpt {
-	return func(c *config) { set(&c.egressURL, url, url != "") }
+// WithEgressURLs overrides the trace endpoints. Empty IPv6 disables that probe.
+func WithEgressURLs(ipv4, ipv6 string) ConfigOpt {
+	return func(c *config) { c.egressURL, c.ipv6EgressURL = ipv4, ipv6 }
 }
 
 // WithTailscaleProbe reports whether tailscaled is installed.
@@ -183,12 +183,13 @@ var _ Daemon = (*server)(nil)
 // stopped until Run restores it.
 func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	cfg := config{
-		cores:     []protocol.CoreName{protocol.CoreMihomo},
-		ownerFile: owner.DefaultPath,
-		version:   "dev",
-		log:       slog.Default(),
-		tick:      time.Second,
-		egressURL: "https://cloudflare.com/cdn-cgi/trace",
+		cores:         []protocol.CoreName{protocol.CoreMihomo},
+		ownerFile:     owner.DefaultPath,
+		version:       "dev",
+		log:           slog.Default(),
+		tick:          time.Second,
+		egressURL:     core.TraceIPv4URL,
+		ipv6EgressURL: core.TraceIPv6URL,
 		tailscalePresent: func() bool {
 			_, err := exec.LookPath("tailscaled")
 			return err == nil

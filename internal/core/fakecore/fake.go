@@ -247,6 +247,10 @@ func (c *Core) Traffic(ctx context.Context) (protocol.Traffic, error) {
 	return protocol.Traffic{Up: 2048, Down: 65536}, nil
 }
 
+func (c *Core) DialProxy(ctx context.Context, proxy, address string) (net.Conn, error) {
+	return c.DialContext(ctx, "tcp", address)
+}
+
 func (c *Core) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	c.mu.Lock()
 	running := c.running

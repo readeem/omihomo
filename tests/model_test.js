@@ -210,8 +210,9 @@ test("delays, traffic and egress read from their replies", () => {
   assert.deepEqual(Object.keys(Model.readDelays(null)), [])
   assert.deepEqual(Model.readTraffic({ up: 120, down: 4096 }), { up: 120, down: 4096 })
   assert.equal(Model.readTraffic({}), null)
-  assert.deepEqual(Model.readEgress({ ip: "203.0.113.9", latency: 183 }), { ip: "203.0.113.9", latency: 183 })
-  assert.deepEqual(Model.readEgress(null), { ip: "", latency: 0 })
+  assert.deepEqual(Model.readEgress({ ip: "203.0.113.9", ipv6: "2001:db8::1", latency: 183 }),
+    { ip: "203.0.113.9", ipv6: "2001:db8::1", latency: 183 })
+  assert.deepEqual(Model.readEgress(null), { ip: "", ipv6: "", latency: 0 })
 })
 
 const snapshot = (connections, extra) => Object.assign({

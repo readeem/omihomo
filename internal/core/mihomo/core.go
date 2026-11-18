@@ -701,18 +701,26 @@ func (c *Core) Traffic(ctx context.Context) (protocol.Traffic, error) {
 }
 
 func (c *Core) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		return c.dial(ctx, "", address)
+	default:
+		return nil, fmt.Errorf("dial %s: only TCP goes through the core", network)
+	}
+}
+
+func (c *Core) DialProxy(ctx context.Context, proxy, address string) (net.Conn, error) {
+	return c.dial(ctx, proxy, address)
+}
+
+func (c *Core) dial(ctx context.Context, proxy, address string) (net.Conn, error) {
 	if _, _, err := c.state(); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-	default:
-		return nil, fmt.Errorf("dial %s: only TCP goes through the core", network)
-	}
-	conn, err := inner.HandleTcp(tunnel.Tunnel, address, "")
+	conn, err := inner.HandleTcp(tunnel.Tunnel, address, proxy)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s through the core: %w", address, err)
 	}

@@ -416,7 +416,7 @@ func TestEgress(t *testing.T) {
 		fmt.Fprint(w, "fl=1\nip=203.0.113.7\nloc=NL\n")
 	}))
 	defer trace.Close()
-	h := serve(t, os.Getuid(), daemon.WithEgressURL(trace.URL))
+	h := serve(t, os.Getuid(), daemon.WithEgressURLs(trace.URL, ""))
 	c := h.dial(t)
 	if err := callErr(t, c, protocol.OpEgress, nil); err.Code != protocol.CodeNotRunning {
 		t.Fatalf("egress while stopped = %v", err)
@@ -425,6 +425,30 @@ func TestEgress(t *testing.T) {
 	eg := call[protocol.Egress](t, c, protocol.OpEgress, nil)
 	if eg.IP != "203.0.113.7" || eg.Latency <= 0 {
 		t.Fatalf("egress = %+v", eg)
+	}
+}
+
+func TestEgressReportsBothFamiliesAndPrefersIPv4(t *testing.T) {
+	ipv4 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ip=203.0.113.7")
+	}))
+	defer ipv4.Close()
+	ipv6 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ip=2001:db8:1234:abcd:5678:ef01:2345:6789")
+	}))
+	defer ipv6.Close()
+	h := serve(t, os.Getuid(), daemon.WithEgressURLs(ipv4.URL, ipv6.URL))
+	c := h.dial(t)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	args := protocol.EgressArgs{Group: "Proxy", Proxy: "Tokyo"}
+	eg := call[protocol.Egress](t, c, protocol.OpEgress, args)
+	if eg.IP != "203.0.113.7" || eg.IPv6 != "2001:db8:1234:abcd:5678:ef01:2345:6789" || eg.Latency <= 0 {
+		t.Fatalf("dual-stack egress = %+v", eg)
+	}
+	ipv4.Close()
+	eg = call[protocol.Egress](t, c, protocol.OpEgress, args)
+	if eg.IP != "2001:db8:1234:abcd:5678:ef01:2345:6789" || eg.Latency <= 0 {
+		t.Fatalf("IPv6-only egress = %+v", eg)
 	}
 }
 

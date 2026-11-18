@@ -228,7 +228,9 @@ Panel {
   readonly property string uptimeText: omihomo.startedMs > 0 && omihomo.coreRunning
     ? Model.formatDuration(nowMs - omihomo.startedMs) : "—"
   readonly property string egressText: omihomo.traceTesting ? "testing…"
-    : (omihomo.traceFailed ? "failed" : (omihomo.egressIp === "" ? "—" : omihomo.egressIp))
+    : omihomo.traceFailed ? "failed" : omihomo.egressIp === "" ? "—"
+    : omihomo.egressIpv6 === "" || omihomo.egressIpv6 === omihomo.egressIp ? omihomo.egressIp
+    : omihomo.egressIp + "\n" + omihomo.egressIpv6
   readonly property string latencyText: omihomo.traceTesting || omihomo.traceFailed ? "—"
     : Model.formatDelay(omihomo.egressLatency)
 
@@ -861,7 +863,6 @@ Panel {
   Service {
     id: omihomo
     panelOpen: root.opened
-    onConfigChanged: omihomo.refreshTrace()
     onRuleMoved: function(index) {
       root.focusRow("rule", index - 1)
       root.scrollCursorIntoView()
@@ -1108,11 +1109,13 @@ Panel {
             Layout.fillWidth: true
             spacing: Style.space(8)
 
-            Readout { theme: root.theme; live: omihomo.coreActive; Layout.horizontalStretchFactor: 1; label: "UPTIME"; value: root.uptimeText }
+            Readout { theme: root.theme; live: omihomo.coreActive; Layout.horizontalStretchFactor: 1; label: "UPTIME"; value: root.uptimeText; Layout.alignment: Qt.AlignTop }
             Readout {
               theme: root.theme
               live: omihomo.coreActive
-              Layout.horizontalStretchFactor: 1
+              Layout.horizontalStretchFactor: 2
+              Layout.alignment: Qt.AlignTop
+              wrap: true
               label: "EGRESS"
               value: root.egressText
               faded: omihomo.traceFailed && !omihomo.traceTesting
@@ -1123,6 +1126,7 @@ Panel {
               theme: root.theme
               live: omihomo.coreActive
               Layout.horizontalStretchFactor: 1
+              Layout.alignment: Qt.AlignTop
               label: "LATENCY"
               value: root.latencyText
               faded: omihomo.traceFailed && !omihomo.traceTesting

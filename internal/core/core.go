@@ -141,6 +141,9 @@ type Core interface {
 	// local application had made it through the proxy.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 
+	// DialProxy opens a TCP connection through a named proxy or group.
+	DialProxy(ctx context.Context, proxy, address string) (net.Conn, error)
+
 	// DialDownload uses configured DNS and the primary exit, with synchronous failure reporting.
 	DialDownload(ctx context.Context, network, address string) (net.Conn, error)
 
@@ -161,6 +164,12 @@ type Core interface {
 	// match fails them, so either leaves what is in place.
 	InstallGeodata(f GeodataFile, path string, p Profile) error
 }
+
+// Literal destinations keep the proxy from choosing the address family via DNS.
+const (
+	TraceIPv4URL = "https://1.1.1.1/cdn-cgi/trace"
+	TraceIPv6URL = "https://[2606:4700:4700::1111]/cdn-cgi/trace"
+)
 
 // GeodataFile is one geodata file a profile needs: Path is absolute, URL is
 // HTTPS.

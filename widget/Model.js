@@ -432,8 +432,8 @@ function readTraffic(data) {
 // `egress.check` measures the route through the proxy: where traffic leaves
 // it, and the round trip.
 function readEgress(data) {
-  if (!data || typeof data !== "object") return { ip: "", latency: 0 }
-  return { ip: text(data.ip), latency: Math.round(number(data.latency, 0)) }
+  if (!data || typeof data !== "object") return { ip: "", ipv6: "", latency: 0 }
+  return { ip: text(data.ip), ipv6: text(data.ipv6), latency: Math.round(number(data.latency, 0)) }
 }
 
 // The `connections` stream only ever states what is open right now, so a

@@ -131,7 +131,7 @@ const (
 	OpDelayTest          = "delay.test"             // DelayArgs -> DelayResult
 	OpConnections        = "connections.list"       // nil -> Connections
 	OpCloseConnections   = "connections.close"      // CloseArgs -> Empty
-	OpEgress             = "egress.check"           // nil -> Egress
+	OpEgress             = "egress.check"           // EgressArgs -> Egress
 )
 
 // Streams a client can subscribe to. Subscribing to a state stream (status,
@@ -402,9 +402,16 @@ type Traffic struct {
 	Down int64 `json:"down"`
 }
 
-// Egress is where traffic leaves the proxy, measured through it.
+// EgressArgs can pin the check to a group member. Empty follows routing rules.
+type EgressArgs struct {
+	Group string `json:"group"`
+	Proxy string `json:"proxy"`
+}
+
+// Egress reports the preferred address (IPv4 if available) and its latency.
 type Egress struct {
 	IP      string `json:"ip"`
+	IPv6    string `json:"ipv6,omitempty"`
 	Latency int    `json:"latency"` // milliseconds
 }
 

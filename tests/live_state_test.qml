@@ -65,6 +65,8 @@ ShellRoot {
     { name: "egress after selection", until: function() { return !svc.traceTesting }, then: function() {
         t.check(svc.egressIp, "203.0.113.7", "the queued egress check lands")
         t.check(svc.traceFailed, false, "the queued egress check succeeds")
+        t.check(svc.egressIpv6, "2001:db8:1234:abcd:5678:ef01:2345:6789", "the full IPv6 address is retained")
+        t.check(svc.configDelay("Fail"), svc.egressLatency, "the selected config displays the header's latency")
         svc.call("test.status", { primary_group: "Other" })
       } },
     { name: "another client changes primary group", until: function() { return svc.configuredPrimaryGroup === "Other" }, then: function() {
