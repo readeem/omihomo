@@ -16,8 +16,8 @@ import (
 // typed settings and the active subscription; a Core never reads settings of
 // its own and never fetches anything.
 type Config struct {
-	XrayPreferred        bool
-	Mode                 string
+	Core                 protocol.CoreName // Empty uses mihomo.
+	Mode                 protocol.Mode
 	TUN                  bool
 	TUNRedirect          bool
 	Tailscale            bool

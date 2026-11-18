@@ -61,7 +61,7 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 
 	_, port, _ := net.SplitHostPort(listener.Addr().String())
 	n, _ := strconv.Atoi(port)
-	cfg := core.Config{Mode: protocol.ModeRule, XrayPreferred: true, Profile: core.Profile{
+	cfg := core.Config{Mode: protocol.ModeRule, Core: protocol.CoreXray, Profile: core.Profile{
 		Proxies: []core.Proxy{
 			{Name: "Native VLESS", Type: "vless", Options: map[string]any{"server": "127.0.0.1", "port": n, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665"}},
 			{Name: "Mihomo only", Type: "direct"},
@@ -162,7 +162,7 @@ func TestXrayPreferredDeliversReplyAfterClientFIN(t *testing.T) {
 		peer <- err
 	}()
 	defer listener.Close()
-	c := running(t, core.Config{Mode: protocol.ModeRule, XrayPreferred: true, Profile: core.Profile{
+	c := running(t, core.Config{Mode: protocol.ModeRule, Core: protocol.CoreXray, Profile: core.Profile{
 		Proxies: []core.Proxy{{Name: "native", Type: "vless", Options: map[string]any{
 			"server": "127.0.0.1", "port": listener.Addr().(*net.TCPAddr).Port,
 			"uuid": "92d696db-0166-464e-91bb-b65f72b3d665",

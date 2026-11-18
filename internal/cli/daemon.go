@@ -47,7 +47,7 @@ func (a *app) daemonCommand() *ffcli.Command {
 		log := slog.New(slog.NewTextHandler(a.env.Stderr, nil))
 		var c core.Core
 		opts := []daemon.ConfigOpt{daemon.WithStateDir(*stateDir), daemon.WithTailscaleSync(tailscale.Sync)}
-		switch *coreName {
+		switch protocol.CoreName(*coreName) {
 		case "fake":
 			c = fakecore.New()
 			log.Warn("running the fake core: nothing is proxied")
@@ -58,7 +58,9 @@ func (a *app) daemonCommand() *ffcli.Command {
 			}
 			log.Info("hosting mihomo", "version", mihomo.Version, "home", *home)
 			c = m
-			opts = append(opts, daemon.WithXrayPreference(), daemon.WithForcedCore(*coreName))
+			if *coreName == "" {
+				opts = append(opts, daemon.WithCores(protocol.CoreMihomo, protocol.CoreXray))
+			}
 		default:
 			return usage(cmd, "unknown core %q", *coreName)
 		}

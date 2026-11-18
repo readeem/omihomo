@@ -291,7 +291,8 @@ Panel {
       if (updater.updateAvailable) rows.push({ s: "update" })
       if (updater.releaseUrl !== "") rows.push({ s: "releaseNotes" })
       rows.push({ s: "uninstall" })
-      if (omihomo.coreChoices.length > 1) rows.push({ s: "coreMihomo" }, { s: "coreXray" })
+      if (omihomo.coreChoices.length > 1)
+        for (i = 0; i < omihomo.coreChoices.length; i++) rows.push({ s: "core", i: i })
       break
     }
     return rows
@@ -348,6 +349,7 @@ Panel {
     case "group":
     case "config": cycleGroup(delta); break
     case "mode": cycleMode(delta); break
+    case "core": focusRow("core", cursorRow.i + delta); break
     case "tun": omihomo.toggleTun(); break
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
@@ -388,8 +390,7 @@ Panel {
     case "update": updateOmihomo(); break
     case "releaseNotes": openReleaseNotes(); break
     case "uninstall": uninstallCore(); break
-    case "coreMihomo": omihomo.setCore("mihomo"); break
-    case "coreXray": omihomo.setCore("xray"); break
+    case "core": omihomo.setCore(omihomo.coreChoices[cursorRow.i]); break
     }
   }
 

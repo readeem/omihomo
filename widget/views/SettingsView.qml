@@ -15,7 +15,7 @@ Item {
     mode: modeRow, dns: dnsSelector, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
     checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow,
-    coreMihomo: coreCard, coreXray: coreCard
+    core: coreControl
   })
 
   readonly property var updater: panel.updater
@@ -47,7 +47,7 @@ Item {
     contentHeight: settingsColumn.implicitHeight
     onContentHeightChanged: {
       if (panel.uninstallArmed) view.reveal("uninstall")
-      else if (panel.at("coreMihomo") || panel.at("coreXray")) view.reveal("coreXray")
+      else if (panel.at("core")) view.reveal("core")
     }
     clip: true
     boundsBehavior: Flickable.StopAtBounds
@@ -354,67 +354,63 @@ Item {
       }
       SectionLine {
         theme: view.theme
-        visible: coreCard.visible
+        visible: coreControl.visible
         Layout.fillWidth: true
         Layout.topMargin: Style.space(8)
-        title: "PREFERRED CORE"
+        title: "CORE"
       }
 
-      Rectangle {
-        id: coreCard
+      ColumnLayout {
+        id: coreControl
         visible: view.service.coreChoices.length > 1
         Layout.fillWidth: true
-        implicitHeight: coreColumn.implicitHeight + Style.space(16)
-        radius: view.theme.cardRadius
-        color: view.theme.fill
-        border.width: 1
-        border.color: view.theme.line
+        spacing: Style.space(6)
 
-        ColumnLayout {
-          id: coreColumn
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          anchors.margins: Style.space(8)
-          spacing: Style.space(6)
+        Rectangle {
+          id: coreTrack
+          readonly property real inset: Style.space(3)
+          Layout.fillWidth: true
+          implicitHeight: coreSegments.implicitHeight + 2 * inset
+          radius: view.theme.controlRadius + inset
+          color: view.theme.fill
+          border.width: 1
+          border.color: view.theme.line
 
           RowLayout {
-            Layout.fillWidth: true
-            spacing: Style.space(6)
+            id: coreSegments
+            anchors.fill: parent
+            anchors.margins: coreTrack.inset
+            spacing: coreTrack.inset
+            uniformCellSizes: true
 
-            SmallButton {
-              theme: view.theme
-              Layout.fillWidth: true
-              text: "mihomo"
-              primary: view.service.coreName === "mihomo"
-              enabled: view.service.ready && !view.service.busy
-              hasCursor: view.panel.at("coreMihomo")
-              onHovered: function(on) { if (on) view.panel.focusRow("coreMihomo") }
-              onClicked: view.service.setCore("mihomo")
-            }
+            Repeater {
+              model: view.service.coreChoices
 
-            SmallButton {
-              theme: view.theme
-              Layout.fillWidth: true
-              text: "Xray preferred"
-              primary: view.service.coreName === "xray"
-              enabled: view.service.ready && !view.service.busy
-              hasCursor: view.panel.at("coreXray")
-              onHovered: function(on) { if (on) view.panel.focusRow("coreXray") }
-              onClicked: view.service.setCore("xray")
+              SmallButton {
+                required property string modelData
+                required property int index
+                theme: view.theme
+                Layout.fillWidth: true
+                text: modelData
+                primary: view.service.coreName === modelData
+                ghost: true
+                enabled: view.service.ready && !view.service.busy
+                hasCursor: view.panel.at("core", index)
+                onHovered: function(on) { if (on) view.panel.focusRow("core", index) }
+                onClicked: view.service.setCore(modelData)
+              }
             }
           }
+        }
 
-          PanelText {
-            theme: view.theme
-            Layout.fillWidth: true
-            text: view.service.pendingCore !== "" ? view.service.actionStatus
-              : (view.panel.errorAt("core-select") ? view.service.lastError : "")
-            color: view.panel.errorAt("core-select") ? view.theme.urgent : view.theme.dim
-            visible: text !== ""
-            wrapMode: Text.Wrap
-          }
-
+        PanelText {
+          theme: view.theme
+          Layout.fillWidth: true
+          text: view.service.pendingCore !== "" ? view.service.actionStatus
+            : (view.panel.errorAt("core-select") ? view.service.lastError : "")
+          color: view.panel.errorAt("core-select") ? view.theme.urgent : view.theme.dim
+          visible: text !== ""
+          wrapMode: Text.Wrap
         }
       }
     }

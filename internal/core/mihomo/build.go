@@ -56,7 +56,7 @@ var (
 
 // rawConfig translates cfg into what mihomo parses. It never reads a file.
 func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
-	mode, ok := map[string]tunnel.TunnelMode{
+	mode, ok := map[protocol.Mode]tunnel.TunnelMode{
 		protocol.ModeRule:   tunnel.Rule,
 		protocol.ModeGlobal: tunnel.Global,
 		protocol.ModeDirect: tunnel.Direct,

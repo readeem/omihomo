@@ -114,7 +114,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		}
 		return d.stop(ctx)
 	case protocol.OpSetCore:
-		var args protocol.NameArgs
+		var args protocol.CoreArgs
 		if err := decode(req.Args, &args); err != nil {
 			return nil, err
 		}
@@ -210,9 +210,9 @@ func (d *server) status() protocol.Status {
 	if sub := d.activeSub(); sub != nil {
 		active = sub.Name
 	}
-	var choices []string
-	if d.cfg.xrayPreferred && d.cfg.forcedCore == "" {
-		choices = []string{protocol.CoreMihomo, protocol.CoreXray}
+	var choices []protocol.CoreName
+	if len(d.cfg.cores) > 1 {
+		choices = d.cfg.cores
 	}
 	return protocol.Status{
 		Core:               d.preferredCore(d.settings.Core),

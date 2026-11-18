@@ -116,8 +116,8 @@ func (d *server) runConfig(s state.Settings, p core.Profile) core.Config {
 	}
 	p.Rules = rules
 	return core.Config{
-		XrayPreferred: d.preferredCore(s.Core) == protocol.CoreXray,
-		Mode:          s.Mode, TUN: s.TUN, TUNRedirect: s.TUNRedirect, Tailscale: s.Tailscale,
+		Core: d.preferredCore(s.Core),
+		Mode: s.Mode, TUN: s.TUN, TUNRedirect: s.TUNRedirect, Tailscale: s.Tailscale,
 		TailnetProxy: s.TailnetProxy, OmihomoRulesDisabled: s.OmihomoRulesDisabled,
 		PrimaryGroup: s.PrimaryGroup, DNSDestination: s.DNSDestination, TUNBypass: bypass(s), Profile: p,
 	}

@@ -33,8 +33,7 @@ type Daemon interface {
 type ConfigOpt func(*config)
 
 type config struct {
-	xrayPreferred    bool
-	forcedCore       string
+	cores            []protocol.CoreName
 	ownerFile        string
 	version          string
 	log              *slog.Logger
@@ -57,12 +56,10 @@ func WithOwnerFile(path string) ConfigOpt {
 	return func(c *config) { set(&c.ownerFile, path, path != "") }
 }
 
-func WithXrayPreference() ConfigOpt {
-	return func(c *config) { c.xrayPreferred = true }
-}
-
-func WithForcedCore(name string) ConfigOpt {
-	return func(c *config) { c.forcedCore = name }
+// WithCores limits the saved selection to these cores and uses the first as the default.
+func WithCores(first protocol.CoreName, others ...protocol.CoreName) ConfigOpt {
+	cores := append([]protocol.CoreName{first}, others...)
+	return func(c *config) { c.cores = cores }
 }
 
 // WithVersion is the version the greeting reports.
@@ -186,6 +183,7 @@ var _ Daemon = (*server)(nil)
 // stopped until Run restores it.
 func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	cfg := config{
+		cores:     []protocol.CoreName{protocol.CoreMihomo},
 		ownerFile: owner.DefaultPath,
 		version:   "dev",
 		log:       slog.Default(),

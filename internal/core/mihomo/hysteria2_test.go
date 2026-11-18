@@ -27,11 +27,12 @@ import (
 func TestHysteriaReceivesDatagramsInPeerOrder(t *testing.T) {
 	previous := goruntime.GOMAXPROCS(1)
 	t.Cleanup(func() { goruntime.GOMAXPROCS(previous) })
-	t.Run("Mihomo", func(t *testing.T) { testSelfSignedHysteria(t, false) })
-	t.Run("XrayPreferred", func(t *testing.T) { testSelfSignedHysteria(t, true) })
+	for _, name := range []protocol.CoreName{protocol.CoreMihomo, protocol.CoreXray} {
+		t.Run(string(name), func(t *testing.T) { testSelfSignedHysteria(t, name) })
+	}
 }
 
-func testSelfSignedHysteria(t *testing.T, xrayPreferred bool) {
+func testSelfSignedHysteria(t *testing.T, name protocol.CoreName) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -98,7 +99,7 @@ func testSelfSignedHysteria(t *testing.T, xrayPreferred bool) {
 		}()
 	}()
 	t.Cleanup(func() { cancel(); listener.Close(); <-done })
-	c := running(t, core.Config{Mode: protocol.ModeRule, XrayPreferred: xrayPreferred, Profile: core.Profile{
+	c := running(t, core.Config{Mode: protocol.ModeRule, Core: name, Profile: core.Profile{
 		Proxies: []core.Proxy{{Name: "Ordered", Type: "hysteria2", Options: map[string]any{
 			"server": "127.0.0.1", "port": listener.Addr().(*net.UDPAddr).Port,
 			"password": "test", "skip-cert-verify": true,

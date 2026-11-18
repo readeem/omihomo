@@ -60,17 +60,18 @@ ShellRoot {
     return true
   }
 
-  function clickButton(text) {
-    function find(item) {
-      if (!item.visible) return null
-      if (item.text === text && typeof item.clicked === "function") return item
-      for (var i = 0; i < item.children.length; i++) {
-        var found = find(item.children[i])
-        if (found) return found
-      }
-      return null
+  function findButton(item, text) {
+    if (!item.visible) return null
+    if (item.text === text && typeof item.clicked === "function") return item
+    for (var i = 0; i < item.children.length; i++) {
+      var found = findButton(item.children[i], text)
+      if (found) return found
     }
-    var button = find(panel)
+    return null
+  }
+
+  function clickButton(text) {
+    var button = findButton(panel, text)
     if (!button) return false
     events.mouseClick(button, button.width / 2, button.height / 2, Qt.LeftButton, 0, -1)
     return true
@@ -546,17 +547,23 @@ ShellRoot {
       { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
           t.check(panel.service.lastError, "", "a recovered proxy completes the update without requesting direct access")
           panel.openView("settings")
-          panel.focusRow("coreXray")
+          panel.focusRow("core", 1)
           panel.scrollCursorIntoView()
         } },
-      { name: "select Xray preferred", until: function() {
-          return panel.service.streamsReady(["status"]) && panel.at("coreXray")
+      { name: "select xray", until: function() {
+          return panel.service.streamsReady(["status"]) && panel.at("core", 1)
         }, then: function() {
-          t.check(testRoot.clickButton("Xray preferred"), true, "select the preferred outbound engine")
+          var xray = testRoot.findButton(panel, "xray")
+          var mihomo = testRoot.findButton(panel, "mihomo")
+          t.check(xray && mihomo && Math.abs(xray.width - mihomo.width) <= 1, true, "core choices share the track equally")
+          t.check(testRoot.clickButton("xray"), true, "select the preferred outbound engine")
         } },
-      { name: "switch to Xray preferred", until: function() { return !panel.service.busy && panel.service.coreName === "xray" }, then: function() {
+      { name: "switch to xray", until: function() { return !panel.service.busy && panel.service.coreName === "xray" }, then: function() {
           t.check(panel.service.coreState, "on", "the proxy keeps running after switching")
-          t.check(testRoot.clickButton("mihomo"), true, "switch back to mihomo")
+          panel.focusRow("core", 1)
+          key(Qt.Key_Left)
+          t.check(panel.at("core", 0), true, "move focus to mihomo")
+          key(Qt.Key_Return)
         } },
       { name: "switch back to mihomo", until: function() { return !panel.service.busy && panel.service.coreName === "mihomo" }, then: function() {
           t.check(panel.service.coreState, "on", "the proxy keeps running after switching back")

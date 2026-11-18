@@ -451,7 +451,7 @@ func readSettings(root *os.Root) (state.Settings, error) {
 	}
 	var old struct {
 		Config struct {
-			Mode string `yaml:"mode"`
+			Mode protocol.Mode `yaml:"mode"`
 			TUN  struct {
 				Enable   bool `yaml:"enable"`
 				Redirect bool `yaml:"auto-redirect"`
@@ -474,7 +474,7 @@ func readSettings(root *os.Root) (state.Settings, error) {
 	if old.Config.Mode != "" {
 		s.Mode = old.Config.Mode
 	}
-	if s.Mode != "rule" && s.Mode != "global" && s.Mode != "direct" {
+	if s.Mode != protocol.ModeRule && s.Mode != protocol.ModeGlobal && s.Mode != protocol.ModeDirect {
 		return s, errors.New("old override has an invalid mode")
 	}
 	if len(old.Omihomo.Group) > 256 || strings.ContainsFunc(old.Omihomo.Group, unicode.IsControl) {

@@ -116,7 +116,7 @@ const (
 	OpStart = "start" // nil -> Status
 	OpStop  = "stop"  // nil -> Status
 
-	OpSetCore = "core.select" // NameArgs -> Status
+	OpSetCore = "core.select" // CoreArgs -> Status
 
 	OpApply = "settings.apply" // ApplyArgs -> Status
 
@@ -156,16 +156,19 @@ const (
 	StateDegraded = "degraded"
 )
 
+type CoreName string
+
 const (
-	CoreMihomo = "mihomo"
-	CoreXray   = "xray"
+	CoreMihomo CoreName = "mihomo"
+	CoreXray   CoreName = "xray"
 )
 
-// Modes.
+type Mode string
+
 const (
-	ModeRule   = "rule"
-	ModeGlobal = "global"
-	ModeDirect = "direct"
+	ModeRule   Mode = "rule"
+	ModeGlobal Mode = "global"
+	ModeDirect Mode = "direct"
 )
 
 // Rule sources, in runtime order: the owner's rules come first, then the
@@ -181,16 +184,16 @@ type Empty struct{}
 
 // Status is everything the bar icon and the panel header show.
 type Status struct {
-	Core               string   `json:"core,omitempty"`
-	CoreChoices        []string `json:"core_choices,omitempty"`
-	State              string   `json:"state"`
-	Detail             string   `json:"detail"`
-	ActiveSubscription string   `json:"active_subscription"`
+	Core               CoreName   `json:"core,omitempty"`
+	CoreChoices        []CoreName `json:"core_choices,omitempty"`
+	State              string     `json:"state"`
+	Detail             string     `json:"detail"`
+	ActiveSubscription string     `json:"active_subscription"`
 	// PrimaryGroup is the group whose selection is "the current proxy".
 	// Empty means the first selectable group.
 	PrimaryGroup     string `json:"primary_group"`
 	DNSDestination   string `json:"dns_destination"`
-	Mode             string `json:"mode"`
+	Mode             Mode   `json:"mode"`
 	TUN              bool   `json:"tun"`
 	TUNRedirect      bool   `json:"tun_redirect"`
 	Tailscale        bool   `json:"tailscale"`
@@ -213,7 +216,7 @@ type Settings struct {
 	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
 	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
 	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`
-	Mode                      string          `json:"mode"`
+	Mode                      Mode            `json:"mode"`
 	TUN                       bool            `json:"tun,omitzero"`
 	TUNRedirect               bool            `json:"tun_redirect,omitzero"`
 	Tailscale                 bool            `json:"tailscale,omitzero"`
@@ -283,6 +286,10 @@ type SubscriptionURLArgs struct {
 // NameArgs names a subscription.
 type NameArgs struct {
 	Name string `json:"name"`
+}
+
+type CoreArgs struct {
+	Name CoreName `json:"name"`
 }
 
 // Rule is one traffic rule.

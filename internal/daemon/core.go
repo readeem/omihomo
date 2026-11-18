@@ -2,21 +2,19 @@ package daemon
 
 import (
 	"context"
+	"slices"
 
 	"github.com/readeem/omihomo/internal/protocol"
 )
 
-func (d *server) preferredCore(saved string) string {
-	if d.cfg.forcedCore != "" {
-		return d.cfg.forcedCore
+func (d *server) preferredCore(saved protocol.CoreName) protocol.CoreName {
+	if slices.Contains(d.cfg.cores, saved) {
+		return saved
 	}
-	if d.cfg.xrayPreferred && saved == protocol.CoreXray {
-		return protocol.CoreXray
-	}
-	return protocol.CoreMihomo
+	return d.cfg.cores[0]
 }
 
-func (d *server) switchCore(ctx context.Context, name string) (protocol.Status, *protocol.Error) {
+func (d *server) switchCore(ctx context.Context, name protocol.CoreName) (protocol.Status, *protocol.Error) {
 	if name != protocol.CoreMihomo && name != protocol.CoreXray {
 		return protocol.Status{}, fail(protocol.CodeInvalid, "core must be mihomo or xray")
 	}

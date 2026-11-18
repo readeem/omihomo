@@ -175,7 +175,7 @@ func (c *Core) run(rt *runtime) error {
 	c.mu.Lock()
 	previous := c.current
 	c.mu.Unlock()
-	if rt.cfg.XrayPreferred {
+	if rt.cfg.Core == protocol.CoreXray {
 		engine := previous.xray
 		if engine == nil || !reflect.DeepEqual(previous.cfg.Profile.Proxies, rt.cfg.Profile.Proxies) {
 			var err error

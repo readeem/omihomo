@@ -3,7 +3,7 @@
 The daemon embeds a pinned mihomo Go library behind `core.Core`, so configuration, lifecycle and live data share an in-process boundary. Shipping a separate mihomo executable would retain the controller and privilege-grant machinery this architecture removes.
 
 mihomo owns listeners, DNS, routing, groups and connection tracking in both modes.
-Xray preferred substitutes Xray transports for outbounds whose options can be represented.
+Selecting `xray` substitutes Xray transports for outbounds whose options can be represented.
 The original mihomo adapter handles other outbounds. Keeping one routing engine preserves
 rule ordering, process matching and group behavior across switches. Xray opens its sockets
 through mihomo's uplink policy so it follows the same DNS, interface and firewall marks under

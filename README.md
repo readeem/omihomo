@@ -19,7 +19,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 
 ## Features
 
-- **One-click core.** Start, stop, and install the proxy from the bar. Choose mihomo or Xray preferred in Settings.
+- **One-click core.** Start, stop, and install the proxy from the bar. Choose `mihomo` or `xray` in Settings.
 - **Subscriptions.** Paste a URL, and Omihomo imports it, names it, and refreshes it on the provider's schedule.
 - **Groups and configs.** Pick a config, latency-test one or a whole group, and choose the primary group. Latency is colour-coded.
 - **Live readout.** A traffic graph, uptime, and the egress IP with its round trip through the selected config.
@@ -81,9 +81,9 @@ The key hints at the bottom of the panel show the rest, and `omihomo -h` lists t
 A subscription URL may return a full mihomo YAML config or raw share links. The daemon refreshes
 it on the provider's schedule, 12 hours by default, and a failed refresh keeps the cached content.
 
-Choose **mihomo** or **Xray preferred** at the bottom of Settings, or run
+Choose **mihomo** or **xray** at the bottom of Settings, or run
 `omihomo set core mihomo` or `omihomo set core xray`. The choice applies to every subscription.
-Xray preferred uses Xray for compatible configs and mihomo for the rest. Both choices use
+The **xray** setting uses Xray for compatible outbounds and mihomo for the rest. Both choices use
 mihomo's rules, groups, TUN, DNS, and connection controls. A stopped proxy saves the choice
 for the next start.
 

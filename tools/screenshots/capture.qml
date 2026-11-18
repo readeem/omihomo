@@ -16,7 +16,7 @@ ShellRoot {
     { view: "subs", file: "subscriptions.png" },
     { view: "rules", file: "rules.png", ruleQuery: "www.netflix.com" },
     { view: "conns", file: "connections.png" },
-    { view: "settings", file: "settings.png", row: "coreXray" }
+    { view: "settings", file: "settings.png", row: "core", index: 1 }
   ]
   readonly property var previewShots: ["configs.png", "connections.png", "rules.png"]
 
@@ -82,7 +82,7 @@ ShellRoot {
           return item.placeholderText === "domain, URL, or IP address"
         }).text = next.ruleQuery
       } else if (settled === 2 && next.row) {
-        panel.focusRow(next.row)
+        panel.focusRow(next.row, next.index)
         panel.scrollCursorIntoView()
         panel.cursorActive = false
       } else if (settled > 8) {

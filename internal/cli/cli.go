@@ -302,7 +302,7 @@ func (a *app) setCommand() *ffcli.Command {
 		setting("mode", "<rule|global|direct>", "route by rules, everything through the proxy, or nothing",
 			func(v string) (change, error) {
 				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
-					s.Settings.Mode = v
+					s.Settings.Mode = protocol.Mode(v)
 					return nil
 				}, nil
 			}),
@@ -338,7 +338,9 @@ func (a *app) setCommand() *ffcli.Command {
 
 func (a *app) setCoreCommand() *ffcli.Command {
 	return a.call("core", "omihomo set core [--pretty] <mihomo|xray>",
-		"choose the preferred proxy transport", nargs(1, protocol.OpSetCore, func(args []string) any { return protocol.NameArgs{Name: args[0]} }))
+		"choose the preferred proxy transport", nargs(1, protocol.OpSetCore, func(args []string) any {
+			return protocol.CoreArgs{Name: protocol.CoreName(args[0])}
+		}))
 }
 
 // builtinTargets are the targets every subscription has.

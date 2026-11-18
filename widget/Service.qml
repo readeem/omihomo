@@ -644,7 +644,7 @@ Item {
   function setCore(name) {
     if (busy || !streamsReady(["status"]) || name === coreName || coreChoices.indexOf(name) < 0) return
     pendingCore = name
-    reportDone("Switching to " + (name === "xray" ? "Xray preferred" : "mihomo") + "…")
+    reportDone("Switching to " + name + "…")
     _coreCall = call("core.select", { name: name }, function(result, error) {
       root._coreCall = 0
       root.pendingCore = ""
