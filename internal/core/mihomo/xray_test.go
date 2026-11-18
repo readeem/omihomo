@@ -1,11 +1,14 @@
 package mihomo
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"io"
 	"net"
+	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -70,6 +73,8 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 		},
 	}}
 	if os.Getenv("OMIHOMO_TEST_ACCELERATED_TUN") == "1" {
+		// A network namespace still exposes the host's pathname D-Bus socket.
+		t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "system_bus_socket"))
 		cfg.TUN, cfg.TUNRedirect = true, true
 	}
 	previousNetwork := shared.xrayNetwork
@@ -124,6 +129,83 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 	}
 	if _, err := conn.Read(response[:]); err == nil {
 		t.Fatal("connection is still usable after close")
+	}
+}
+
+func TestXrayPreferredDeliversReplyAfterClientFIN(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			peer <- err
+			return
+		}
+		defer conn.Close()
+		deadline, _ := ctx.Deadline()
+		conn.SetDeadline(deadline)
+		// Consume the VLESS request header for an IPv4 destination, then echo
+		// the payload only after the transport finishes its write side.
+		if _, err := io.CopyN(io.Discard, conn, 26); err != nil {
+			peer <- err
+			return
+		}
+		body, err := io.ReadAll(conn)
+		if err == nil {
+			_, err = conn.Write(append([]byte{0, 0}, body...))
+		}
+		peer <- err
+	}()
+	defer listener.Close()
+	c := running(t, core.Config{Mode: protocol.ModeRule, XrayPreferred: true, Profile: core.Profile{
+		Proxies: []core.Proxy{{Name: "native", Type: "vless", Options: map[string]any{
+			"server": "127.0.0.1", "port": listener.Addr().(*net.TCPAddr).Port,
+			"uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+		}}},
+		Rules: []core.Rule{{Type: "MATCH", Target: "native", Source: protocol.SourceSubscription}},
+	}})
+	if c.current.xray == nil || c.current.xray.Get("native") == nil {
+		t.Fatal("missing the native VLESS outbound")
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(mixedPort)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	conn.SetDeadline(deadline)
+	const request = "CONNECT 192.0.2.1:80 HTTP/1.1\r\nHost: 192.0.2.1:80\r\n\r\n"
+	if _, err := io.WriteString(conn, request); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("mixed listener CONNECT response: %s", response.Status)
+	}
+	if _, err := conn.Write([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	writer, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		t.Fatal("native TCP does not support a write half-close")
+	}
+	if err := writer.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := io.ReadAll(reader); err != nil || string(result) != "payload" {
+		t.Fatalf("reply after write EOF = %q, %v", result, err)
+	}
+	if err := <-peer; err != nil {
+		t.Fatalf("peer: %v", err)
 	}
 }
 

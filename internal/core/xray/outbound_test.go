@@ -393,12 +393,72 @@ func webSocketProxy(kind string, port int, name string) core.Proxy {
 	}}
 }
 
+func TestGRPCPreservesRequestFields(t *testing.T) {
+	for _, service := range []string{"edge/proxy", "/custom"} {
+		t.Run(service, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			type requestFields struct{ authority, path, agent string }
+			seen := make(chan requestFields, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen <- requestFields{r.Host, r.URL.RequestURI(), r.UserAgent()}
+				w.Header().Set("Content-Type", "application/grpc")
+			}))
+			server.Config.Protocols = new(http.Protocols)
+			server.Config.Protocols.SetUnencryptedHTTP2(true)
+			server.Start()
+			defer server.Close()
+			engine, err := xray.New([]core.Proxy{{Name: "gun", Type: "vless", Options: map[string]any{
+				"server": "127.0.0.1", "port": server.Listener.Addr().(*net.TCPAddr).Port,
+				"network": "grpc", "uuid": "92d696db-0166-464e-91bb-b65f72b3d665", "servername": "grpc.example",
+				"grpc-opts": map[string]any{"grpc-service-name": service, "grpc-user-agent": "chrome"},
+			}}}, localNetwork{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer engine.Close()
+			out := engine.Get("gun")
+			if out == nil {
+				t.Fatal("missing native gRPC outbound")
+			}
+			conn, err := out.DialContext(ctx, "127.0.0.1", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			path := "/edge/proxy/Tun"
+			if service == "/custom" {
+				path = "/custom"
+			}
+			select {
+			case got := <-seen:
+				if want := (requestFields{"grpc.example", path, "chrome"}); got != want {
+					t.Fatalf("request fields = %+v, want %+v", got, want)
+				}
+			case <-ctx.Done():
+				t.Fatal("peer did not receive a gRPC request")
+			}
+		})
+	}
+}
+
 func TestClosingXHTTPConnectionCancelsItsRequests(t *testing.T) {
+	for _, cleartextHTTP2 := range []bool{false, true} {
+		name := "HTTP1"
+		if cleartextHTTP2 {
+			name = "h2c"
+		}
+		t.Run(name, func(t *testing.T) { testXHTTPRequests(t, cleartextHTTP2) })
+	}
+}
+
+func testXHTTPRequests(t *testing.T, cleartextHTTP2 bool) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	get, post := make(chan struct{}, 1), make(chan struct{}, 1)
-	canceled := make(chan string, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	get, post := make(chan struct{}, 1), make(chan struct{}, 2)
+	canceled := make(chan string, 3)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			get <- struct{}{}
 		} else {
@@ -413,12 +473,20 @@ func TestClosingXHTTPConnectionCancelsItsRequests(t *testing.T) {
 		case <-ctx.Done():
 		}
 	}))
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(!cleartextHTTP2)
+	server.Config.Protocols.SetUnencryptedHTTP2(cleartextHTTP2)
+	server.Start()
 	defer server.Close()
 	port := server.Listener.Addr().(*net.TCPAddr).Port
-	engine, err := xray.New([]core.Proxy{{Name: "split", Type: "vless", Options: map[string]any{
+	options := map[string]any{
 		"server": "127.0.0.1", "port": port, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
 		"network": "xhttp", "xhttp-opts": map[string]any{"mode": "packet-up"},
-	}}}, localNetwork{})
+	}
+	if !cleartextHTTP2 {
+		options["alpn"] = []any{"http/1.1"}
+	}
+	engine, err := xray.New([]core.Proxy{{Name: "split", Type: "vless", Options: options}}, localNetwork{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,15 +512,26 @@ func TestClosingXHTTPConnectionCancelsItsRequests(t *testing.T) {
 			t.Fatal("XHTTP did not start both requests")
 		}
 	}
+	if _, err := conn.Write([]byte("next packet")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-post:
+	case <-ctx.Done():
+		t.Fatal("second XHTTP upload was blocked by the first response")
+	}
 	conn.Close()
-	seen := make(map[string]bool)
-	for len(seen) < 2 {
+	seen := make(map[string]int)
+	for range 3 {
 		select {
 		case method := <-canceled:
-			seen[method] = true
+			seen[method]++
 		case <-ctx.Done():
-			t.Fatalf("server saw client cancellation for %v, want GET and POST", seen)
+			t.Fatalf("server saw client cancellation for %v, want one GET and two POSTs", seen)
 		}
+	}
+	if seen[http.MethodGet] != 1 || seen[http.MethodPost] != 2 {
+		t.Fatalf("canceled requests: %v", seen)
 	}
 }
 

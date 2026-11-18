@@ -19,7 +19,7 @@ Optionally, from a separate checkout of the published release, check that the im
 without changing anything:
 
 ```sh
-mise exec -- go run ./cmd/omihomo preflight \
+mise run go -- run ./cmd/omihomo preflight \
   --legacy-data "${XDG_DATA_HOME:-$HOME/.local/share}/omihomo"
 ```
 

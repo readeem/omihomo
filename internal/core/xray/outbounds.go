@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net"
 	"net/netip"
 	"net/url"
 	"slices"
@@ -104,7 +105,7 @@ func proxyOutbound(tag, socketKey string, p core.Proxy) (*xcore.OutboundHandlerC
 	if encoding := options.string("packet-encoding"); encoding != "" && encoding != "xudp" {
 		return nil, "unsupported packet encoding"
 	}
-	stream, reason := proxyStream(options, server, socketKey, p.Type == "trojan")
+	stream, reason := proxyStream(options, server, n, socketKey, p.Type == "trojan")
 	if reason != "" {
 		return nil, reason
 	}
@@ -136,7 +137,7 @@ func isDomain(host string) bool {
 	})
 }
 
-func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf.StreamConfig, string) {
+func proxyStream(opts fields, server string, port int, socketKey string, tlsRequired bool) (*conf.StreamConfig, string) {
 	stream := &conf.StreamConfig{SocketSettings: &conf.SocketConfig{Interface: socketKey}}
 	switch opts.string("ip-version") {
 	case "", "dual", "ipv4", "ipv6", "ipv4-prefer", "ipv6-prefer":
@@ -147,6 +148,13 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 	network := conf.TransportProtocol(opts.string("network"))
 	if network == "" {
 		network = "tcp"
+	}
+	var alpn []string
+	values, _ := opts["alpn"].([]any)
+	for _, value := range values {
+		if s, ok := value.(string); ok {
+			alpn = append(alpn, s)
+		}
 	}
 	var websocketHost string
 	stream.Network = &network
@@ -185,22 +193,53 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 		stream.WSSettings = &conf.WebSocketConfig{Path: path.String(), Host: websocketHost, Headers: headers}
 	case "grpc":
 		grpc := opts.object("grpc-opts")
-		if grpc.string("grpc-user-agent") != "" {
-			return nil, "unsupported gRPC user agent"
+		if key := grpc.unsupported("grpc-service-name", "grpc-user-agent"); key != "" {
+			return nil, "unsupported gRPC option " + key
 		}
 		service := grpc.string("grpc-service-name")
 		if service == "" {
 			service = "GunService"
 		}
-		stream.GRPCSettings = &conf.GRPCConfig{ServiceName: service}
+		if !strings.HasPrefix(service, "/") {
+			service = "/" + service + "/Tun"
+		}
+		authority := opts.string("servername")
+		if tlsRequired {
+			authority = opts.string("sni")
+			if authority == "" {
+				authority = server
+			}
+		} else if authority == "" {
+			authority = net.JoinHostPort(server, strconv.Itoa(port))
+		}
+		userAgent := grpc.string("grpc-user-agent")
+		if userAgent == "" {
+			userAgent = "grpc-go/1.36.0"
+		}
+		stream.GRPCSettings = &conf.GRPCConfig{
+			Authority: authority, ServiceName: service, UserAgent: userAgent, LiteralRequestFields: true,
+		}
 	case "xhttp", "splithttp":
 		xhttp := opts.object("xhttp-opts")
 		if key := xhttp.unsupported("path", "host", "mode", "headers", "no-grpc-header", "x-padding-bytes"); key != "" {
 			return nil, "unsupported XHTTP option " + key
 		}
-		headers := headerStrings(xhttp.object("headers"))
-		conf := &conf.SplitHTTPConfig{Path: xhttp.string("path"), Host: xhttp.string("host"), Mode: xhttp.string("mode"),
-			Headers: headers, NoGRPCHeader: xhttp["no-grpc-header"] == true}
+		host := xhttp.string("host")
+		if host == "" {
+			host = opts.string("servername")
+			if host == "" {
+				host = server
+			}
+			if ip, err := netip.ParseAddr(host); err == nil && ip.Is6() {
+				host = "[" + host + "]"
+			}
+		}
+		if slices.Equal(alpn, []string{"h3"}) && opts["tls"] != true && len(opts.object("reality-opts")) == 0 {
+			return nil, "XHTTP HTTP/3 requires TLS"
+		}
+		conf := &conf.SplitHTTPConfig{Path: xhttp.string("path"), Host: host, Mode: xhttp.string("mode"),
+			Headers: headerStrings(xhttp.object("headers")), NoGRPCHeader: xhttp["no-grpc-header"] == true,
+			H2C: !slices.Equal(alpn, []string{"http/1.1"})}
 		if padding := xhttp.string("x-padding-bytes"); padding != "" {
 			if err := conf.XPaddingBytes.UnmarshalJSON(*raw(padding)); err != nil ||
 				conf.XPaddingBytes.From < 0 || conf.XPaddingBytes.To > 2048 {
@@ -240,13 +279,6 @@ func proxyStream(opts fields, server, socketKey string, tlsRequired bool) (*conf
 		stream.REALITYSettings = &conf.REALITYConfig{ServerName: sni, Fingerprint: fingerprint,
 			PublicKey: reality.string("public-key"), ShortId: reality.string("short-id")}
 	} else if opts["tls"] == true || tlsRequired {
-		var alpn []string
-		values, _ := opts["alpn"].([]any)
-		for _, value := range values {
-			if s, ok := value.(string); ok {
-				alpn = append(alpn, s)
-			}
-		}
 		stream.Security = "tls"
 		stream.TLSSettings = &conf.TLSConfig{UseSystemCA: true, ServerName: sni, Fingerprint: fingerprint, ALPN: (*conf.StringList)(&alpn)}
 	}

@@ -235,7 +235,7 @@ func (o *Outbound) DialContext(ctx context.Context, host string, port uint16) (n
 		return nil, err
 	}
 	run, cancel, handler := o.session(ctx, tcpDestination(host, port))
-	client, relay := net.Pipe()
+	client, relay := streamPipePair()
 	disarm := context.AfterFunc(run, func() { relay.Close() })
 	ready := make(chan struct{})
 	deadline, _ := ctx.Deadline()
@@ -248,11 +248,12 @@ func (o *Outbound) DialContext(ctx context.Context, host string, port uint16) (n
 		defer disarm()
 		defer relay.Close()
 		reader := &buf.TimeoutWrapperReader{Reader: buf.NewReader(relay)}
-		handler.GetOutbound().Process(run, &transport.Link{Reader: reader, Writer: buf.NewWriter(relay)}, d)
+		writer := relayWriter{buf.NewWriter(relay), relay}
+		handler.GetOutbound().Process(run, &transport.Link{Reader: reader, Writer: writer}, d)
 	}()
 	select {
 	case <-ready:
-		return &sessionConn{Conn: client, cancel: cancel}, nil
+		return &sessionConn{streamPipe: client, cancel: cancel}, nil
 	case <-done:
 	case <-ctx.Done():
 	case <-o.ctx.Done():
@@ -271,13 +272,13 @@ func (o *Outbound) DialContext(ctx context.Context, host string, port uint16) (n
 type attemptKey struct{}
 
 type sessionConn struct {
-	net.Conn
+	*streamPipe
 	cancel context.CancelFunc
 }
 
 func (c *sessionConn) Close() error {
 	c.cancel()
-	return c.Conn.Close()
+	return c.streamPipe.Close()
 }
 
 type tcpAttempt struct {
@@ -350,6 +351,8 @@ type trackedConn struct {
 	net.Conn
 	stop func() bool
 }
+
+func (c *trackedConn) CloseWrite() error { return stat.CloseWrite(c.Conn) }
 
 func (c *trackedConn) Close() error {
 	c.stop()

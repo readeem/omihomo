@@ -1,0 +1,132 @@
+Allow opt-in cleartext HTTP/2 for XHTTP clients
+
+diff --git a/infra/conf/transport_method.go b/infra/conf/transport_method.go
+index c448326..a5c2b60 100644
+--- a/infra/conf/transport_method.go
++++ b/infra/conf/transport_method.go
+@@ -264,6 +264,7 @@ func (c *TCPConfig) Build() (proto.Message, error) {
+ }
+ 
+ type SplitHTTPConfig struct {
++	H2C                  bool              `json:"h2c"`
+ 	Host                 string            `json:"host"`
+ 	Path                 string            `json:"path"`
+ 	Mode                 string            `json:"mode"`
+@@ -469,6 +470,7 @@ func (c *SplitHTTPConfig) Build() (proto.Message, error) {
+ 	}
+ 
+ 	config := &splithttp.Config{
++		H2C:                  c.H2C,
+ 		Host:                 c.Host,
+ 		Path:                 c.Path,
+ 		Mode:                 c.Mode,
+diff --git a/transport/internet/splithttp/config.pb.go b/transport/internet/splithttp/config.pb.go
+index 9ab55b9..0231642 100644
+--- a/transport/internet/splithttp/config.pb.go
++++ b/transport/internet/splithttp/config.pb.go
+@@ -190,6 +190,7 @@ type Config struct {
+ 	SessionIDTable       string                 `protobuf:"bytes,28,opt,name=sessionIDTable,proto3" json:"sessionIDTable,omitempty"`
+ 	SessionIDLength      *RangeConfig           `protobuf:"bytes,29,opt,name=sessionIDLength,proto3" json:"sessionIDLength,omitempty"`
+ 	H2Params             []byte                 `protobuf:"bytes,30,opt,name=h2Params,proto3" json:"h2Params,omitempty"`
++	H2C                  bool                   `protobuf:"varint,31,opt,name=h2c,proto3" json:"h2c,omitempty"`
+ 	unknownFields        protoimpl.UnknownFields
+ 	sizeCache            protoimpl.SizeCache
+ }
+@@ -434,6 +435,13 @@ func (x *Config) GetH2Params() []byte {
+ 	return nil
+ }
+ 
++func (x *Config) GetH2C() bool {
++	if x != nil {
++		return x.H2C
++	}
++	return false
++}
++
+ var File_transport_internet_splithttp_config_proto protoreflect.FileDescriptor
+ 
+ const file_transport_internet_splithttp_config_proto_rawDesc = "" +
+@@ -449,7 +457,7 @@ const file_transport_internet_splithttp_config_proto_rawDesc = "" +
+ 	"\x0ecMaxReuseTimes\x18\x03 \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x0ecMaxReuseTimes\x12Z\n" +
+ 	"\x10hMaxRequestTimes\x18\x04 \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x10hMaxRequestTimes\x12Z\n" +
+ 	"\x10hMaxReusableSecs\x18\x05 \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x10hMaxReusableSecs\x12*\n" +
+-	"\x10hKeepAlivePeriod\x18\x06 \x01(\x03R\x10hKeepAlivePeriod\"\xe8\f\n" +
++	"\x10hKeepAlivePeriod\x18\x06 \x01(\x03R\x10hKeepAlivePeriod\"\xfa\f\n" +
+ 	"\x06Config\x12\x12\n" +
+ 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
+ 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
+@@ -481,7 +489,8 @@ const file_transport_internet_splithttp_config_proto_rawDesc = "" +
+ 	"\x14serverMaxHeaderBytes\x18\x1b \x01(\x05R\x14serverMaxHeaderBytes\x12&\n" +
+ 	"\x0esessionIDTable\x18\x1c \x01(\tR\x0esessionIDTable\x12X\n" +
+ 	"\x0fsessionIDLength\x18\x1d \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x0fsessionIDLength\x12\x1a\n" +
+-	"\bh2Params\x18\x1e \x01(\fR\bh2Params\x1a:\n" +
++	"\bh2Params\x18\x1e \x01(\fR\bh2Params\x12\x10\n" +
++	"\x03h2c\x18\x1f \x01(\bR\x03h2c\x1a:\n" +
+ 	"\fHeadersEntry\x12\x10\n" +
+ 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+ 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x85\x01\n" +
+diff --git a/transport/internet/splithttp/config.proto b/transport/internet/splithttp/config.proto
+index dac5f0f..6059fd9 100644
+--- a/transport/internet/splithttp/config.proto
++++ b/transport/internet/splithttp/config.proto
+@@ -53,4 +53,5 @@ message Config {
+   string sessionIDTable = 28;
+   RangeConfig sessionIDLength = 29;
+   bytes h2Params = 30;
++  bool h2c = 31;
+ }
+diff --git a/transport/internet/splithttp/dialer.go b/transport/internet/splithttp/dialer.go
+index add822d..9088fa5 100644
+--- a/transport/internet/splithttp/dialer.go
++++ b/transport/internet/splithttp/dialer.go
+@@ -92,11 +92,14 @@ func getHTTPClient(ctx context.Context, dest net.Destination, streamSettings *in
+ 	return xmuxClient.XmuxConn.(DialerClient), xmuxClient, nil
+ }
+ 
+-func decideHTTPVersion(tlsConfig *tls.Config, realityConfig *reality.Config) string {
++func decideHTTPVersion(tlsConfig *tls.Config, realityConfig *reality.Config, h2c bool) string {
+ 	if realityConfig != nil {
+ 		return "2"
+ 	}
+ 	if tlsConfig == nil {
++		if h2c {
++			return "2"
++		}
+ 		return "1.1"
+ 	}
+ 	if len(tlsConfig.NextProtocol) != 1 {
+@@ -115,7 +118,7 @@ func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStrea
+ 	tlsConfig := tls.ConfigFromStreamSettings(streamSettings)
+ 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
+ 
+-	httpVersion := decideHTTPVersion(tlsConfig, realityConfig)
++	httpVersion := decideHTTPVersion(tlsConfig, realityConfig, streamSettings.ProtocolSettings.(*Config).H2C)
+ 	if httpVersion == "3" {
+ 		dest.Network = net.Network_UDP // better to keep this line
+ 	}
+@@ -268,6 +271,7 @@ func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStrea
+ 			keepAlivePeriod = 0
+ 		}
+ 		transport = &http2.Transport{
++			AllowHTTP: tlsConfig == nil && realityConfig == nil,
+ 			DialTLSContext: func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
+ 				return dialContext(ctxInner)
+ 			},
+@@ -309,7 +313,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
+ 	tlsConfig := tls.ConfigFromStreamSettings(streamSettings)
+ 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
+ 
+-	httpVersion := decideHTTPVersion(tlsConfig, realityConfig)
++	httpVersion := decideHTTPVersion(tlsConfig, realityConfig, streamSettings.ProtocolSettings.(*Config).H2C)
+ 	if httpVersion == "3" {
+ 		dest.Network = net.Network_UDP
+ 	}
+@@ -389,7 +393,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
+ 		dest2 := *memory2.Destination // just panic
+ 		tlsConfig2 := tls.ConfigFromStreamSettings(memory2)
+ 		realityConfig2 := reality.ConfigFromStreamSettings(memory2)
+-		httpVersion2 := decideHTTPVersion(tlsConfig2, realityConfig2)
++		httpVersion2 := decideHTTPVersion(tlsConfig2, realityConfig2, memory2.ProtocolSettings.(*Config).H2C)
+ 		if httpVersion2 == "3" {
+ 			dest2.Network = net.Network_UDP
+ 		}
