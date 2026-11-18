@@ -172,7 +172,11 @@ ShellRoot {
     id: t
     name: "PANEL"
     steps: [
-      { name: "panel ready", until: function() { return panel.service.proxiesLoaded && panel.service.rules.length === 4 }, then: function() {
+      { name: "panel ready", until: function() { return panel.service.proxiesLoaded && panel.service.rules.length === 4
+          && !panel.service.traceTesting && panel.service.egressIpv6 !== "" }, then: function() {
+          t.check(panel.egressText, "203.0.113.47", "dual-stack egress keeps IPv4 in the row")
+          t.check(panel.egressTooltip.split("\n")[0], "IPv6 2001:db8:1234:abcd:5678:ef01:2345:6789",
+            "hover includes the complete IPv6 address")
           testRoot.checkNameFits(nameFixtures)
           testRoot.checkNameFits(destinationFixtures)
           testRoot.checkEmojiRuns(destinationFixtures)

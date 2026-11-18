@@ -229,9 +229,9 @@ Panel {
   readonly property string uptimeText: omihomo.startedMs > 0 && omihomo.coreRunning
     ? Model.formatDuration(nowMs - omihomo.startedMs) : "—"
   readonly property string egressText: omihomo.traceTesting ? "testing…"
-    : omihomo.traceFailed ? "failed" : omihomo.egressIp === "" ? "—"
-    : omihomo.egressIpv6 === "" || omihomo.egressIpv6 === omihomo.egressIp ? omihomo.egressIp
-    : omihomo.egressIp + "\n" + omihomo.egressIpv6
+    : omihomo.traceFailed ? "failed" : omihomo.egressIp || "—"
+  readonly property string egressTooltip: !omihomo.traceTesting && !omihomo.traceFailed && omihomo.egressIpv6 !== ""
+    ? "IPv6 " + omihomo.egressIpv6 + "\nCheck again · r" : "Check again · r"
   readonly property string latencyText: omihomo.traceTesting || omihomo.traceFailed ? "—"
     : Model.formatDelay(omihomo.egressLatency)
 
@@ -1108,41 +1108,26 @@ Panel {
             Layout.topMargin: -Style.space(4)
           }
 
-          GridLayout {
-            id: readouts
-            readonly property bool wideEgress: omihomo.egressIpv6 !== "" || omihomo.egressIp.indexOf(":") >= 0
+          RowLayout {
             visible: !root.compactHeader && omihomo.installed
             Layout.fillWidth: true
-            columns: 3
-            columnSpacing: Style.space(8)
-            rowSpacing: Style.space(6)
+            spacing: Style.space(8)
 
+            Readout { theme: root.theme; live: omihomo.coreActive; Layout.horizontalStretchFactor: 1; label: "UPTIME"; value: root.uptimeText }
             Readout {
               theme: root.theme
               live: omihomo.coreActive
-              Layout.row: 0
-              Layout.column: 0
-              label: "UPTIME"
-              value: root.uptimeText
-            }
-            Readout {
-              theme: root.theme
-              live: omihomo.coreActive
-              Layout.row: readouts.wideEgress ? 1 : 0
-              Layout.column: readouts.wideEgress ? 0 : 1
-              Layout.columnSpan: readouts.wideEgress ? 3 : 1
-              wrap: true
+              Layout.horizontalStretchFactor: 1
               label: "EGRESS"
               value: root.egressText
               faded: omihomo.traceFailed && !omihomo.traceTesting
-              tooltip: "Check again · r"
+              tooltip: root.egressTooltip
               onActivated: omihomo.refreshTrace()
             }
             Readout {
               theme: root.theme
               live: omihomo.coreActive
-              Layout.row: 0
-              Layout.column: readouts.wideEgress ? 1 : 2
+              Layout.horizontalStretchFactor: 1
               label: "LATENCY"
               value: root.latencyText
               faded: omihomo.traceFailed && !omihomo.traceTesting

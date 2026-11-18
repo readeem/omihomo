@@ -10,7 +10,6 @@ Item {
   property string label: ""
   property string value: ""
   property bool faded: false
-  property bool wrap: false
   property bool live: true
   property string tooltip: ""
 
@@ -39,8 +38,7 @@ Item {
       color: readout.faded ? readout.theme.dim : readout.theme.foreground
       font.pixelSize: Style.font.subtitle
       font.underline: readout.tooltip !== "" && readoutMouse.containsMouse
-      wrapMode: readout.wrap ? Text.WrapAnywhere : Text.NoWrap
-      elide: readout.wrap ? Text.ElideNone : Text.ElideRight
+      elide: Text.ElideRight
     }
   }
 
