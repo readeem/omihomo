@@ -43,7 +43,7 @@ ShellRoot {
       } },
     { name: "group test", until: function() { return !svc.pingTestsRunning }, then: function() {
         t.check(svc.configTestState("Pass"), "success", "a group success is recorded")
-        t.check(svc.configDelay("Pass"), 91, "a group success records its delay")
+        t.check(svc.configDelay("Pass"), svc.egressLatency, "the selected config retains its header latency after Test all")
         t.check(svc.configTestState("Fail"), "failed", "a group failure is recorded")
         t.check(svc.groupTestedAt.Proxy > 0, true, "a group test records when it ran")
       } },
@@ -52,7 +52,7 @@ ShellRoot {
         t.check(svc.pingTestsRunning, true, "a second group test starts")
         svc.cancelDelayTest()
         t.check(svc.pingTestsRunning, false, "cancel stops waiting immediately")
-        t.check(svc.configDelay("Pass"), 91, "cancel preserves the previous measurement")
+        t.check(svc.configDelay("Pass"), svc.egressLatency, "cancel preserves the header latency")
       } },
     // Opening the panel on a stopped proxy checks nothing; the start does.
     { name: "first egress", until: function() { return !svc.traceTesting && svc.egressIp !== "" }, then: function() {
@@ -125,6 +125,8 @@ ShellRoot {
         t.check(svc.lastError, "", "a valid groups snapshot clears its failure")
         svc.applyEvent("rules", { rules: [{ index: 1, type: "DOMAIN", value: "example.test", target: "DIRECT", source: "user" }] })
         t.check(svc.rules.length, 1, "an editable rule is loaded before the failure")
+        svc.refreshTrace()
+        t.check(svc.traceTesting, true, "egress is running before the groups snapshot fails")
         var cases = [
           { stream: "rules", scope: "rules" },
           { stream: "subscriptions", scope: "sub:" },
@@ -150,6 +152,7 @@ ShellRoot {
         t.check(svc.trafficHistory.length, 0, "traffic errors remove stale history")
         t.check(svc.connectionLog.length, 0, "connection errors remove stale close targets")
         t.check(svc.connectionsDownload, 0, "connection errors remove stale totals")
+        t.check(svc.traceTesting, false, "a failed groups snapshot stops the egress spinner")
         t.check(svc.apiReady, false, "status errors make live controls unavailable")
         svc.removeRule(1)
         svc.activateSubscription("work")

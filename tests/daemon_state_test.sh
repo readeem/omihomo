@@ -45,8 +45,8 @@ for suite in service_state_test live_state_test; do
   }
   start_daemon ok --latency 150
   start_daemon fail --latency 50 --fail start,settings.apply,subscriptions.add
-  start_daemon old --protocol 0
-  start_daemon new --protocol 6
+  start_daemon old --protocol 5
+  start_daemon new --protocol 7
   start_daemon refuse --refuse
   start_daemon busy --busy-once
   for name in ok fail old new refuse busy; do

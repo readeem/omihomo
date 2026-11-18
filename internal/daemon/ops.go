@@ -115,12 +115,6 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return nil, err
 		}
 		return d.stop(ctx)
-	case protocol.OpSetCore:
-		var args protocol.CoreArgs
-		if err := decode(req.Args, &args); err != nil {
-			return nil, err
-		}
-		return d.switchCore(ctx, args.Name)
 	case protocol.OpApply:
 		var args protocol.ApplyArgs
 		if err := decode(req.Args, &args); err != nil {

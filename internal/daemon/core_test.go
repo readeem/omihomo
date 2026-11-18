@@ -17,7 +17,7 @@ func TestCorePreferencePersistsAndKeepsTheRunningCore(t *testing.T) {
 	c := h.dial(t)
 	selectCore := func(name protocol.CoreName) protocol.Status {
 		t.Helper()
-		return call[protocol.Status](t, c, protocol.OpSetCore, protocol.CoreArgs{Name: name})
+		return call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{Core: name}))
 	}
 	if s := selectCore("xray"); s.Core != "xray" || s.State != protocol.StateStopped {
 		t.Fatalf("select while stopped: %+v", s)
@@ -38,7 +38,7 @@ func TestCorePreferencePersistsAndKeepsTheRunningCore(t *testing.T) {
 		t.Fatalf("switch did not change the running core's preference")
 	}
 	engine.FailApply(errors.New("cannot start the Xray outbounds"))
-	if err := callErr(t, c, protocol.OpSetCore, protocol.CoreArgs{Name: protocol.CoreXray}); !strings.Contains(err.Message, "cannot start the Xray outbounds") {
+	if err := callErr(t, c, protocol.OpApply, owned(protocol.Settings{Core: protocol.CoreXray})); !strings.Contains(err.Message, "cannot start the Xray outbounds") {
 		t.Fatalf("switch failure: %v", err)
 	}
 	if s := call[protocol.Status](t, c, protocol.OpStatus, nil); s.Core != "mihomo" || s.State != protocol.StateOn {

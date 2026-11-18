@@ -15,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 5
+	Version = 6
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -115,8 +115,6 @@ const (
 
 	OpStart = "start" // nil -> Status
 	OpStop  = "stop"  // nil -> Status
-
-	OpSetCore = "core.select" // CoreArgs -> Status
 
 	OpApply = "settings.apply" // ApplyArgs -> Status
 
@@ -289,10 +287,6 @@ type SubscriptionURLArgs struct {
 // NameArgs names a subscription.
 type NameArgs struct {
 	Name string `json:"name"`
-}
-
-type CoreArgs struct {
-	Name CoreName `json:"name"`
 }
 
 // Rule is one traffic rule.

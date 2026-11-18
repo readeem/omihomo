@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 5
+  readonly property int protocolVersion: 6
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -295,7 +295,15 @@ Item {
       if (error) clearDesired()
       else applyStatus(data)
       break
-    case "groups": applyGroups(data); break
+    case "groups":
+      applyGroups(data)
+      if (error) {
+        clearTrace()
+        _traceQueued = false
+        traceTesting = false
+        traceFailed = coreRunning
+      }
+      break
     case "rules": applyRules(data); break
     case "downloads": pendingDownloads = data && Array.isArray(data.downloads) ? data.downloads : []; break
     case "subscriptions": subscriptions = Model.readSubscriptions(data); break
@@ -443,7 +451,7 @@ Item {
       root._egressCall = 0
       if (root._traceQueued) return root.runQueuedTrace()
       root.traceTesting = false
-      if (!root.apiReady || runtime !== root.runtimeKey || group !== root.primaryGroup || config !== root.currentConfig) return
+      if (!root.groupsReady || !root.proxiesLoaded || runtime !== root.runtimeKey || group !== root.primaryGroup || config !== root.currentConfig) return
       var egress = Model.readEgress(result)
       // Keep the last known values. The row says "failed" until the next
       // check, then a successful result replaces them.
@@ -455,8 +463,6 @@ Item {
       root.egressIp = egress.ip
       root.egressIpv6 = egress.ipv6
       root.egressLatency = egress.latency
-      if (config !== "" && root.configTestState(config) !== "testing")
-        root.finishConfigTests([config], { [config]: egress.latency })
     })
     if (_egressCall === 0) traceTesting = false
   }
@@ -568,6 +574,7 @@ Item {
   }
 
   function applyGroups(data) {
+    const wasLoaded = proxiesLoaded
     const previousGroup = primaryGroup
     const previousConfig = currentConfig
     var parsed = Model.readGroups(data)
@@ -581,7 +588,7 @@ Item {
     }
     const routeChanged = previousGroup !== primaryGroup || previousConfig !== currentConfig
     if (routeChanged) clearTrace()
-    if (routeChanged || _traceQueued) refreshTrace()
+    if (!wasLoaded || routeChanged || _traceQueued) refreshTrace()
   }
 
   function applyRules(data) {
@@ -851,13 +858,17 @@ Item {
     if (_selectCall === 0) pendingConfig = ""
   }
 
+  readonly property int currentTraceDelay: !traceTesting && !traceFailed ? egressLatency : 0
+
   function configTestState(name) {
     if (_testingConfigs.indexOf(name) >= 0) return "testing"
+    if (name === currentConfig && currentTraceDelay > 0) return "success"
     var result = configTestResults[String(name)]
     return result ? String(result.state || "") : ""
   }
 
   function configDelay(name) {
+    if (name === currentConfig && currentTraceDelay > 0) return currentTraceDelay
     var result = configTestResults[String(name)]
     if (result && result.state === "success") return Number(result.delay) || 0
     return Model.historyDelay(configEntries[String(name)])

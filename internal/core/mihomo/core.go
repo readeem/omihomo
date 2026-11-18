@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -574,6 +575,7 @@ func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (m
 		out[p.Name()] = 0
 	}
 	started := 0
+	ipv4URL, ipv6URL := delayURL, delayIPv6URL
 schedule:
 	for _, p := range tested {
 		select {
@@ -588,7 +590,7 @@ schedule:
 		started++
 		go func() {
 			defer func() { <-c.delaySlots }()
-			results <- measurement{p.Name(), probeDelay(batch, p)}
+			results <- measurement{p.Name(), probeDelay(batch, p, ipv4URL, ipv6URL)}
 		}()
 	}
 
@@ -607,18 +609,57 @@ schedule:
 	return out, ctx.Err()
 }
 
-func probeDelay(ctx context.Context, proxy constant.Proxy) int {
+func probeDelay(ctx context.Context, proxy constant.Proxy, ipv4URL, ipv6URL string) int {
 	// Leave time for an IPv6-only exit when the IPv4 dial times out.
 	ipv4, cancel := context.WithTimeout(ctx, delayTimeout/2)
-	delay, err := proxy.URLTest(ipv4, delayURL, nil)
+	delay := measureDelay(ipv4, proxy, ipv4URL)
 	cancel()
-	if err != nil && ctx.Err() == nil {
-		delay, err = proxy.URLTest(ctx, delayIPv6URL, nil)
+	if delay == 0 && ctx.Err() == nil {
+		delay = measureDelay(ctx, proxy, ipv6URL)
 	}
+	return delay
+}
+
+func measureDelay(ctx context.Context, proxy constant.Proxy, url string) int {
+	if ctx.Err() != nil {
+		return 0
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return 0
 	}
-	return max(1, int(delay))
+	port := req.URL.Port()
+	if port == "" {
+		port = "443"
+	}
+	metadata := &constant.Metadata{NetWork: constant.TCP, Type: constant.INNER}
+	if err := metadata.SetRemoteAddress(net.JoinHostPort(req.URL.Hostname(), port)); err != nil {
+		return 0
+	}
+	began := time.Now()
+	// URLTest writes to mihomo's health history even when canceled. Open the
+	// connection directly so a manual check cannot change automatic routing.
+	conn, err := proxy.DialContext(ctx, metadata)
+	if err != nil {
+		return 0
+	}
+	defer conn.Close()
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext:       func(context.Context, string, string) (net.Conn, error) { return conn, nil },
+			DisableKeepAlives: true,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return 0
+	}
+	return max(1, int(time.Since(began).Milliseconds()))
 }
 
 func (c *Core) Rules(ctx context.Context) ([]protocol.Rule, error) {

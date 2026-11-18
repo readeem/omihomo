@@ -211,6 +211,10 @@ func TestDelay(t *testing.T) {
 	defer func() { delayURL, delayIPv6URL = old4, old6 }()
 
 	c := running(t, testConfig())
+	before, err := c.Groups(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	delays, err := c.TestDelay(t.Context(), "Proxy", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -218,14 +222,12 @@ func TestDelay(t *testing.T) {
 	if delays["Local"] <= 0 || delays["Dead"] != 0 || len(delays) != 3 {
 		t.Errorf("delays = %v, want Local measured, Dead failed, every member tested", delays)
 	}
-	groups, _ := c.Groups(t.Context())
-	for _, m := range groups[0].Members {
-		if m.Name == "Local" && (!m.Alive || m.Delay <= 0) {
-			t.Errorf("Local after the test = %+v, want alive with a delay", m)
-		}
-		if m.Name == "Dead" && (m.Alive || m.Delay != 0) {
-			t.Errorf("Dead after the test = %+v, want dead", m)
-		}
+	groups, err := c.Groups(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(before[0].Members, groups[0].Members) {
+		t.Errorf("manual tests changed the core's health history: %v -> %v", before[0].Members, groups[0].Members)
 	}
 	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}); err != nil || len(delays) != 1 {
 		t.Errorf("one proxy = %v, %v", delays, err)
