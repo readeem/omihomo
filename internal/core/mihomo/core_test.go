@@ -267,6 +267,39 @@ func TestDelay(t *testing.T) {
 	}
 }
 
+func TestQueuedConfigsGetTimeForIPv6Fallback(t *testing.T) {
+	ipv4 := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer ipv4.Close()
+	ipv6 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ipv6.Close()
+	old4, old6 := delayURL, delayIPv6URL
+	delayURL, delayIPv6URL = ipv4.URL, ipv6.URL
+	defer func() { delayURL, delayIPv6URL = old4, old6 }()
+
+	cfg := testConfig()
+	group := &cfg.Profile.Groups[0]
+	group.Members = nil
+	for i := range 17 {
+		name := fmt.Sprintf("IPv6 config %d", i+1)
+		cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: name, Type: "direct"})
+		group.Members = append(group.Members, name)
+	}
+	c := running(t, cfg)
+	delays, err := c.TestDelay(t.Context(), group.Name, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range group.Members {
+		if delays[name] <= 0 {
+			t.Errorf("%s never got a successful IPv6 probe", name)
+		}
+	}
+}
+
 func TestDialGoesThroughTheRules(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ip=192.0.2.7\n")

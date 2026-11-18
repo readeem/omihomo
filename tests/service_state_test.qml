@@ -128,12 +128,12 @@ ShellRoot {
     { name: "it comes back", until: function() { return svc.ready && svc.trafficHistory.length > 0 }, then: function() {
         t.check(svc.coreState, "on", "the status is pushed again")
         t.check(svc.groups.length, 1, "the groups are pushed again")
-        svc.configTestResults = ({ Pass: { state: "success", delay: 40 } })
+        svc.configTestResults = ({ Fail: { state: "success", delay: 40 } })
         // Another run of the core makes everything read from the last one stale.
         svc.call("test.status", { started_at: svc.startedMs + 1 })
       } },
-    { name: "a new runtime", until: function() { return svc.configTestState("Pass") === "" }, then: function() {
-        t.check(svc.configTestState("Pass"), "", "a restarted core drops old latency results")
+    { name: "a new runtime", until: function() { return svc.configTestState("Fail") === "" }, then: function() {
+        t.check(svc.configTestState("Fail"), "", "a restarted core drops old latency results")
         failing.toggleCore()
         t.check(failing.coreActive, true, "a failing start still moves on the click")
       } },
