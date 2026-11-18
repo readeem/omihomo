@@ -7,9 +7,6 @@
 // and the daemon interleaves Events for the streams the client subscribed to.
 // Replies can arrive out of request order: a delay test does not hold up a
 // status read.
-//
-// The protocol speaks of proxies, groups, rules and connections. It never
-// names the core that implements them.
 package protocol
 
 import "encoding/json"
@@ -18,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 3
+	Version = 5
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -119,6 +116,8 @@ const (
 	OpStart = "start" // nil -> Status
 	OpStop  = "stop"  // nil -> Status
 
+	OpSetCore = "core.select" // CoreArgs -> Status
+
 	OpApply = "settings.apply" // ApplyArgs -> Status
 
 	OpSubscriptions      = "subscriptions.list"     // nil -> SubscriptionList
@@ -157,11 +156,19 @@ const (
 	StateDegraded = "degraded"
 )
 
-// Modes.
+type CoreName string
+
 const (
-	ModeRule   = "rule"
-	ModeGlobal = "global"
-	ModeDirect = "direct"
+	CoreMihomo CoreName = "mihomo"
+	CoreXray   CoreName = "xray"
+)
+
+type Mode string
+
+const (
+	ModeRule   Mode = "rule"
+	ModeGlobal Mode = "global"
+	ModeDirect Mode = "direct"
 )
 
 // Rule sources, in runtime order: the owner's rules come first, then the
@@ -177,14 +184,16 @@ type Empty struct{}
 
 // Status is everything the bar icon and the panel header show.
 type Status struct {
-	State              string `json:"state"`
-	Detail             string `json:"detail"`
-	ActiveSubscription string `json:"active_subscription"`
+	Core               CoreName   `json:"core,omitempty"`
+	CoreChoices        []CoreName `json:"core_choices,omitempty"`
+	State              string     `json:"state"`
+	Detail             string     `json:"detail"`
+	ActiveSubscription string     `json:"active_subscription"`
 	// PrimaryGroup is the group whose selection is "the current proxy".
 	// Empty means the first selectable group.
 	PrimaryGroup     string `json:"primary_group"`
 	DNSDestination   string `json:"dns_destination"`
-	Mode             string `json:"mode"`
+	Mode             Mode   `json:"mode"`
 	TUN              bool   `json:"tun"`
 	TUNRedirect      bool   `json:"tun_redirect"`
 	Tailscale        bool   `json:"tailscale"`
@@ -207,7 +216,7 @@ type Settings struct {
 	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
 	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
 	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`
-	Mode                      string          `json:"mode"`
+	Mode                      Mode            `json:"mode"`
 	TUN                       bool            `json:"tun,omitzero"`
 	TUNRedirect               bool            `json:"tun_redirect,omitzero"`
 	Tailscale                 bool            `json:"tailscale,omitzero"`
@@ -277,6 +286,10 @@ type SubscriptionURLArgs struct {
 // NameArgs names a subscription.
 type NameArgs struct {
 	Name string `json:"name"`
+}
+
+type CoreArgs struct {
+	Name CoreName `json:"name"`
 }
 
 // Rule is one traffic rule.

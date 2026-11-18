@@ -298,10 +298,11 @@ func (a *app) setCommand() *ffcli.Command {
 		})
 	}
 	return a.group("set", "omihomo set <setting> [--pretty] <value>", "change a setting",
+		a.setCoreCommand(),
 		setting("mode", "<rule|global|direct>", "route by rules, everything through the proxy, or nothing",
 			func(v string) (change, error) {
 				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
-					s.Settings.Mode = v
+					s.Settings.Mode = protocol.Mode(v)
 					return nil
 				}, nil
 			}),
@@ -333,6 +334,13 @@ func (a *app) setCommand() *ffcli.Command {
 		toggle("tailnet-proxy", "send the tailnet to the proxy server",
 			func(s *protocol.Settings) *bool { return &s.TailnetProxy }),
 	)
+}
+
+func (a *app) setCoreCommand() *ffcli.Command {
+	return a.call("core", "omihomo set core [--pretty] <mihomo|xray>",
+		"choose the preferred proxy transport", nargs(1, protocol.OpSetCore, func(args []string) any {
+			return protocol.CoreArgs{Name: protocol.CoreName(args[0])}
+		}))
 }
 
 // builtinTargets are the targets every subscription has.

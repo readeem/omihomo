@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 3 by default
+// --protocol  the version its hello announces, 5 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 3, refuse: false, busy: 0, latency: 0, fail: new Set() }
+const options = { protocol: 5, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -34,6 +34,7 @@ while (args.length > 0) {
 }
 
 const status = {
+  core: "mihomo", core_choices: ["mihomo", "xray"],
   state: "stopped", detail: "", active_subscription: "work", primary_group: "",
   mode: "rule", tun: false, tun_redirect: false, tailscale: false, tailscale_present: true,
   tailnet_proxy: false, started_at: 0, tun_bypass: ["10.0.0.0/8", "192.168.0.0/16"]
@@ -134,6 +135,12 @@ const ops = {
     publish()
     return { result: status }
   },
+  "core.select": (client, args) => later(() => {
+    if (!status.core_choices.includes(args.name)) return failure("invalid", "unknown core")
+    status.core = args.name
+    publish()
+    return { result: status }
+  }),
   "settings.apply": (client, a) => {
     if (!["rule", "global", "direct"].includes(a.settings.mode))
       return failure("invalid", "mode must be rule, global or direct")

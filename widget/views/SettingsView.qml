@@ -14,7 +14,8 @@ Item {
   readonly property var rows: ({
     mode: modeRow, dns: dnsSelector, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
-    checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow
+    checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow,
+    core: coreControl
   })
 
   readonly property var updater: panel.updater
@@ -44,8 +45,10 @@ Item {
     anchors.bottomMargin: pickerDock.visible ? Style.space(8) : 0
     contentWidth: width
     contentHeight: settingsColumn.implicitHeight
-    // Arming uninstall grows the last card with its warning; keep it in view.
-    onContentHeightChanged: if (panel.uninstallArmed) contentY = Math.max(0, contentHeight - height)
+    onContentHeightChanged: {
+      if (panel.uninstallArmed) view.reveal("uninstall")
+      else if (panel.at("core")) view.reveal("core")
+    }
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     interactive: contentHeight > height
@@ -347,6 +350,67 @@ Item {
             color: view.theme.dim
             wrapMode: Text.WordWrap
           }
+        }
+      }
+      SectionLine {
+        theme: view.theme
+        visible: coreControl.visible
+        Layout.fillWidth: true
+        Layout.topMargin: Style.space(8)
+        title: "CORE"
+      }
+
+      ColumnLayout {
+        id: coreControl
+        visible: view.service.coreChoices.length > 1
+        Layout.fillWidth: true
+        spacing: Style.space(6)
+
+        Rectangle {
+          id: coreTrack
+          readonly property real inset: Style.space(3)
+          Layout.fillWidth: true
+          implicitHeight: coreSegments.implicitHeight + 2 * inset
+          radius: view.theme.controlRadius + inset
+          color: view.theme.fill
+          border.width: 1
+          border.color: view.theme.line
+
+          RowLayout {
+            id: coreSegments
+            anchors.fill: parent
+            anchors.margins: coreTrack.inset
+            spacing: coreTrack.inset
+            uniformCellSizes: true
+
+            Repeater {
+              model: view.service.coreChoices
+
+              SmallButton {
+                required property string modelData
+                required property int index
+                theme: view.theme
+                Layout.fillWidth: true
+                text: modelData
+                primary: view.service.coreName === modelData
+                ghost: true
+                enabled: view.service.ready && !view.service.busy
+                hasCursor: view.panel.at("core", index)
+                onHovered: function(on) { if (on) view.panel.focusRow("core", index) }
+                onClicked: view.service.setCore(modelData)
+              }
+            }
+          }
+        }
+
+        PanelText {
+          theme: view.theme
+          Layout.fillWidth: true
+          text: view.service.pendingCore !== "" ? view.service.actionStatus
+            : (view.panel.errorAt("core-select") ? view.service.lastError : "")
+          color: view.panel.errorAt("core-select") ? view.theme.urgent : view.theme.dim
+          visible: text !== ""
+          wrapMode: Text.Wrap
         }
       }
     }

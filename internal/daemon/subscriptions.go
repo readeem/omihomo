@@ -502,8 +502,8 @@ func (d *server) removeSubscription(ctx context.Context, name string) (any, *pro
 // ensureGeodata downloads the geodata files p needs that are missing. A
 // file that cannot be downloaded fails the call: the rules that need it
 // would not load. The caller holds opMu.
-func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
-	for _, f := range d.core.Geodata(p) {
+func (d *server) ensureGeodata(ctx context.Context, c core.Core, p core.Profile) error {
+	for _, f := range c.Geodata(p) {
 		if _, err := os.Stat(f.Path); err == nil {
 			continue
 		} else if !errors.Is(err, fs.ErrNotExist) {
@@ -513,7 +513,7 @@ func (d *server) ensureGeodata(ctx context.Context, p core.Profile) error {
 		if err != nil {
 			return err
 		}
-		err = d.installGeodata(f, tmp, p)
+		err = installGeodata(c, f, tmp, p)
 		os.Remove(tmp)
 		if err != nil {
 			return err
@@ -558,9 +558,9 @@ func (d *server) downloadGeodata(ctx context.Context, f core.GeodataFile) (strin
 // installGeodata puts the download at tmp in place as f once the core finds
 // it usable for p: what is in place keeps working until then. The caller
 // holds opMu, so p is what runs and what is stored.
-func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) error {
+func installGeodata(c core.Core, f core.GeodataFile, tmp string, p core.Profile) error {
 	name := filepath.Base(f.Path)
-	if err := d.core.InstallGeodata(f, tmp, p); err != nil {
+	if err := c.InstallGeodata(f, tmp, p); err != nil {
 		return fmt.Errorf("the geodata %s that downloaded is not usable: %w", name, err)
 	}
 	return nil
@@ -572,7 +572,7 @@ func (d *server) installGeodata(f core.GeodataFile, tmp string, p core.Profile) 
 // current when it began.
 func (d *server) refreshGeodata(ctx context.Context) {
 	d.mu.Lock()
-	p := runConfig(d.settings, d.profile).Profile
+	p := d.runConfig(d.settings, d.profile).Profile
 	d.mu.Unlock()
 	for _, f := range d.core.Geodata(p) {
 		info, err := os.Stat(f.Path)
@@ -583,9 +583,9 @@ func (d *server) refreshGeodata(ctx context.Context) {
 		if err == nil {
 			d.opMu.Lock()
 			d.mu.Lock()
-			current := runConfig(d.settings, d.profile).Profile
+			current := d.runConfig(d.settings, d.profile).Profile
 			d.mu.Unlock()
-			err = d.installGeodata(f, tmp, current)
+			err = installGeodata(d.core, f, tmp, current)
 			d.opMu.Unlock()
 			os.Remove(tmp)
 		}

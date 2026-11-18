@@ -21,6 +21,7 @@ const json = (name) => JSON.parse(read(name))
 const lines = (name) => read(name).split("\n").filter((line) => line !== "").map((line) => JSON.parse(line))
 
 const status = {
+  core: "mihomo", core_choices: ["mihomo", "xray"],
   state: "on", detail: "", active_subscription: "Aerowave", ...json("settings/settings.json"),
   tailscale_present: true, started_at: after === "--after" ? Date.now() : Number(started) * 1000,
   tun_bypass: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
@@ -163,6 +164,12 @@ const ops = {
     push("status", "rules")
     return { result: status }
   },
+  "core.select": args => later(400, () => {
+    if (!status.core_choices.includes(args.name)) return fail("invalid", "unknown core")
+    status.core = args.name
+    push("status", "groups", "rules")
+    return { result: status }
+  }),
   "settings.apply": (args) => {
     const { mode, tun, tun_redirect, tailscale, tailnet_proxy, primary_group, dns_destination } = args.settings
     if (!["rule", "global", "direct"].includes(mode)) return fail("invalid", `unknown mode ${mode}`)
@@ -265,7 +272,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 3, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 5, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk

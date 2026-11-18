@@ -113,6 +113,12 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return nil, err
 		}
 		return d.stop(ctx)
+	case protocol.OpSetCore:
+		var args protocol.CoreArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		return d.switchCore(ctx, args.Name)
 	case protocol.OpApply:
 		var args protocol.ApplyArgs
 		if err := decode(req.Args, &args); err != nil {
@@ -204,7 +210,13 @@ func (d *server) status() protocol.Status {
 	if sub := d.activeSub(); sub != nil {
 		active = sub.Name
 	}
+	var choices []protocol.CoreName
+	if len(d.cfg.cores) > 1 {
+		choices = d.cfg.cores
+	}
 	return protocol.Status{
+		Core:               d.preferredCore(d.settings.Core),
+		CoreChoices:        choices,
 		State:              d.state,
 		Detail:             d.detail,
 		ActiveSubscription: active,
@@ -262,7 +274,7 @@ func (d *server) publishLocked(ctx context.Context, stream string, also *session
 	data := d.snapshot(ctx, stream)
 	if status, ok := data.(protocol.Status); ok {
 		// Clients discard their groups when the subscription or start time changes.
-		if status.ActiveSubscription != d.lastStatus.ActiveSubscription || status.StartedAt != d.lastStatus.StartedAt {
+		if status.ActiveSubscription != d.lastStatus.ActiveSubscription || status.StartedAt != d.lastStatus.StartedAt || status.Core != d.lastStatus.Core {
 			delete(d.lastPushed, protocol.StreamGroups)
 		}
 		d.lastStatus = status
@@ -375,9 +387,9 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 	d.setState(protocol.StateStarting, "")
 	d.publish(ctx)
 	d.mu.Lock()
-	cfg := runConfig(d.settings, d.profile)
+	cfg := d.runConfig(d.settings, d.profile)
 	d.mu.Unlock()
-	err := d.ensureGeodata(ctx, cfg.Profile)
+	err := d.ensureGeodata(ctx, d.core, cfg.Profile)
 	if err == nil {
 		err = d.core.Apply(ctx, cfg)
 	}
@@ -512,8 +524,8 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 	if !d.running() {
 		// Nothing runs, but what is stored is what the next start runs, so
 		// the core checks it, with the geodata that takes.
-		cfg := runConfig(next, p)
-		if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
+		cfg := d.runConfig(next, p)
+		if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 			return fail(protocol.CodeFetch, "%v", err)
 		}
 		if err := d.core.Check(ctx, cfg); err != nil {
@@ -521,8 +533,8 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 		}
 		return nil
 	}
-	cfg := runConfig(next, p)
-	err := d.ensureGeodata(ctx, cfg.Profile)
+	cfg := d.runConfig(next, p)
+	err := d.ensureGeodata(ctx, d.core, cfg.Profile)
 	if err == nil {
 		err = d.core.Apply(ctx, cfg)
 	}
@@ -545,8 +557,8 @@ func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Pro
 	if runs && d.running() {
 		return d.reapply(ctx, s, p)
 	}
-	cfg := runConfig(s, p)
-	if err := d.ensureGeodata(ctx, cfg.Profile); err != nil {
+	cfg := d.runConfig(s, p)
+	if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 		return fail(protocol.CodeFetch, "%v", err)
 	}
 	if err := d.core.Check(ctx, cfg); err != nil {
@@ -614,6 +626,8 @@ func checkSettings(s protocol.Settings) *protocol.Error {
 }
 
 func (d *server) selectProxy(ctx context.Context, args protocol.SelectArgs) (any, *protocol.Error) {
+	d.opMu.Lock()
+	defer d.opMu.Unlock()
 	if err := validName("group", args.Group); err != nil {
 		return nil, err
 	}
@@ -655,7 +669,7 @@ func (d *server) rules(ctx context.Context) (protocol.RuleList, *protocol.Error)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	_, out := compileRules(d.settings.Rules, d.profile)
-	cfg := runConfig(d.settings, d.profile)
+	cfg := d.runConfig(d.settings, d.profile)
 	for _, r := range core.IntegrationRules(cfg) {
 		out = append(out, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: strings.Join(r.Params, " "),
 			Source: protocol.SourceOmihomo, Category: "omihomo", Disabled: d.settings.OmihomoRulesDisabled, Inactive: d.settings.OmihomoRulesDisabled})

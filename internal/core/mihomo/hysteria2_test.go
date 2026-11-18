@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/http/httptest"
 	"net/netip"
@@ -12,16 +13,27 @@ import (
 	"time"
 
 	"github.com/metacubex/http"
-	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/quic-go"
 	"github.com/metacubex/quic-go/http3"
+	"github.com/metacubex/quic-go/quicvarint"
 	"github.com/metacubex/tls"
+
+	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/protocol"
 )
 
 func TestHysteriaReceivesDatagramsInPeerOrder(t *testing.T) {
 	previous := goruntime.GOMAXPROCS(1)
 	t.Cleanup(func() { goruntime.GOMAXPROCS(previous) })
+	for _, name := range []protocol.CoreName{protocol.CoreMihomo, protocol.CoreXray} {
+		t.Run(string(name), func(t *testing.T) { testSelfSignedHysteria(t, name) })
+	}
+}
+
+func testSelfSignedHysteria(t *testing.T, name protocol.CoreName) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	certServer := httptest.NewTLSServer(nil)
@@ -53,6 +65,15 @@ func TestHysteriaReceivesDatagramsInPeerOrder(t *testing.T) {
 				w.Header().Set("Hysteria-CC-RX", "0")
 				w.WriteHeader(233)
 			})}
+			server.StreamDispatcher = func(frame http3.FrameType, stream *quic.Stream, err error) (bool, error) {
+				if err != nil || frame != 0x401 {
+					return false, err
+				}
+				defer stream.Close()
+				deadline, _ := ctx.Deadline()
+				stream.SetDeadline(deadline)
+				return true, echoHysteriaStream(stream)
+			}
 			served := make(chan error, 1)
 			go func() { served <- server.ServeQUICConn(conn) }()
 			defer func() { conn.CloseWithError(0, ""); <-served }()
@@ -78,14 +99,29 @@ func TestHysteriaReceivesDatagramsInPeerOrder(t *testing.T) {
 		}()
 	}()
 	t.Cleanup(func() { cancel(); listener.Close(); <-done })
-	proxy, err := outbound.NewHysteria2(outbound.Hysteria2Option{
-		Name: "Ordered", Server: "127.0.0.1", Port: listener.Addr().(*net.UDPAddr).Port,
-		Password: "test", SkipCertVerify: true,
-	})
+	c := running(t, core.Config{Mode: protocol.ModeRule, Core: name, Profile: core.Profile{
+		Proxies: []core.Proxy{{Name: "Ordered", Type: "hysteria2", Options: map[string]any{
+			"server": "127.0.0.1", "port": listener.Addr().(*net.UDPAddr).Port,
+			"password": "test", "skip-cert-verify": true,
+		}}},
+		Rules: []core.Rule{{Type: "MATCH", Target: "Ordered", Source: protocol.SourceSubscription}},
+	}})
+	proxy := tunnel.Proxies()["Ordered"]
+	defer proxy.Close()
+	stream, err := c.DialContext(ctx, "tcp", "192.0.2.1:7777")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer proxy.Close()
+	defer stream.Close()
+	deadline, _ := ctx.Deadline()
+	stream.SetDeadline(deadline)
+	if _, err := stream.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	var echo [4]byte
+	if _, err := io.ReadFull(stream, echo[:]); err != nil || string(echo[:]) != "ping" {
+		t.Fatalf("TCP echo %q: %v", echo, err)
+	}
 	packets, err := proxy.ListenPacketContext(ctx, &constant.Metadata{
 		NetWork: constant.UDP, DstIP: netip.MustParseAddr("192.0.2.1"), DstPort: 7777,
 	})
@@ -93,7 +129,7 @@ func TestHysteriaReceivesDatagramsInPeerOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer packets.Close()
-	packets.SetReadDeadline(time.Now().Add(5 * time.Second))
+	packets.SetReadDeadline(deadline)
 	destination := &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 7777}
 	buffer := make([]byte, 4)
 	for batch := range batches {
@@ -111,4 +147,25 @@ func TestHysteriaReceivesDatagramsInPeerOrder(t *testing.T) {
 			}
 		}
 	}
+}
+
+func echoHysteriaStream(stream *quic.Stream) error {
+	header := quicvarint.NewReader(stream)
+	if _, err := quicvarint.Read(header); err != nil {
+		return err
+	}
+	for range 2 {
+		size, err := quicvarint.Read(header)
+		if err != nil {
+			return err
+		}
+		if _, err := io.CopyN(io.Discard, stream, int64(size)); err != nil {
+			return err
+		}
+	}
+	if _, err := stream.Write([]byte{0, 0, 0}); err != nil {
+		return err
+	}
+	_, err := io.CopyN(stream, stream, 4)
+	return err
 }

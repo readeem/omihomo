@@ -33,6 +33,7 @@ type Daemon interface {
 type ConfigOpt func(*config)
 
 type config struct {
+	cores            []protocol.CoreName
 	ownerFile        string
 	version          string
 	log              *slog.Logger
@@ -53,6 +54,12 @@ type config struct {
 // file is read on every connection, so claiming ownership needs no restart.
 func WithOwnerFile(path string) ConfigOpt {
 	return func(c *config) { set(&c.ownerFile, path, path != "") }
+}
+
+// WithCores limits the saved selection to these cores and uses the first as the default.
+func WithCores(first protocol.CoreName, others ...protocol.CoreName) ConfigOpt {
+	cores := append([]protocol.CoreName{first}, others...)
+	return func(c *config) { c.cores = cores }
 }
 
 // WithVersion is the version the greeting reports.
@@ -176,6 +183,7 @@ var _ Daemon = (*server)(nil)
 // stopped until Run restores it.
 func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	cfg := config{
+		cores:     []protocol.CoreName{protocol.CoreMihomo},
 		ownerFile: owner.DefaultPath,
 		version:   "dev",
 		log:       slog.Default(),
@@ -199,22 +207,24 @@ func New(c core.Core, opts ...ConfigOpt) (Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.transport == nil {
-		network := uplink.Network{}
-		cfg.transport = fetch.RoutedTransport(c.DialDownload, network.DialContext)
-	}
 	d := &server{
 		core:       c,
 		cfg:        cfg,
 		log:        cfg.log,
 		store:      store,
-		fetcher:    fetch.New(cfg.transport),
 		downloads:  map[string]*pendingDownload{},
 		state:      protocol.StateStopped,
 		sessions:   map[*session]struct{}{},
 		addAsked:   map[string]time.Time{},
 		lastPushed: map[string][]byte{},
 	}
+	if cfg.transport == nil {
+		network := uplink.Network{}
+		cfg.transport = fetch.RoutedTransport(func(ctx context.Context, network, address string) (net.Conn, error) {
+			return d.core.DialDownload(ctx, network, address)
+		}, network.DialContext)
+	}
+	d.fetcher = fetch.New(cfg.transport)
 	if d.settings, err = store.Settings(); err != nil {
 		return nil, err
 	}

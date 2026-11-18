@@ -1,0 +1,173 @@
+Close gRPC clients with their outbound handler
+
+Backport of https://github.com/XTLS/Xray-core/pull/7178 (c7c029f519b07fd9b7f485f67050325f4ed0a71c).
+
+diff --git i/app/proxyman/outbound/handler.go w/app/proxyman/outbound/handler.go
+index 4c3b16a..b7f507f 100644
+--- i/app/proxyman/outbound/handler.go
++++ w/app/proxyman/outbound/handler.go
+@@ -329,9 +329,13 @@ func (h *Handler) Start() error {
+ 
+ // Close implements common.Closable.
+ func (h *Handler) Close() error {
++	var transportErr error
++	if h.streamSettings != nil {
++		transportErr = h.streamSettings.Close()
++	}
+ 	common.Close(h.mux)
+ 	common.Close(h.proxy)
+-	return nil
++	return transportErr
+ }
+ 
+ // SenderSettings implements outbound.Handler.
+diff --git i/transport/internet/grpc/dial.go w/transport/internet/grpc/dial.go
+index bb65041..f5465d9 100644
+--- i/transport/internet/grpc/dial.go
++++ w/transport/internet/grpc/dial.go
+@@ -2,6 +2,7 @@ package grpc
+ 
+ import (
+ 	"context"
++	"io"
+ 	"reflect"
+ 	"sync"
+ 	"time"
+@@ -78,6 +79,12 @@ func getGrpcClient(ctx context.Context, dest net.Destination, streamSettings *in
+ 	globalDialerAccess.Lock()
+ 	defer globalDialerAccess.Unlock()
+ 
++	// Reject reuse as well as creation once the outbound starts closing.
++	// New-client registration below also covers Close racing this check.
++	if streamSettings.IsClosed() {
++		return nil, io.ErrClosedPipe
++	}
++
+ 	if globalDialerMap == nil {
+ 		globalDialerMap = make(map[dialerConf]*grpc.ClientConn)
+ 	}
+@@ -181,22 +188,35 @@ func getGrpcClient(ctx context.Context, dest net.Destination, streamSettings *in
+ 		"passthrough:///"+net.JoinHostPort(grpcDestHost, dest.Port.String()),
+ 		dialOptions...,
+ 	)
+-	if err == nil {
+-		userAgent := grpcSettings.UserAgent
+-		// It's NOT recommended to set the UA of gRPC connections to that of real browsers, as they are fundamentally incapable of initiating real gRPC connections.
+-		switch userAgent {
+-		case "chrome", "":
+-			userAgent = utils.ChromeUA
+-		case "firefox":
+-			userAgent = utils.FirefoxUA
+-		case "edge":
+-			userAgent = utils.MSEdgeUA
+-		case "golang":
+-			userAgent = ""
+-		}
+-		setUserAgent(conn, userAgent)
+-		conn.Connect()
++	if err != nil {
++		return nil, err
+ 	}
++	key := dialerConf{dest, streamSettings}
++	if err := streamSettings.OnClose(func() error {
++		globalDialerAccess.Lock()
++		if globalDialerMap[key] == conn {
++			delete(globalDialerMap, key)
++		}
++		globalDialerAccess.Unlock()
++		return conn.Close()
++	}); err != nil {
++		conn.Close()
++		return nil, err
++	}
++	userAgent := grpcSettings.UserAgent
++	// It's NOT recommended to set the UA of gRPC connections to that of real browsers, as they are fundamentally incapable of initiating real gRPC connections.
++	switch userAgent {
++	case "chrome", "":
++		userAgent = utils.ChromeUA
++	case "firefox":
++		userAgent = utils.FirefoxUA
++	case "edge":
++		userAgent = utils.MSEdgeUA
++	case "golang":
++		userAgent = ""
++	}
++	setUserAgent(conn, userAgent)
++	conn.Connect()
+ 	globalDialerMap[dialerConf{dest, streamSettings}] = conn
+ 	return conn, err
+ }
+diff --git i/transport/internet/memory_settings.go w/transport/internet/memory_settings.go
+index 6277151..9e494b6 100644
+--- i/transport/internet/memory_settings.go
++++ w/transport/internet/memory_settings.go
+@@ -2,7 +2,10 @@ package internet
+ 
+ import (
+ 	"context"
++	stderrors "errors"
++	"io"
+ 	"reflect"
++	"sync"
+ 
+ 	"github.com/xtls/xray-core/common"
+ 	"github.com/xtls/xray-core/common/net"
+@@ -12,6 +15,12 @@ import (
+ 
+ // MemoryStreamConfig is a parsed form of StreamConfig. It is used to reduce the number of Protobuf parses.
+ type MemoryStreamConfig struct {
++	// A MemoryStreamConfig with registered resources must not be copied.
++	closeMu    sync.Mutex
++	closeDone  chan struct{}
++	closeHooks []func() error
++	closeErr   error
++
+ 	Destination      *net.Destination
+ 	ProtocolName     string
+ 	ProtocolSettings interface{}
+@@ -104,3 +113,45 @@ func ToMemoryStreamConfig(s *StreamConfig) (*MemoryStreamConfig, error) {
+ 
+ 	return mss, nil
+ }
++
++// OnClose registers cleanup for a transport resource owned by these settings.
++// On failure the caller retains ownership and must release the resource.
++// Hooks must not call Close on these same settings.
++func (s *MemoryStreamConfig) OnClose(close func() error) error {
++	s.closeMu.Lock()
++	defer s.closeMu.Unlock()
++	if s.closeDone != nil {
++		return io.ErrClosedPipe
++	}
++	s.closeHooks = append(s.closeHooks, close)
++	return nil
++}
++
++// IsClosed reports whether cleanup has started, including while it is pending.
++func (s *MemoryStreamConfig) IsClosed() bool {
++	s.closeMu.Lock()
++	defer s.closeMu.Unlock()
++	return s.closeDone != nil
++}
++
++// Close prevents new registrations and waits for all registered cleanup.
++// Direct transport callers own this lifetime; proxyman closes it with its handler.
++func (s *MemoryStreamConfig) Close() error {
++	s.closeMu.Lock()
++	if done := s.closeDone; done != nil {
++		s.closeMu.Unlock()
++		<-done
++		return s.closeErr
++	}
++	s.closeDone = make(chan struct{})
++	hooks := s.closeHooks
++	s.closeHooks = nil
++	s.closeMu.Unlock()
++	var errs []error
++	for _, close := range hooks {
++		errs = append(errs, close())
++	}
++	s.closeErr = stderrors.Join(errs...)
++	close(s.closeDone)
++	return s.closeErr
++}

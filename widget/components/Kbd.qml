@@ -1,8 +1,7 @@
 import QtQuick
 import qs.Commons
-import qs.Ui
 
-BorderSurface {
+Rectangle {
   id: kbd
 
   required property Theme theme
@@ -12,7 +11,8 @@ BorderSurface {
   implicitHeight: Style.space(18)
   radius: Math.min(Style.cornerRadius, 4)
   color: Util.alpha(theme.foreground, 0.06)
-  borderSpec: Border.flat(Util.alpha(theme.foreground, 0.2), "1 1 2 1")
+  border.color: Util.alpha(theme.foreground, 0.2)
+  border.width: 1
 
   PanelText {
     id: kbdText

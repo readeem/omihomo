@@ -1,7 +1,6 @@
 // Package core is the boundary between the daemon and the proxy engine it
-// hosts. The daemon owns settings, state and clients; a Core only runs what
-// it is given. Nothing outside an implementation of this package knows which
-// engine that is.
+// hosts. The daemon owns settings, state and clients. A Core runs the
+// configuration the daemon gives it.
 package core
 
 import (
@@ -17,7 +16,8 @@ import (
 // typed settings and the active subscription; a Core never reads settings of
 // its own and never fetches anything.
 type Config struct {
-	Mode                 string
+	Core                 protocol.CoreName // Empty uses mihomo.
+	Mode                 protocol.Mode
 	TUN                  bool
 	TUNRedirect          bool
 	Tailscale            bool

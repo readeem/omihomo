@@ -58,6 +58,8 @@ function parseJson(raw, fallback) {
 function defaultStatus() {
   return {
     state: "unknown",
+    coreName: "",
+    coreChoices: [],
     detail: "",
     activeSubscription: "",
     primaryGroup: "",
@@ -77,6 +79,10 @@ function readStatus(data) {
   if (!data || typeof data !== "object") return defaultStatus()
   return {
     state: text(data.state) || "unknown",
+    coreName: text(data.core),
+    coreChoices: Array.isArray(data.core_choices) ? data.core_choices.filter(function(name) {
+      return name === "mihomo" || name === "xray"
+    }) : [],
     detail: text(data.detail),
     activeSubscription: text(data.active_subscription),
     primaryGroup: text(data.primary_group),

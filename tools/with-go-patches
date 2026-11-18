@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
+work=$(mktemp -d /tmp/omihomo-go-modules.XXXXXXXX)
+trap 'rm -rf -- "$work"' EXIT
+export GOWORK=off
+cp go.mod "$work/patched.mod"
+cp go.sum "$work/patched.sum"
+
+for series in "$root"/patches/*/module; do
+  [[ -f $series ]] || continue
+  dir=${series%/module}
+  module=$(<"$series")
+  version=$(go list -modfile="$work/patched.mod" -m -f '{{if not .Replace}}{{.Version}}{{end}}' "$module")
+  [[ -n $version ]] || { printf '%s must resolve to an upstream version\n' "$module" >&2; exit 1; }
+  metadata=$(go mod download -modfile="$work/patched.mod" -json "$module@$version")
+  sum=$(jq -er .Sum <<<"$metadata")
+  modsum=$(jq -er .GoModSum <<<"$metadata")
+  if ! grep -Fxq -- "$module $version $sum" go.sum || ! grep -Fxq -- "$module $version/go.mod $modsum" go.sum; then
+    printf 'Missing pinned checksums for %s@%s\n' "$module" "$version" >&2
+    exit 1
+  fi
+  src=$(jq -er .Dir <<<"$metadata")
+  copy="$work/${dir##*/}"
+  cp -R -- "$src" "$copy"
+  chmod -R u+w "$copy"
+  if [[ ! -x $work/modulehash ]]; then
+    go build -mod=readonly -o "$work/modulehash" ./tools/modulehash
+  fi
+  if [[ -n $(find "$copy" ! -type d ! -type f -print -quit) ||
+        $("$work/modulehash" "$copy" "$module@$version") != "$sum" ]]; then
+    printf 'Module source failed checksum verification for %s@%s\n' "$module" "$version" >&2
+    exit 1
+  fi
+  for patch in "$dir"/*.patch; do
+    printf 'Applying %s to %s@%s\n' "${patch##*/}" "$module" "$version" >&2
+    git -C "$copy" apply --no-index -- "$patch"
+  done
+  go mod edit -modfile="$work/patched.mod" "-replace=$module=$copy"
+done
+
+export GOFLAGS="${GOFLAGS:+$GOFLAGS }-modfile=$work/patched.mod"
+export OMIHOMO_PATCHED_MODULES="$work"
+"$@"

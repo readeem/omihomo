@@ -4,7 +4,7 @@
 pkgname=omihomo
 pkgver=0.0.0
 pkgrel=1
-pkgdesc='Daemon for the Omihomo Omarchy widget: the mihomo proxy core as a sandboxed system service'
+pkgdesc='Daemon for the Omihomo Omarchy widget: mihomo and Xray proxy cores in a sandboxed system service'
 arch=('x86_64')
 url='https://github.com/readeem/omihomo'
 license=('GPL-3.0-only')

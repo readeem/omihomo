@@ -20,6 +20,7 @@ import (
 	"github.com/readeem/omihomo/internal/core/mihomo"
 	"github.com/readeem/omihomo/internal/daemon"
 	"github.com/readeem/omihomo/internal/owner"
+	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/state"
 	"github.com/readeem/omihomo/internal/systemd"
 	"github.com/readeem/omihomo/internal/tailscale"
@@ -29,7 +30,7 @@ func (a *app) daemonCommand() *ffcli.Command {
 	set := a.flags("daemon")
 	socket := set.String("socket", client.DefaultSocket, "socket to bind when not socket-activated")
 	ownerFile := set.String("owner-file", owner.DefaultPath, "file recording the owner's uid")
-	coreName := set.String("core", "mihomo", "proxy core to run: mihomo, or fake to proxy nothing")
+	coreName := set.String("core", "", "force mihomo or fake for tests; empty follows the saved choice")
 	home := set.String("home", defaultHome, "the core's directory for its state and geodata")
 	stateDir := set.String("state", state.DefaultDir, "the daemon's directory for settings and subscriptions")
 	cmd := &ffcli.Command{Name: "daemon", ShortUsage: "omihomo daemon [flags]", ShortHelp: "run the daemon",
@@ -45,21 +46,25 @@ func (a *app) daemonCommand() *ffcli.Command {
 		syscall.Umask(0o077)
 		log := slog.New(slog.NewTextHandler(a.env.Stderr, nil))
 		var c core.Core
-		switch *coreName {
+		opts := []daemon.ConfigOpt{daemon.WithStateDir(*stateDir), daemon.WithTailscaleSync(tailscale.Sync)}
+		switch protocol.CoreName(*coreName) {
 		case "fake":
 			c = fakecore.New()
 			log.Warn("running the fake core: nothing is proxied")
-		case "mihomo":
+		case "", protocol.CoreMihomo:
 			m, err := mihomo.New(*home, log)
 			if err != nil {
 				return fmt.Errorf("start the core: %w", err)
 			}
 			log.Info("hosting mihomo", "version", mihomo.Version, "home", *home)
 			c = m
+			if *coreName == "" {
+				opts = append(opts, daemon.WithCores(protocol.CoreMihomo, protocol.CoreXray))
+			}
 		default:
 			return usage(cmd, "unknown core %q", *coreName)
 		}
-		return serve(ctx, log, c, *socket, *ownerFile, daemon.WithStateDir(*stateDir), daemon.WithTailscaleSync(tailscale.Sync))
+		return serve(ctx, log, c, *socket, *ownerFile, opts...)
 	}
 	return cmd
 }

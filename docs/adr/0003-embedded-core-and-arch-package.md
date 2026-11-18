@@ -1,6 +1,14 @@
-# Embed mihomo and distribute the daemon as a signed Arch package
+# Embed proxy cores and distribute the daemon as a signed Arch package
 
 The daemon embeds a pinned mihomo Go library behind `core.Core`, so configuration, lifecycle and live data share an in-process boundary. Shipping a separate mihomo executable would retain the controller and privilege-grant machinery this architecture removes.
+
+mihomo owns listeners, DNS, routing, groups and connection tracking in both modes.
+Selecting `xray` substitutes Xray transports for outbounds whose options can be represented.
+The original mihomo adapter handles other outbounds. Keeping one routing engine preserves
+rule ordering, process matching and group behavior across switches. Xray opens its sockets
+through mihomo's uplink policy so it follows the same DNS, interface and firewall marks under
+TUN. Both libraries link against upstream protobuf because mihomo's fork does not compile
+with Xray.
 
 Release CI publishes the tested `omihomo` package to GitHub Releases and signs metadata binding its bytes and the bootstrap updater to a checked-in public key. This keeps widget installation and update discovery available without a separate package repository. Pacman owns installation and upgrades; the Omarchy plugin remains a separate git installation. The combined binary is GPL-3.0-only.
 
