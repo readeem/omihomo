@@ -436,7 +436,7 @@ Item {
   // only measures the route once it is known: it waits for a pending
   // selection to be confirmed, and a newer check replaces one already running.
   function refreshTrace() {
-    if (!apiReady) return
+    if (!apiReady || streamErrors.groups) return
     traceTesting = true
     if (!groupsReady || !proxiesLoaded || pendingConfig !== "" || _egressCall !== 0) {
       _traceQueued = true
@@ -676,9 +676,9 @@ Item {
   }
 
   function setCore(name) {
-    if (busy || !streamsReady(["status"]) || name === coreName || coreChoices.indexOf(name) < 0) return
+    if (busy || !streamsReady(["status"]) || coreChoices.indexOf(name) < 0) return
     pendingCore = name
-    reportDone("Switching to " + name + "…")
+    reportDone(name === coreName ? "Saving core preference…" : "Switching to " + name + "…")
     _coreCall = edit(["set", "core", "--", name], function(result, error) {
       root._coreCall = 0
       root.pendingCore = ""
@@ -862,7 +862,11 @@ Item {
 
   function configTestState(name) {
     if (_testingConfigs.indexOf(name) >= 0) return "testing"
-    if (name === currentConfig && currentTraceDelay > 0) return "success"
+    if (name === currentConfig) {
+      if (traceTesting) return "testing"
+      if (traceFailed) return "failed"
+      if (currentTraceDelay > 0) return "success"
+    }
     var result = configTestResults[String(name)]
     return result ? String(result.state || "") : ""
   }
@@ -876,11 +880,10 @@ Item {
 
   // Publish the whole batch once. Config rows then move straight from
   // "testing" to their final result without repainting one by one.
-  function finishConfigTests(names, delays) {
-    var next = Object.assign({}, configTestResults)
-    for (let i = 0; i < names.length; i++) {
-      const name = String(names[i])
-      const delay = delays && delays[name] !== undefined ? Number(delays[name]) : 0
+  function finishConfigTests(delays) {
+    var next = Object.assign(Object.create(null), configTestResults)
+    for (const name of Object.keys(delays)) {
+      const delay = delays[name]
       next[name] = isFinite(delay) && delay > 0
         ? { state: "success", delay: delay } : { state: "failed", delay: 0 }
     }
@@ -898,7 +901,11 @@ Item {
       root._testingConfigs = []
       delayTimer.stop()
       if (runtime !== root.runtimeKey || !root.groupsReady) return
-      root.finishConfigTests(names, error ? {} : Model.readDelays(result))
+      if (error) return root.reportError(error, "configs")
+      const delays = Model.readDelays(result)
+      if (Object.keys(delays).length === 0)
+        return root.reportError({ code: "core_failed", message: "No latency measurements completed" }, "configs")
+      root.finishConfigTests(delays)
       if (!whole) return
       const tested = Object.assign({}, root.groupTestedAt)
       tested[group] = Date.now()
@@ -922,7 +929,7 @@ Item {
 
   Timer {
     id: delayTimer
-    interval: 7000
+    interval: 32000
     onTriggered: {
       root.cancelDelayTest()
       root.reportError({ code: "core_failed", message: "Latency test timed out" }, "configs")
@@ -931,6 +938,7 @@ Item {
 
   function testConfig(name) {
     if (!groupsReady || pingTestsRunning || name === "") return
+    if (name === currentConfig) return refreshTrace()
     var group = Model.groupForConfig(groups, name)
     if (group !== "") runDelayTest(group, [name], false)
   }

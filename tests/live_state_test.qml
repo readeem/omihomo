@@ -30,7 +30,7 @@ ShellRoot {
         t.check(svc.configTestState("Fail"), "testing", "a single test starts at once")
         t.check(svc.pingTestsRunning, true, "a single test is in flight")
         svc.testConfig("Pass")
-        t.check(svc.configTestState("Pass"), "", "one test runs at a time")
+        t.check(svc.pingTestsRunning, true, "the existing delay test blocks another row test")
       } },
     { name: "single failure", until: function() { return !svc.pingTestsRunning }, then: function() {
         t.check(svc.configTestState("Fail"), "failed", "a single failure is recorded")
@@ -74,6 +74,12 @@ ShellRoot {
         t.check(svc.traceFailed, false, "the queued egress check succeeds")
         t.check(svc.egressIpv6, "2001:db8:1234:abcd:5678:ef01:2345:6789", "the full IPv6 address is retained")
         t.check(svc.configDelay("Fail"), svc.egressLatency, "the selected config displays the header's latency")
+        svc.testConfig("Fail")
+        t.check(svc.traceTesting, true, "testing the selected config refreshes egress")
+        t.check(svc.configTestState("Fail"), "testing", "the selected row shows the shared check in progress")
+      } },
+    { name: "selected config test", until: function() { return !svc.traceTesting }, then: function() {
+        t.check(svc.configDelay("Fail"), svc.egressLatency, "the selected row shares the refreshed latency")
         svc.call("test.status", { primary_group: "Other" })
       } },
     { name: "another client changes primary group", until: function() { return svc.configuredPrimaryGroup === "Other" }, then: function() {
@@ -104,6 +110,8 @@ ShellRoot {
         svc.receive(JSON.stringify({ type: "event", stream: "groups",
           error: { code: "too_large", message: "groups event too large" } }))
         t.check(svc.traceTesting, false, "a failed groups snapshot stops the egress spinner")
+        svc.refreshTrace()
+        t.check(svc.traceTesting, false, "manual refresh keeps the failure visible until groups recover")
         t.check(svc.proxiesLoaded, false, "a groups error invalidates the loaded snapshot")
         t.check(svc.currentConfig, "", "a groups error removes the old selection")
         t.check(svc.groups.length, 0, "a groups error removes stale entries")

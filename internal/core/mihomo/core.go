@@ -57,8 +57,9 @@ var (
 )
 
 const (
-	drainTick    = 20 * time.Millisecond
-	delayTimeout = 5 * time.Second
+	drainTick         = 20 * time.Millisecond
+	delayTimeout      = 5 * time.Second
+	delayBatchTimeout = 30 * time.Second
 	// Probes in flight across all tests, including any still unwinding after timeout.
 	delayParallel = 16
 )
@@ -563,7 +564,8 @@ func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (m
 		}
 	}
 
-	batch, cancel := context.WithTimeout(ctx, delayTimeout)
+	waves := (len(tested) + delayParallel - 1) / delayParallel
+	batch, cancel := context.WithTimeout(ctx, min(delayBatchTimeout, time.Duration(waves+1)*delayTimeout))
 	defer cancel()
 	type measurement struct {
 		name  string
@@ -571,9 +573,6 @@ func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (m
 	}
 	results := make(chan measurement, len(tested))
 	out := make(map[string]int, len(tested))
-	for _, p := range tested {
-		out[p.Name()] = 0
-	}
 	started := 0
 	ipv4URL, ipv6URL := delayURL, delayIPv6URL
 schedule:
@@ -590,7 +589,12 @@ schedule:
 		started++
 		go func() {
 			defer func() { <-c.delaySlots }()
-			results <- measurement{p.Name(), probeDelay(batch, p, ipv4URL, ipv6URL)}
+			probe, cancel := context.WithTimeout(batch, delayTimeout)
+			defer cancel()
+			delay := probeDelay(probe, p, ipv4URL, ipv6URL)
+			if batch.Err() == nil || delay > 0 {
+				results <- measurement{p.Name(), delay}
+			}
 		}()
 	}
 

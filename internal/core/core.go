@@ -123,7 +123,7 @@ type Core interface {
 	Groups(ctx context.Context) ([]protocol.Group, error)
 	Select(ctx context.Context, group, proxy string) error
 	// TestDelay tests proxies of group, every member when proxies is empty,
-	// and maps each to its delay in milliseconds, 0 for a failure.
+	// and maps each completed probe to its delay in milliseconds, 0 for a failure.
 	TestDelay(ctx context.Context, group string, proxies []string) (map[string]int, error)
 
 	Rules(ctx context.Context) ([]protocol.Rule, error)
