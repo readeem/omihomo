@@ -540,7 +540,7 @@ func (c *Core) Select(ctx context.Context, group, proxy string) error {
 	return nil
 }
 
-func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (map[string]int, error) {
+func (c *Core) TestDelay(ctx context.Context, group string, proxies []string, except string) (map[string]int, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -549,6 +549,9 @@ func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (m
 		return nil, err
 	}
 	tested := g.Proxies()
+	if except != "" {
+		tested = slices.DeleteFunc(slices.Clone(tested), func(p constant.Proxy) bool { return p.Name() == except })
+	}
 	if len(proxies) != 0 {
 		members := make(map[string]constant.Proxy, len(tested))
 		for _, p := range tested {

@@ -162,7 +162,10 @@ Item {
   property int _selectCall: 0
   property int _delayCall: 0
   property var _testingConfigs: []
+  property string _testingGroup: ""
+  property var _groupTestError: null
   property int _egressCall: 0
+  property bool _manualTrace: false
   property int _closeCall: 0
 
   readonly property string primaryGroup: Model.primaryGroupName(groups, configuredPrimaryGroup)
@@ -171,7 +174,7 @@ Item {
   readonly property bool busy: _coreCall !== 0 || _settingsCall !== 0 || _subCall !== 0
     || _ruleCall !== 0 || _selectCall !== 0 || _closeCall !== 0
   readonly property bool ruleSaving: _ruleCall !== 0
-  readonly property bool pingTestsRunning: _delayCall !== 0
+  readonly property bool pingTestsRunning: _delayCall !== 0 || _manualTrace
 
   function reportError(error, scope) {
     lastError = Model.daemonError(error)
@@ -296,11 +299,13 @@ Item {
       else applyStatus(data)
       break
     case "groups":
+      if (error) {
+        cancelDelayTest()
+        cancelTrace()
+      }
       applyGroups(data)
       if (error) {
         clearTrace()
-        _traceQueued = false
-        traceTesting = false
         traceFailed = coreRunning
       }
       break
@@ -436,7 +441,7 @@ Item {
   // only measures the route once it is known: it waits for a pending
   // selection to be confirmed, and a newer check replaces one already running.
   function refreshTrace() {
-    if (!apiReady || streamErrors.groups) return
+    if (!apiReady || streamErrors.groups || _manualTrace) return
     traceTesting = true
     if (!groupsReady || !proxiesLoaded || pendingConfig !== "" || _egressCall !== 0) {
       _traceQueued = true
@@ -451,18 +456,19 @@ Item {
       root._egressCall = 0
       if (root._traceQueued) return root.runQueuedTrace()
       root.traceTesting = false
-      if (!root.groupsReady || !root.proxiesLoaded || runtime !== root.runtimeKey || group !== root.primaryGroup || config !== root.currentConfig) return
-      var egress = Model.readEgress(result)
-      // Keep the last known values. The row says "failed" until the next
-      // check, then a successful result replaces them.
-      if (error || egress.ip === "" || egress.latency <= 0) {
-        root.traceFailed = true
-        return
+      if (root.groupsReady && root.proxiesLoaded && runtime === root.runtimeKey
+        && group === root.primaryGroup && config === root.currentConfig) {
+        const egress = Model.readEgress(result)
+        root.traceFailed = !!error || egress.ip === "" || egress.latency <= 0
+        if (!root.traceFailed) {
+          root.egressIp = egress.ip
+          root.egressIpv6 = egress.ipv6
+          root.egressLatency = egress.latency
+        }
       }
-      root.traceFailed = false
-      root.egressIp = egress.ip
-      root.egressIpv6 = egress.ipv6
-      root.egressLatency = egress.latency
+      if (!root._manualTrace) return
+      root._manualTrace = false
+      root.finishPingTest(null)
     })
     if (_egressCall === 0) traceTesting = false
   }
@@ -509,13 +515,15 @@ Item {
     var runtimeChanged = runtimeKey !== previousRuntime
     var primaryChanged = configuredPrimaryGroup !== previousPrimaryGroup
     if (runtimeChanged) forgetRuntime()
-    if (runtimeChanged || primaryChanged) clearTrace()
+    if (runtimeChanged || primaryChanged || !coreRunning) {
+      if (_manualTrace || !coreRunning) cancelDelayTest()
+      cancelTrace()
+      clearTrace()
+    }
     if (!coreRunning) {
       downloadRate = 0
       uploadRate = 0
       trafficHistory = []
-      traceTesting = false
-      _traceQueued = false
     }
     if (panelOpen && apiReady && (!wasRunning || runtimeChanged || primaryChanged)) refreshTrace()
   }
@@ -529,6 +537,7 @@ Item {
 
   function forgetRuntime() {
     cancelDelayTest()
+    cancelTrace()
     applyGroups(null)
     applyConnections(null)
     applyTraffic(null)
@@ -587,7 +596,11 @@ Item {
       return
     }
     const routeChanged = previousGroup !== primaryGroup || previousConfig !== currentConfig
-    if (routeChanged) clearTrace()
+    if (routeChanged) {
+      if (_manualTrace) cancelDelayTest()
+      cancelTrace()
+      clearTrace()
+    }
     if (!wasLoaded || routeChanged || _traceQueued) refreshTrace()
   }
 
@@ -861,12 +874,12 @@ Item {
   readonly property int currentTraceDelay: !traceTesting && !traceFailed ? egressLatency : 0
 
   function configTestState(name) {
-    if (_testingConfigs.indexOf(name) >= 0) return "testing"
     if (name === currentConfig) {
       if (traceTesting) return "testing"
       if (traceFailed) return "failed"
       if (currentTraceDelay > 0) return "success"
     }
+    if (_testingConfigs.indexOf(name) >= 0) return "testing"
     var result = configTestResults[String(name)]
     return result ? String(result.state || "") : ""
   }
@@ -890,41 +903,61 @@ Item {
     configTestResults = next
   }
 
-  // `proxies` names the configs to test; empty tests the whole group, which
-  // the core does concurrently.
-  function runDelayTest(group, names, whole) {
-    const runtime = runtimeKey
-    const args = whole ? { group: group } : { group: group, proxies: names }
+  function runDelayTest(args, names) {
     const id = call("delay.test", args, function(result, error) {
       if (root._delayCall !== id) return
       root._delayCall = 0
       root._testingConfigs = []
-      delayTimer.stop()
-      if (runtime !== root.runtimeKey || !root.groupsReady) return
-      if (error) return root.reportError(error, "configs")
+      if (error) return root.finishPingTest(error)
       const delays = Model.readDelays(result)
-      if (Object.keys(delays).length === 0)
-        return root.reportError({ code: "core_failed", message: "No latency measurements completed" }, "configs")
       root.finishConfigTests(delays)
-      if (!whole) return
-      const tested = Object.assign({}, root.groupTestedAt)
-      tested[group] = Date.now()
-      root.groupTestedAt = tested
+      const complete = names.every(function(name) { return delays[name] !== undefined })
+      root.finishPingTest(complete ? null
+        : { code: "core_failed", message: names.length === 1 && root._testingGroup === ""
+          ? "No latency measurement completed" : "Latency test incomplete. Some configs were not measured." })
     })
     if (id === 0) return
     _delayCall = id
     _testingConfigs = names
-    delayTimer.restart()
+  }
+
+  function finishPingTest(error) {
+    if (error) _groupTestError = error
+    if (pingTestsRunning) return
+    delayTimer.stop()
+    if (_groupTestError) {
+      reportError(_groupTestError, "configs")
+    } else if (_testingGroup !== "") {
+      const tested = Object.assign({}, groupTestedAt)
+      tested[_testingGroup] = Date.now()
+      groupTestedAt = tested
+    }
+    _testingGroup = ""
+    _groupTestError = null
+  }
+
+  function cancelProbe(id) {
+    if (id === 0) return
+    delete _pending[id]
+    call("probe.cancel", { id: id })
+  }
+
+  function cancelTrace() {
+    cancelProbe(_egressCall)
+    _egressCall = 0
+    _traceQueued = false
+    traceTesting = false
   }
 
   function cancelDelayTest() {
-    if (_delayCall === 0) return
-    const id = _delayCall
+    if (_manualTrace) cancelTrace()
+    _manualTrace = false
+    cancelProbe(_delayCall)
     _delayCall = 0
     _testingConfigs = []
-    delete _pending[id]
+    _testingGroup = ""
+    _groupTestError = null
     delayTimer.stop()
-    call("delay.cancel", { id: id })
   }
 
   Timer {
@@ -937,17 +970,35 @@ Item {
   }
 
   function testConfig(name) {
-    if (!groupsReady || pingTestsRunning || name === "") return
-    if (name === currentConfig) return refreshTrace()
-    var group = Model.groupForConfig(groups, name)
-    if (group !== "") runDelayTest(group, [name], false)
+    if (!groupsReady || pingTestsRunning || pendingConfig !== "" || name === "") return
+    if (errorScope === "configs") clearMessages()
+    if (name === currentConfig) {
+      startManualTrace()
+    } else {
+      const group = Model.groupForConfig(groups, name)
+      if (group !== "") runDelayTest({ group: group, proxies: [name] }, [name])
+    }
+    if (pingTestsRunning) delayTimer.restart()
   }
 
   function testGroup(name) {
-    if (!groupsReady || pingTestsRunning || name === "") return
-    var group = Model.groupByName(groups, name)
-    var names = group && group.all ? group.all.slice() : []
-    if (names.length > 0) runDelayTest(name, names, true)
+    if (!groupsReady || pingTestsRunning || pendingConfig !== "" || name === "") return
+    const group = Model.groupByName(groups, name)
+    if (!group || group.all.length === 0) return
+    if (errorScope === "configs") clearMessages()
+    const selected = currentConfig
+    const names = group.all.filter(function(config) { return config !== selected })
+    const sharesEgress = names.length < group.all.length
+    _testingGroup = name
+    if (names.length > 0) runDelayTest({ group: name, except: sharesEgress ? selected : undefined }, names)
+    if (sharesEgress) startManualTrace()
+    if (pingTestsRunning) delayTimer.restart()
+  }
+
+  function startManualTrace() {
+    if (!traceTesting) refreshTrace()
+    if (_egressCall !== 0) _traceQueued = false
+    _manualTrace = traceTesting
   }
 
   function closeConnections(args) {

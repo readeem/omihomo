@@ -234,7 +234,7 @@ func TestDelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	delays, err := c.TestDelay(t.Context(), "Proxy", nil)
+	delays, err := c.TestDelay(t.Context(), "Proxy", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,28 +249,28 @@ func TestDelay(t *testing.T) {
 		t.Errorf("manual tests changed the core's health history: %v -> %v", before[0].Members, groups[0].Members)
 	}
 	beforeIPv6 := ipv6Requests.Load()
-	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}); err != nil || delays["Local"] <= 0 || len(delays) != 1 {
+	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}, ""); err != nil || delays["Local"] <= 0 || len(delays) != 1 {
 		t.Errorf("one proxy = %v, %v", delays, err)
 	}
 	if ipv6Requests.Load() != beforeIPv6 {
 		t.Error("a successful IPv4 test also probed IPv6")
 	}
 	rejectIPv4.Store(true)
-	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}); err != nil || delays["Local"] <= 0 {
+	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}, ""); err != nil || delays["Local"] <= 0 {
 		t.Errorf("IPv6 fallback = %v, %v", delays, err)
 	}
 	if ipv6Requests.Load() != beforeIPv6+1 {
 		t.Error("the IPv6 fallback did not reach its endpoint once")
 	}
-	if _, err := c.TestDelay(t.Context(), "Proxy", []string{"Nowhere"}); !errors.Is(err, core.ErrNotFound) {
+	if _, err := c.TestDelay(t.Context(), "Proxy", []string{"Nowhere"}, ""); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("unknown proxy = %v, want ErrNotFound", err)
 	}
-	if _, err := c.TestDelay(t.Context(), "Nowhere", nil); !errors.Is(err, core.ErrNotFound) {
+	if _, err := c.TestDelay(t.Context(), "Nowhere", nil, ""); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("unknown group = %v, want ErrNotFound", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := c.TestDelay(ctx, "Proxy", nil); !errors.Is(err, context.Canceled) {
+	if _, err := c.TestDelay(ctx, "Proxy", nil, ""); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled group test returned %v", err)
 	}
 }
@@ -297,7 +297,7 @@ func TestQueuedConfigsGetTimeForIPv6Fallback(t *testing.T) {
 		group.Members = append(group.Members, name)
 	}
 	c := running(t, cfg)
-	delays, err := c.TestDelay(t.Context(), group.Name, nil)
+	delays, err := c.TestDelay(t.Context(), group.Name, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

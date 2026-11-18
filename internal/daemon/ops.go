@@ -667,7 +667,15 @@ func (d *server) testDelay(ctx context.Context, args protocol.DelayArgs) (any, *
 	if err := validNames("proxy", args.Proxies); err != nil {
 		return nil, err
 	}
-	delays, err := d.core.TestDelay(ctx, args.Group, args.Proxies)
+	if args.Except != "" {
+		if err := validName("proxy", args.Except); err != nil {
+			return nil, err
+		}
+		if len(args.Proxies) > 0 {
+			return nil, fail(protocol.CodeInvalid, "except requires a whole-group test")
+		}
+	}
+	delays, err := d.core.TestDelay(ctx, args.Group, args.Proxies, args.Except)
 	if err != nil {
 		return nil, coreError(err)
 	}

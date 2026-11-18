@@ -7,6 +7,8 @@ import "../widget" as Omihomo
 // egress, traffic, connections, and a subscription switch.
 ShellRoot {
   id: testRoot
+  property double completeTestAt: 0
+  property bool partialDelayReady: false
 
   StateTest { id: t; name: "LIVE" }
 
@@ -38,6 +40,7 @@ ShellRoot {
           members: [{ name: "Pass", delay: 40, alive: true }, { name: "Fail", delay: 50, alive: true }] }] })
         t.check(svc.configTestState("Fail"), "failed", "an older push cannot erase a failure")
         svc.testGroup("Proxy")
+        t.check(svc.traceTesting, true, "the header and selected row start the shared check together")
         t.check(svc.configTestState("Pass"), "testing", "a group test marks every config at once")
         t.check(svc.configTestState("Fail"), "testing", "a group test marks every config at once")
       } },
@@ -46,6 +49,16 @@ ShellRoot {
         t.check(svc.configDelay("Pass"), svc.egressLatency, "the selected config retains its header latency after Test all")
         t.check(svc.configTestState("Fail"), "failed", "a group failure is recorded")
         t.check(svc.groupTestedAt.Proxy > 0, true, "a group test records when it ran")
+        testRoot.completeTestAt = svc.groupTestedAt.Proxy
+        svc.call("test.partial-delay", null, function() { testRoot.partialDelayReady = true })
+      } },
+    { name: "partial group test", until: function() { return testRoot.partialDelayReady }, then: function() {
+        svc.testGroup("Proxy")
+      } },
+    { name: "partial group results", until: function() { return !svc.pingTestsRunning }, then: function() {
+        t.check(svc.lastError.indexOf("incomplete") >= 0, true, "omitted results are reported")
+        t.check(svc.groupTestedAt.Proxy, testRoot.completeTestAt, "a partial test keeps the last complete timestamp")
+        t.check(svc.configTestState("Fail"), "failed", "an omitted result keeps its prior state")
       } },
     { name: "cancel group test", then: function() {
         svc.testGroup("Proxy")
@@ -77,6 +90,14 @@ ShellRoot {
         svc.testConfig("Fail")
         t.check(svc.traceTesting, true, "testing the selected config refreshes egress")
         t.check(svc.configTestState("Fail"), "testing", "the selected row shows the shared check in progress")
+        t.check(svc.pingTestsRunning, true, "the selected config test can be canceled")
+        svc.testConfig("Fail")
+        svc.testGroup("Proxy")
+        t.check(svc._traceQueued, false, "repeat clicks do not queue another test")
+        t.check(svc.configTestState("Pass") === "testing", false, "a group test cannot start during a single test")
+        svc.cancelDelayTest()
+        t.check(svc.traceTesting, false, "cancel clears the shared test")
+        svc.testConfig("Fail")
       } },
     { name: "selected config test", until: function() { return !svc.traceTesting }, then: function() {
         t.check(svc.configDelay("Fail"), svc.egressLatency, "the selected row shares the refreshed latency")

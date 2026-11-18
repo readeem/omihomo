@@ -40,6 +40,7 @@ const status = {
   tailnet_proxy: false, started_at: 0, tun_bypass: ["10.0.0.0/8", "192.168.0.0/16"]
 }
 const delays = { Pass: 40, Fail: 50 }
+let partialDelay = false
 const proxy = { name: "Proxy", type: "select", now: "Pass", selectable: true }
 let rules = []
 let subscriptions = [
@@ -165,10 +166,16 @@ const ops = {
     push("groups", groups())
     return { result: group }
   }),
-  "delay.cancel": () => ({ result: {} }),
+  "probe.cancel": () => ({ result: {} }),
+  "test.partial-delay": () => { partialDelay = true; return { result: {} } },
   "delay.test": (client, a) => later(() => {
     if (!running()) return failure("not_running", "the proxy is not running")
-    const names = a.proxies && a.proxies.length > 0 ? a.proxies : Object.keys(delays)
+    const names = a.proxies && a.proxies.length > 0 ? a.proxies : Object.keys(delays).filter((name) => name !== a.except)
+    if (names.includes(proxy.now)) return failure("invalid", "the selected config uses the egress check")
+    if (partialDelay) {
+      partialDelay = false
+      return { result: { delays: {} } }
+    }
     const result = {}
     // A config named Fail* never answers; the rest take 91 ms.
     for (const name of names) {

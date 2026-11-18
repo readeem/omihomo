@@ -378,6 +378,10 @@ func TestGroups(t *testing.T) {
 	if len(one.Delays) != 1 || one.Delays["DIRECT"] != 3 {
 		t.Fatalf("single delay = %+v", one)
 	}
+	remaining := call[protocol.DelayResult](t, c, protocol.OpDelayTest, protocol.DelayArgs{Group: "Auto", Except: "Tokyo"})
+	if _, included := remaining.Delays["Tokyo"]; included || len(remaining.Delays) != 2 {
+		t.Fatalf("delay excluding Tokyo = %+v", remaining)
+	}
 }
 
 type stalledDelayCore struct {
@@ -385,7 +389,7 @@ type stalledDelayCore struct {
 	started chan struct{}
 }
 
-func (c stalledDelayCore) TestDelay(ctx context.Context, group string, proxies []string) (map[string]int, error) {
+func (c stalledDelayCore) TestDelay(ctx context.Context, group string, proxies []string, except string) (map[string]int, error) {
 	close(c.started)
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -394,20 +398,36 @@ func (c stalledDelayCore) TestDelay(ctx context.Context, group string, proxies [
 func TestCancelDelayLeavesControlAvailable(t *testing.T) {
 	engine := stalledDelayCore{Core: fakecore.New(), started: make(chan struct{})}
 	h := serveCore(t, os.Getuid(), engine)
+	checkCanceledProbe(t, h, `{"id":1,"op":"delay.test","args":{"group":"Proxy"}}`, engine.started)
+}
+
+func TestCancelEgressLeavesControlAvailable(t *testing.T) {
+	started := make(chan struct{})
+	trace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(trace.Close)
+	h := serve(t, os.Getuid(), daemon.WithEgressURLs(trace.URL, ""))
+	checkCanceledProbe(t, h, `{"id":1,"op":"egress.check","args":{"group":"Proxy","proxy":"Tokyo"}}`, started)
+}
+
+func checkCanceledProbe(t *testing.T, h *harness, request string, started <-chan struct{}) {
+	t.Helper()
 	call[protocol.Status](t, h.dial(t), protocol.OpStart, nil)
 	conn, replies := raw(t, h)
-	fmt.Fprintln(conn, `{"id":1,"op":"delay.test","args":{"group":"Proxy"}}`)
+	fmt.Fprintln(conn, request)
 	select {
-	case <-engine.started:
+	case <-started:
 	case <-time.After(time.Second):
-		t.Fatal("delay test did not start")
+		t.Fatal("probe did not start")
 	}
 	fmt.Fprintln(conn, `{"id":2,"op":"stop"}`)
 	if !replies.Scan() || !strings.Contains(replies.Text(), `"state":"stopped"`) {
-		t.Fatalf("stop while the delay test was running: %s", replies.Text())
+		t.Fatalf("stop while the probe was running: %s", replies.Text())
 	}
 
-	fmt.Fprintln(conn, `{"id":3,"op":"delay.cancel","args":{"id":1}}`)
+	fmt.Fprintln(conn, `{"id":3,"op":"probe.cancel","args":{"id":1}}`)
 	for range 2 {
 		if !replies.Scan() {
 			t.Fatal("no reply to the canceled test")
@@ -419,11 +439,11 @@ func TestCancelDelayLeavesControlAvailable(t *testing.T) {
 		switch reply.ID {
 		case 1:
 			if reply.Error == nil || !strings.Contains(reply.Error.Message, "context canceled") {
-				t.Fatalf("delay test reply: %s", replies.Text())
+				t.Fatalf("probe reply: %s", replies.Text())
 			}
 		case 3:
 			if reply.Error != nil {
-				t.Fatalf("delay cancellation reply: %s", replies.Text())
+				t.Fatalf("probe cancellation reply: %s", replies.Text())
 			}
 		default:
 			t.Fatalf("unexpected reply: %s", replies.Text())

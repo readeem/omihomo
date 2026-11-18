@@ -161,7 +161,7 @@ func (c *Core) Select(ctx context.Context, group, proxy string) error {
 	return nil
 }
 
-func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (map[string]int, error) {
+func (c *Core) TestDelay(ctx context.Context, group string, proxies []string, except string) (map[string]int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.running {
@@ -173,7 +173,7 @@ func (c *Core) TestDelay(ctx context.Context, group string, proxies []string) (m
 	}
 	out := map[string]int{}
 	for _, m := range g.Members {
-		if len(proxies) > 0 && !slices.Contains(proxies, m.Name) {
+		if m.Name == except || len(proxies) > 0 && !slices.Contains(proxies, m.Name) {
 			continue
 		}
 		out[m.Name] = Delays[m.Name]

@@ -188,12 +188,13 @@ const ops = {
     push("groups")
     return { result: group }
   },
+  "probe.cancel": () => ({ result: {} }),
   "delay.test": (args) => later(300, () => {
     const group = findGroup(args.group)
     if (!group) return fail("not_found", `no group ${args.group}`)
     const result = {}
     for (const member of group.members) {
-      if (args.proxies && !args.proxies.includes(member.name)) continue
+      if (member.name === args.except || args.proxies && !args.proxies.includes(member.name)) continue
       member.delay = result[member.name] = delays[member.name] || 0
       member.alive = member.delay > 0
     }

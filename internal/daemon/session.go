@@ -21,7 +21,7 @@ type session struct {
 	closeOnce sync.Once
 	inFlight  chan struct{}
 	calls     sync.WaitGroup
-	delays    sync.Map // request ID -> context.CancelFunc
+	probes    sync.Map // request ID -> context.CancelFunc
 
 	// streams is guarded by d.mu.
 	streams map[string]bool
@@ -107,14 +107,14 @@ func (s *session) serve(ctx context.Context) {
 			s.reply(req.ID, nil, &protocol.Error{Code: protocol.CodeBadRequest, Message: "a request needs an id and an op"})
 			continue
 		}
-		if req.Op == protocol.OpDelayCancel {
-			var args protocol.DelayCancelArgs
+		if req.Op == protocol.OpProbeCancel {
+			var args protocol.ProbeCancelArgs
 			if err := decode(req.Args, &args); err != nil {
 				s.reply(req.ID, nil, err)
 				continue
 			}
-			if cancelDelay, ok := s.delays.Load(args.ID); ok {
-				cancelDelay.(context.CancelFunc)()
+			if cancelProbe, ok := s.probes.Load(args.ID); ok {
+				cancelProbe.(context.CancelFunc)()
 			}
 			s.reply(req.ID, nil, nil)
 			continue
@@ -126,19 +126,20 @@ func (s *session) serve(ctx context.Context) {
 			continue
 		}
 		callCtx, callCancel := context.WithTimeout(ctx, callTimeout)
-		if req.Op == protocol.OpDelayTest {
-			if _, loaded := s.delays.LoadOrStore(req.ID, callCancel); loaded {
+		isProbe := req.Op == protocol.OpDelayTest || req.Op == protocol.OpEgress
+		if isProbe {
+			if _, loaded := s.probes.LoadOrStore(req.ID, callCancel); loaded {
 				callCancel()
 				<-s.inFlight
-				s.reply(req.ID, nil, fail(protocol.CodeBadRequest, "delay test id already in use"))
+				s.reply(req.ID, nil, fail(protocol.CodeBadRequest, "probe id already in use"))
 				continue
 			}
 		}
 		s.calls.Go(func() {
 			defer func() { <-s.inFlight }()
 			defer callCancel()
-			if req.Op == protocol.OpDelayTest {
-				defer s.delays.Delete(req.ID)
+			if isProbe {
+				defer s.probes.Delete(req.ID)
 			}
 			result, perr := s.d.handle(callCtx, s, req)
 			s.reply(req.ID, result, perr)
