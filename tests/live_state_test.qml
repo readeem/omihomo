@@ -99,8 +99,11 @@ ShellRoot {
       } },
     { name: "stream errors invalidate snapshots", until: function() { return !svc.busy && svc.subscriptions.length === 2 }, then: function() {
         var runtime = svc.runtimeKey
+        svc.refreshTrace()
+        t.check(svc.traceTesting, true, "egress is running before the groups snapshot fails")
         svc.receive(JSON.stringify({ type: "event", stream: "groups",
           error: { code: "too_large", message: "groups event too large" } }))
+        t.check(svc.traceTesting, false, "a failed groups snapshot stops the egress spinner")
         t.check(svc.proxiesLoaded, false, "a groups error invalidates the loaded snapshot")
         t.check(svc.currentConfig, "", "a groups error removes the old selection")
         t.check(svc.groups.length, 0, "a groups error removes stale entries")
@@ -125,8 +128,6 @@ ShellRoot {
         t.check(svc.lastError, "", "a valid groups snapshot clears its failure")
         svc.applyEvent("rules", { rules: [{ index: 1, type: "DOMAIN", value: "example.test", target: "DIRECT", source: "user" }] })
         t.check(svc.rules.length, 1, "an editable rule is loaded before the failure")
-        svc.refreshTrace()
-        t.check(svc.traceTesting, true, "egress is running before the groups snapshot fails")
         var cases = [
           { stream: "rules", scope: "rules" },
           { stream: "subscriptions", scope: "sub:" },
@@ -152,7 +153,6 @@ ShellRoot {
         t.check(svc.trafficHistory.length, 0, "traffic errors remove stale history")
         t.check(svc.connectionLog.length, 0, "connection errors remove stale close targets")
         t.check(svc.connectionsDownload, 0, "connection errors remove stale totals")
-        t.check(svc.traceTesting, false, "a failed groups snapshot stops the egress spinner")
         t.check(svc.apiReady, false, "status errors make live controls unavailable")
         svc.removeRule(1)
         svc.activateSubscription("work")

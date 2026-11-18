@@ -202,12 +202,23 @@ func TestRulesCarryTheirSources(t *testing.T) {
 }
 
 func TestDelay(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var rejectIPv4 atomic.Bool
+	var ipv6Requests atomic.Int32
+	ipv4 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rejectIPv4.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer srv.Close()
+	defer ipv4.Close()
+	ipv6 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ipv6Requests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ipv6.Close()
 	old4, old6 := delayURL, delayIPv6URL
-	delayURL, delayIPv6URL = srv.URL, srv.URL
+	delayURL, delayIPv6URL = ipv4.URL, ipv6.URL
 	defer func() { delayURL, delayIPv6URL = old4, old6 }()
 
 	c := running(t, testConfig())
@@ -229,8 +240,19 @@ func TestDelay(t *testing.T) {
 	if !slices.Equal(before[0].Members, groups[0].Members) {
 		t.Errorf("manual tests changed the core's health history: %v -> %v", before[0].Members, groups[0].Members)
 	}
-	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}); err != nil || len(delays) != 1 {
+	beforeIPv6 := ipv6Requests.Load()
+	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}); err != nil || delays["Local"] <= 0 || len(delays) != 1 {
 		t.Errorf("one proxy = %v, %v", delays, err)
+	}
+	if ipv6Requests.Load() != beforeIPv6 {
+		t.Error("a successful IPv4 test also probed IPv6")
+	}
+	rejectIPv4.Store(true)
+	if delays, err := c.TestDelay(t.Context(), "Proxy", []string{"Local"}); err != nil || delays["Local"] <= 0 {
+		t.Errorf("IPv6 fallback = %v, %v", delays, err)
+	}
+	if ipv6Requests.Load() != beforeIPv6+1 {
+		t.Error("the IPv6 fallback did not reach its endpoint once")
 	}
 	if _, err := c.TestDelay(t.Context(), "Proxy", []string{"Nowhere"}); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("unknown proxy = %v, want ErrNotFound", err)
