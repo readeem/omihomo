@@ -315,7 +315,7 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	if i >= 0 {
 		sub = d.subs.List[i]
 	}
-	paused := !manual && (d.settings.SubscriptionUpdatesDisabled || (d.state != protocol.StateOn && d.state != protocol.StateDegraded))
+	paused := !manual && (d.refreshPauses > 0 || d.settings.SubscriptionUpdatesDisabled || (d.state != protocol.StateOn && d.state != protocol.StateDegraded))
 	if !manual && !paused {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
@@ -367,6 +367,9 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
 	}
 	if err := d.acceptContent(ctx, settings, dl.profile, active); err != nil {
+		if !manual && ctx.Err() != nil {
+			return nil, nil
+		}
 		// Its interval still counts: the server answered. Only content the
 		// core refuses is the server's fault; a local failure is retried soon.
 		interval = profile.Interval(dl.header)
@@ -399,6 +402,21 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	d.log.Info("subscription refreshed", "subscription", sub.Name)
 	d.publish(ctx)
 	return describe(sub, active), nil
+}
+
+// Prevent replacement scheduled refreshes while a control operation waits for opMu.
+func (d *server) pauseRefreshes() func() {
+	d.mu.Lock()
+	d.refreshPauses++
+	if d.refreshCancel != nil {
+		d.refreshCancel()
+	}
+	d.mu.Unlock()
+	return func() {
+		d.mu.Lock()
+		d.refreshPauses--
+		d.mu.Unlock()
+	}
 }
 
 // failRefresh records a failed request and when to try again. The caller

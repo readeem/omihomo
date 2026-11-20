@@ -359,20 +359,20 @@ func (a *app) setCommand() *ffcli.Command {
 // builtinTargets are the targets every subscription has.
 var builtinTargets = []string{"DIRECT", "REJECT", "REJECT-DROP"}
 
-// checkName refuses a group, or with groupOnly false a proxy or a built-in
-// target, that the running proxy lacks. A stopped proxy has nothing to check
-// against, and anything well formed is kept.
+// While stopped, targets may be staged for a different subscription.
 func checkName(ctx context.Context, c *client.Client, name string, groupOnly bool) error {
 	if !groupOnly && slices.Contains(builtinTargets, name) {
 		return nil
 	}
-	var list protocol.GroupList
-	err := c.Call(ctx, protocol.OpGroups, nil, &list)
-	var perr *protocol.Error
-	if errors.As(err, &perr) && perr.Code == protocol.CodeNotRunning {
+	var status protocol.Status
+	if err := c.Call(ctx, protocol.OpStatus, nil, &status); err != nil {
+		return err
+	}
+	if status.State != protocol.StateOn && status.State != protocol.StateDegraded {
 		return nil
 	}
-	if err != nil {
+	var list protocol.GroupList
+	if err := c.Call(ctx, protocol.OpGroups, nil, &list); err != nil {
 		return err
 	}
 	for _, g := range list.Groups {

@@ -428,6 +428,8 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 }
 
 func (d *server) stop(ctx context.Context) (any, *protocol.Error) {
+	resume := d.pauseRefreshes()
+	defer resume()
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
@@ -600,6 +602,10 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	}
 	if err := checkRules(args.Rules); err != nil {
 		return nil, err
+	}
+	if args.Settings.SubscriptionUpdatesDisabled {
+		resume := d.pauseRefreshes()
+		defer resume()
 	}
 
 	d.opMu.Lock()

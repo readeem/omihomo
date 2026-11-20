@@ -10,7 +10,7 @@ import (
 func (d *server) groupConfig() core.Config {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.runConfig(d.settings, d.profile)
+	return core.Config{Profile: d.profile, PrimaryGroup: d.settings.PrimaryGroup}
 }
 
 func (d *server) preferredCore(saved protocol.CoreName) protocol.CoreName {

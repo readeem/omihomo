@@ -153,6 +153,7 @@ type server struct {
 	refreshMu     sync.Mutex
 	addAsked      map[string]time.Time
 	refreshCancel context.CancelFunc // guarded by mu; automatic refreshes only
+	refreshPauses int                // guarded by mu; pending stop or disable operations
 
 	store     *state.Store
 	fetcher   *fetch.Fetcher

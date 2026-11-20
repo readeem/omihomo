@@ -211,6 +211,15 @@ func TestSubscriptionAndSettingsCommands(t *testing.T) {
 	if code, _, _ := run(t, "", "stop"); code != cli.ExitOK {
 		t.Fatalf("stop exit %d", code)
 	}
+	if code, out, errOut := run(t, "", "group", "list"); code != cli.ExitOK || !strings.Contains(out, `"name":"Proxy"`) {
+		t.Fatalf("offline subscription groups: %d %s %s", code, out, errOut)
+	}
+	if code, out, errOut := run(t, "", "set", "group", "Elsewhere"); code != cli.ExitOK || !strings.Contains(out, `"primary_group":"Elsewhere"`) {
+		t.Fatalf("stage a primary group from another subscription: %d %s %s", code, out, errOut)
+	}
+	if code, _, errOut := run(t, "", "rule", "add", "DOMAIN", "a.example", "Elsewhere"); code != cli.ExitOK {
+		t.Fatalf("stage a rule target from another subscription: %d %s", code, errOut)
+	}
 	if code, out, _ := run(t, "", "sub", "remove", "Work"); code != cli.ExitOK || out != "" {
 		t.Fatalf("sub remove: %d %q", code, out)
 	}
