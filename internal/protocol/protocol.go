@@ -319,6 +319,7 @@ type RuleList struct {
 type Proxy struct {
 	Name  string `json:"name"`
 	Type  string `json:"type"`
+	Label string `json:"label,omitempty"`
 	Alive bool   `json:"alive"`
 	// Delay is the last measured delay in milliseconds, 0 when unknown or
 	// failed.

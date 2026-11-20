@@ -201,7 +201,7 @@ ShellRoot {
           testRoot.checkEmojiRuns(destinationFixtures)
         } },
       { name: "config types", then: function() {
-          var labels = ["URL Test", "VLESS", "Hysteria2", "Trojan", "Shadowsocks", "Direct"]
+          var labels = ["URL Test", "REALITY", "XHTTP", "WebSocket", "gRPC", "Hysteria2", "Trojan", "Shadowsocks", "Direct"]
           var positions = labels.map(function(label) {
             var item = testRoot.visibleText(panel, label)
             t.check(item !== null, true, "Configs shows " + label)

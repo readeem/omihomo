@@ -3,6 +3,7 @@ package mihomo
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -149,6 +150,62 @@ func TestGroupsFollowTheProfile(t *testing.T) {
 	}
 	if auto := groups[1]; auto.Selectable || auto.Type != "url-test" {
 		t.Errorf("Auto = %+v, want an automatic group", auto)
+	}
+}
+
+func TestGroupsLabelVLESSConfigs(t *testing.T) {
+	cfg := core.Config{Mode: protocol.ModeRule, Profile: core.Profile{
+		Proxies: []core.Proxy{{Name: "Reality", Type: "vless", Options: map[string]any{
+			"server": "127.0.0.1", "port": 1, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+			"tls": true, "servername": "proxy.example", "flow": "xtls-rprx-vision",
+			"reality-opts": map[string]any{"public-key": base64.RawURLEncoding.EncodeToString(append(make([]byte, 31), 9)), "short-id": "0123"},
+		}}},
+		Groups: []core.Group{{Name: "Proxy", Type: "select", Members: []string{"Reality"}}},
+		Rules:  []core.Rule{{Type: "MATCH", Target: "Proxy", Source: protocol.SourceSubscription}},
+	}}
+	for _, sample := range []struct{ name, network string }{
+		{"XHTTP", "xhttp"}, {"WebSocket", "ws"}, {"gRPC", "grpc"}, {"Raw", "tcp"},
+	} {
+		cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: sample.name, Type: "vless", Options: map[string]any{
+			"server": "127.0.0.1", "port": 1, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+			"tls": true, "servername": "proxy.example", "network": sample.network,
+		}})
+		cfg.Profile.Groups[0].Members = append(cfg.Profile.Groups[0].Members, sample.name)
+	}
+	cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: "Combined", Type: "vless", Options: map[string]any{
+		"server": "127.0.0.1", "port": 1, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
+		"tls": true, "servername": "proxy.example", "network": "xhttp",
+		"reality-opts": cfg.Profile.Proxies[0].Options["reality-opts"],
+	}})
+	cfg.Profile.Groups[0].Members = append(cfg.Profile.Groups[0].Members, "Combined")
+	want := []string{"REALITY", "XHTTP", "WebSocket", "gRPC", "", "XHTTP"}
+	for _, engine := range []protocol.CoreName{protocol.CoreMihomo, protocol.CoreXray} {
+		t.Run(string(engine), func(t *testing.T) {
+			cfg.Core = engine
+			c := running(t, cfg)
+			groups, err := c.Groups(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(groups)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response []struct {
+				Members []struct{ Type, Label string }
+			}
+			if err := json.Unmarshal(data, &response); err != nil {
+				t.Fatal(err)
+			}
+			if len(response) != 1 || len(response[0].Members) != len(want) {
+				t.Fatalf("groups = %s", data)
+			}
+			for i, member := range response[0].Members {
+				if member.Type != "vless" || member.Label != want[i] {
+					t.Errorf("member %d = %+v, want VLESS labeled %q", i, member, want[i])
+				}
+			}
+		})
 	}
 }
 

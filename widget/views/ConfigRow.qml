@@ -54,6 +54,7 @@ NavRow {
         maxWidth: Math.max(0, parent.width - horizontalPadding)
         text: {
           const entry = configRow.panel.service.configEntries[configRow.configName]
+          if (entry && entry.label) return entry.label
           const type = entry ? entry.type : ""
           switch (type) {
           case "ss": return "Shadowsocks"

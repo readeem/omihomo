@@ -301,6 +301,7 @@ function readGroups(data) {
       configs[text(member.name)] = {
         name: text(member.name),
         type: text(member.type),
+        label: text(member.label),
         alive: member.alive === true,
         history: delay > 0 ? [{ delay: delay }] : []
       }
