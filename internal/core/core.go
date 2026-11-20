@@ -111,8 +111,8 @@ const MaxConnections = 1000
 // Apply starts the engine on cfg, or reloads a running engine onto it. A
 // failed Apply leaves the previous config running, or the engine stopped if
 // it was; when the previous config cannot run again either, the engine
-// stops and the error wraps ErrStopped. Stop is idempotent. All other calls fail with ErrNotRunning while
-// stopped. Implementations must be safe for concurrent use.
+// stops and the error wraps ErrStopped. Stop is idempotent. Implementations
+// must be safe for concurrent use.
 type Core interface {
 	Apply(ctx context.Context, cfg Config) error
 	// Check reports why cfg would not run, without running it or changing
@@ -120,8 +120,10 @@ type Core interface {
 	Check(ctx context.Context, cfg Config) error
 	Stop(ctx context.Context) error
 
-	Groups(ctx context.Context) ([]protocol.Group, error)
-	Select(ctx context.Context, group, proxy string) error
+	// While stopped, Groups and Select use cfg without starting the engine.
+	// While running, they use the live config. An empty stopped profile returns ErrNotRunning.
+	Groups(ctx context.Context, cfg Config) ([]protocol.Group, error)
+	Select(ctx context.Context, cfg Config, group, proxy string) error
 	// TestDelay tests proxies of group, or all members other than except when
 	// proxies is empty. It returns completed probes in milliseconds, 0 for a failure.
 	TestDelay(ctx context.Context, group string, proxies []string, except string) (map[string]int, error)

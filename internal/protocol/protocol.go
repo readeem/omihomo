@@ -191,14 +191,15 @@ type Status struct {
 	ActiveSubscription string     `json:"active_subscription"`
 	// PrimaryGroup is the group whose selection is "the current proxy".
 	// Empty means the first selectable group.
-	PrimaryGroup     string `json:"primary_group"`
-	DNSDestination   string `json:"dns_destination"`
-	Mode             Mode   `json:"mode"`
-	TUN              bool   `json:"tun"`
-	TUNRedirect      bool   `json:"tun_redirect"`
-	Tailscale        bool   `json:"tailscale"`
-	TailscalePresent bool   `json:"tailscale_present"`
-	TailnetProxy     bool   `json:"tailnet_proxy"`
+	PrimaryGroup        string `json:"primary_group"`
+	DNSDestination      string `json:"dns_destination"`
+	Mode                Mode   `json:"mode"`
+	TUN                 bool   `json:"tun"`
+	TUNRedirect         bool   `json:"tun_redirect"`
+	Tailscale           bool   `json:"tailscale"`
+	TailscalePresent    bool   `json:"tailscale_present"`
+	TailnetProxy        bool   `json:"tailnet_proxy"`
+	SubscriptionUpdates bool   `json:"subscription_updates"`
 	// StartedAt is unix milliseconds of the current run, 0 when stopped. A
 	// new value means a new runtime: anything read from the old one is stale.
 	StartedAt int64 `json:"started_at"`
@@ -214,15 +215,16 @@ type StreamsArgs struct {
 // Settings are the owner's typed choices, as their settings.json holds them.
 type Settings struct {
 	// Empty preserves a preference saved before the owner file held it.
-	Core                      CoreName        `json:"core,omitempty"`
-	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
-	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
-	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`
-	Mode                      Mode            `json:"mode"`
-	TUN                       bool            `json:"tun,omitzero"`
-	TUNRedirect               bool            `json:"tun_redirect,omitzero"`
-	Tailscale                 bool            `json:"tailscale,omitzero"`
-	TailnetProxy              bool            `json:"tailnet_proxy,omitzero"`
+	Core                        CoreName        `json:"core,omitempty"`
+	CategoryTargets             CategoryTargets `json:"category_targets,omitzero"`
+	OmihomoRulesDisabled        bool            `json:"omihomo_rules_disabled,omitempty"`
+	SubscriptionRulesDisabled   bool            `json:"subscription_rules_disabled,omitempty"`
+	SubscriptionUpdatesDisabled bool            `json:"subscription_updates_disabled,omitempty"`
+	Mode                        Mode            `json:"mode"`
+	TUN                         bool            `json:"tun,omitzero"`
+	TUNRedirect                 bool            `json:"tun_redirect,omitzero"`
+	Tailscale                   bool            `json:"tailscale,omitzero"`
+	TailnetProxy                bool            `json:"tailnet_proxy,omitzero"`
 	// PrimaryGroup may name a group the active subscription lacks; the
 	// first selectable group stands in for it.
 	PrimaryGroup string `json:"primary_group,omitzero"`

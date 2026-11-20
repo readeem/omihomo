@@ -126,7 +126,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
 		}
-		groups, err := d.core.Groups(ctx)
+		groups, err := d.core.Groups(ctx, d.groupConfig())
 		if err != nil {
 			return nil, coreError(err)
 		}
@@ -229,21 +229,22 @@ func (d *server) status() protocol.Status {
 		choices = d.cfg.cores
 	}
 	return protocol.Status{
-		Core:               d.preferredCore(d.settings.Core),
-		CoreChoices:        choices,
-		State:              d.state,
-		Detail:             d.detail,
-		ActiveSubscription: active,
-		PrimaryGroup:       d.settings.PrimaryGroup,
-		DNSDestination:     d.settings.DNSDestination,
-		Mode:               d.settings.Mode,
-		TUN:                d.settings.TUN,
-		TUNRedirect:        d.settings.TUNRedirect,
-		Tailscale:          d.settings.Tailscale,
-		TailscalePresent:   d.cfg.tailscalePresent(),
-		TailnetProxy:       d.settings.TailnetProxy,
-		StartedAt:          d.startedAt,
-		TUNBypass:          routed,
+		Core:                d.preferredCore(d.settings.Core),
+		CoreChoices:         choices,
+		State:               d.state,
+		Detail:              d.detail,
+		ActiveSubscription:  active,
+		PrimaryGroup:        d.settings.PrimaryGroup,
+		DNSDestination:      d.settings.DNSDestination,
+		Mode:                d.settings.Mode,
+		TUN:                 d.settings.TUN,
+		TUNRedirect:         d.settings.TUNRedirect,
+		Tailscale:           d.settings.Tailscale,
+		TailscalePresent:    d.cfg.tailscalePresent(),
+		TailnetProxy:        d.settings.TailnetProxy,
+		SubscriptionUpdates: !d.settings.SubscriptionUpdatesDisabled,
+		StartedAt:           d.startedAt,
+		TUNBypass:           routed,
 	}
 }
 
@@ -260,7 +261,7 @@ func (d *server) snapshot(ctx context.Context, stream string) any {
 	case protocol.StreamStatus:
 		return d.status()
 	case protocol.StreamGroups:
-		groups, err := d.core.Groups(ctx)
+		groups, err := d.core.Groups(ctx, d.groupConfig())
 		if err != nil {
 			groups = []protocol.Group{}
 		}
@@ -665,11 +666,11 @@ func (d *server) selectProxy(ctx context.Context, args protocol.SelectArgs) (any
 	if err := validName("proxy", args.Proxy); err != nil {
 		return nil, err
 	}
-	if err := d.core.Select(ctx, args.Group, args.Proxy); err != nil {
+	if err := d.core.Select(ctx, d.groupConfig(), args.Group, args.Proxy); err != nil {
 		return nil, coreError(err)
 	}
 	d.publish(ctx)
-	groups, err := d.core.Groups(ctx)
+	groups, err := d.core.Groups(ctx, d.groupConfig())
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -762,7 +763,7 @@ func (d *server) egress(ctx context.Context, args protocol.EgressArgs) (any, *pr
 		if err := validName("proxy", args.Proxy); err != nil {
 			return nil, err
 		}
-		groups, err := d.core.Groups(ctx)
+		groups, err := d.core.Groups(ctx, d.groupConfig())
 		if err != nil {
 			return nil, coreError(err)
 		}

@@ -81,6 +81,25 @@ func run(t *testing.T, stdin string, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+func TestSubscriptionUpdatesSettingIsSaved(t *testing.T) {
+	serve(t, os.Getuid())
+	for _, value := range []string{"off", "on"} {
+		code, out, stderr := run(t, "", "set", "subscription-updates", value)
+		if code != 0 {
+			t.Fatalf("set %s: %d %s", value, code, stderr)
+		}
+		var status protocol.Status
+		if err := json.Unmarshal([]byte(out), &status); err != nil || status.SubscriptionUpdates != (value == "on") {
+			t.Fatalf("status after %s: %s, %v", value, out, err)
+		}
+		dir, _ := settings.Dir()
+		data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+		if err != nil || strings.Contains(string(data), `"subscription_updates_disabled": true`) != (value == "off") {
+			t.Fatalf("saved after %s: %s, %v", value, data, err)
+		}
+	}
+}
+
 func TestCommandsRunOverTheSocket(t *testing.T) {
 	serve(t, os.Getuid())
 

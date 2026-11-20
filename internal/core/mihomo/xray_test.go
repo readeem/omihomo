@@ -82,7 +82,7 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 	shared.xrayNetwork = observed
 	t.Cleanup(func() { shared.xrayNetwork = previousNetwork })
 	c := running(t, cfg)
-	groups, err := c.Groups(ctx)
+	groups, err := c.Groups(ctx, core.Config{})
 	if err != nil || len(groups) != 1 || groups[0].Type != "load-balance" {
 		t.Fatalf("groups: %+v, %v", groups, err)
 	}

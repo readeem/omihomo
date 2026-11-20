@@ -628,6 +628,16 @@ ShellRoot {
         } },
       { name: "switch back to mihomo", until: function() { return !panel.service.busy && panel.service.coreName === "mihomo" }, then: function() {
           t.check(panel.service.coreState, "on", "the proxy keeps running after switching back")
+          panel.focusRow("subscriptionUpdates")
+          panel.scrollCursorIntoView()
+          key(Qt.Key_Return)
+        } },
+      { name: "pause automatic subscription updates", until: function() { return !panel.service.busy && !panel.service.subscriptionUpdates }, then: function() {
+          t.check(panel.at("subscriptionUpdates"), true, "Enter toggles the focused update setting")
+          key(Qt.Key_Right)
+        } },
+      { name: "resume automatic subscription updates", until: function() { return !panel.service.busy && panel.service.subscriptionUpdates }, then: function() {
+          t.check(panel.service.subscriptionUpdatesActive, true, "arrow keys toggle the update setting")
         } }
     ]
   }

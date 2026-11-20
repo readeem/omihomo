@@ -19,13 +19,31 @@ ShellRoot {
   }
 
   Component.onCompleted: t.steps = [
-    { name: "connect", until: function() { return svc.ready && svc.coreState === "stopped" }, then: function() {
-        t.check(svc.proxiesLoaded, false, "a stopped proxy has no groups to load")
+    { name: "connect", until: function() { return svc.ready && svc.coreState === "stopped" && svc.proxiesLoaded }, then: function() {
+        t.check(svc.currentConfig, "Pass", "a stopped proxy shows the saved selection")
         svc.testConfig("Pass")
+        svc.testGroup("Proxy")
+        t.check(svc.pingTestsRunning, false, "a stopped proxy cannot run ping tests")
         t.check(svc.configTestState("Pass"), "", "nothing is tested while the proxy is stopped")
+        svc.selectConfig("Proxy", "Fail")
+      } },
+    { name: "offline selection", until: function() { return svc.pendingConfig === "" && svc.currentConfig === "Fail" }, then: function() {
+        t.check(svc.coreRunning, false, "choosing a config does not start the proxy")
+        t.check(svc.traceTesting, false, "choosing a config while stopped does not check egress")
+        svc.selectConfig("Proxy", "Pass")
+      } },
+    { name: "offline preference", until: function() { return svc.pendingConfig === "" && svc.currentConfig === "Pass" }, then: function() {
+        t.check(svc.subscriptionUpdatesActive, true, "automatic updates default to on")
+        svc.toggleSubscriptionUpdates()
+        t.check(svc.subscriptionUpdatesActive, false, "the update toggle changes immediately")
+      } },
+    { name: "automatic updates off", until: function() { return !svc.busy && !svc.subscriptionUpdates }, then: function() {
+        svc.toggleSubscriptionUpdates()
+      } },
+    { name: "automatic updates on", until: function() { return !svc.busy && svc.subscriptionUpdates }, then: function() {
         svc.toggleCore()
       } },
-    { name: "start", until: function() { return svc.proxiesLoaded && svc.currentConfig !== "" }, then: function() {
+    { name: "start", until: function() { return svc.apiReady && svc.proxiesLoaded && svc.currentConfig !== "" }, then: function() {
         t.check(svc.currentConfig, "Pass", "the first push shows the core's selection")
         t.check(svc.configDelay("Pass"), 40, "configs carry their last delay")
         svc.testConfig("Fail")
@@ -253,6 +271,13 @@ ShellRoot {
         t.check(svc.groups.length, 0, "a stopped proxy has no groups")
         t.check(svc.openConnections.length, 0, "a stopped proxy has no open connections")
         t.check(svc.trafficHistory.length, 0, "a stopped proxy has no traffic history")
+        svc.panelOpen = true
+      } },
+    { name: "reopen while stopped", until: function() { return svc.proxiesLoaded }, then: function() {
+        t.check(svc.groups.length, 1, "reopening a stopped proxy loads its groups")
+        svc.testConfig(svc.currentConfig)
+        svc.testGroup("Proxy")
+        t.check(svc.pingTestsRunning, false, "reopening while stopped keeps probes disabled")
       } }
   ]
 }

@@ -134,6 +134,7 @@ func TestManualRefreshCanRetryAfterDecliningScheduledDownload(t *testing.T) {
 	h := serve(t, os.Getuid(), daemon.WithTransport(transport), daemon.WithRefreshCheck(10*time.Millisecond))
 	c := h.dial(t)
 	sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: origin.url("/work")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
 	call[protocol.Empty](t, c, protocol.OpSubscribe, protocol.StreamsArgs{
 		Streams: []string{protocol.StreamDownloads, protocol.StreamSubscriptions},
 	})

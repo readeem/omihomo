@@ -644,8 +644,8 @@ func TestMalformedRequests(t *testing.T) {
 // hugeGroups is the fake core with a group list too large for one message.
 type hugeGroups struct{ *fakecore.Core }
 
-func (c hugeGroups) Groups(ctx context.Context) ([]protocol.Group, error) {
-	if _, err := c.Core.Groups(ctx); err != nil {
+func (c hugeGroups) Groups(ctx context.Context, cfg core.Config) ([]protocol.Group, error) {
+	if _, err := c.Core.Groups(ctx, core.Config{}); err != nil {
 		return nil, err
 	}
 	g := protocol.Group{Name: "Huge", Type: "select", Selectable: true}
@@ -813,7 +813,7 @@ func TestGroupChangesTheCoreMakesArePushed(t *testing.T) {
 	next(t, c, "groups")
 
 	// As an automatic group would after a health check, without a call.
-	if err := h.core.Select(context.Background(), "Proxy", "Frankfurt"); err != nil {
+	if err := h.core.Select(context.Background(), core.Config{}, "Proxy", "Frankfurt"); err != nil {
 		t.Fatal(err)
 	}
 	for {

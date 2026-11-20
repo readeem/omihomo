@@ -129,10 +129,10 @@ func (c *Core) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (c *Core) Groups(ctx context.Context) ([]protocol.Group, error) {
+func (c *Core) Groups(ctx context.Context, cfg core.Config) ([]protocol.Group, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.running {
+	if !c.running && len(cfg.Profile.Groups) == 0 {
 		return nil, core.ErrNotRunning
 	}
 	out := make([]protocol.Group, len(c.groups))
@@ -152,10 +152,10 @@ func (c *Core) group(name string) *protocol.Group {
 	return nil
 }
 
-func (c *Core) Select(ctx context.Context, group, proxy string) error {
+func (c *Core) Select(ctx context.Context, cfg core.Config, group, proxy string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.running {
+	if !c.running && len(cfg.Profile.Groups) == 0 {
 		return core.ErrNotRunning
 	}
 	g := c.group(group)

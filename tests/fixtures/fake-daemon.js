@@ -37,7 +37,7 @@ const status = {
   core: "mihomo", core_choices: ["mihomo", "xray"],
   state: "stopped", detail: "", active_subscription: "work", primary_group: "",
   mode: "rule", tun: false, tun_redirect: false, tailscale: false, tailscale_present: true,
-  tailnet_proxy: false, started_at: 0, tun_bypass: ["10.0.0.0/8", "192.168.0.0/16"]
+  tailnet_proxy: false, subscription_updates: true, started_at: 0, tun_bypass: ["10.0.0.0/8", "192.168.0.0/16"]
 }
 const delays = { Pass: 40, Fail: 50 }
 let partialDelay = false
@@ -57,7 +57,6 @@ function running() {
 }
 
 function groups() {
-  if (!running()) return { groups: [] }
   const members = Object.keys(delays).map((name) =>
     ({ name, type: "vless", alive: delays[name] > 0, delay: delays[name] }))
   return { groups: [{ ...proxy, members }] }
@@ -145,6 +144,7 @@ const ops = {
       return failure("conflict", "tailscaled is not installed")
     Object.assign(status, { mode: "rule", tun: false, tun_redirect: false, tailscale: false,
       tailnet_proxy: false, primary_group: "", dns_destination: "" }, a.settings)
+    status.subscription_updates = a.settings.subscription_updates_disabled !== true
     rules = a.rules
     publish()
     if (holdEdit) return new Promise((resolve) => { heldEdit = () => resolve({ result: { ...status } }) })
@@ -159,7 +159,6 @@ const ops = {
   },
   "groups.list": () => ({ result: groups() }),
   "groups.select": (client, a) => later(() => {
-    if (!running()) return failure("not_running", "the proxy is not running")
     if (a.group !== proxy.name || delays[a.proxy] === undefined) return failure("not_found", "not found")
     proxy.now = a.proxy
     const group = groups().groups[0]
@@ -186,7 +185,6 @@ const ops = {
     return { result: { delays: result } }
   }),
   "egress.check": (client, a) => later(() => {
-    if (!running()) return failure("not_running", "the proxy is not running")
     if (a.group !== proxy.name || a.proxy !== proxy.now) return failure("not_found", "not the selected config")
     return { result: { ip: "203.0.113.7", ipv6: "2001:db8:1234:abcd:5678:ef01:2345:6789", latency: 42 } }
   }),

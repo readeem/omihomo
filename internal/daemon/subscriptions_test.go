@@ -727,6 +727,7 @@ func TestSubscriptionsRefreshThemselves(t *testing.T) {
 	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithRefreshCheck(10*time.Millisecond))...)
 	c := h.dial(t)
 	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
 	call[protocol.Empty](t, c, protocol.OpSubscribe, protocol.StreamsArgs{Streams: []string{protocol.StreamSubscriptions}})
 	next(t, c, protocol.StreamSubscriptions)
 
@@ -753,6 +754,47 @@ func TestSubscriptionsRefreshThemselves(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestSubscriptionRefreshesPause(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{header: titled("Work"), body: workYAML})
+	clock := newClock()
+	var checks atomic.Int64
+	h := serve(t, os.Getuid(), append(o.opts(), daemon.WithRefreshCheck(time.Millisecond), daemon.WithClock(func() time.Time {
+		checks.Add(1)
+		return clock.Now()
+	}))...)
+	c := h.dial(t)
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	clock.advance(7 * time.Hour)
+	assertPaused := func() {
+		t.Helper()
+		before := checks.Load()
+		waitFor(t, func() bool { return checks.Load() >= before+3 })
+		if n := o.count("/work"); n != 1 {
+			t.Fatalf("paused subscription downloaded %d times", n)
+		}
+	}
+	assertPaused()
+	args := owned(protocol.Settings{SubscriptionUpdatesDisabled: true})
+	call[protocol.Status](t, c, protocol.OpApply, args)
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	assertPaused()
+	h.restart(t)
+	c = h.dial(t)
+	if st := call[protocol.Status](t, c, protocol.OpStatus, nil); st.SubscriptionUpdates {
+		t.Fatal("restart re-enabled automatic updates")
+	}
+	assertPaused()
+	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: "Work"})
+	if n := o.count("/work"); n != 2 {
+		t.Fatalf("manual update with automatic updates disabled: %d requests", n)
+	}
+	clock.advance(7 * time.Hour)
+	args.Settings.SubscriptionUpdatesDisabled = false
+	call[protocol.Status](t, c, protocol.OpApply, args)
+	waitFor(t, func() bool { return o.count("/work") == 3 })
 }
 
 func TestSettingsRulesAndTheRunningStateSurviveARestart(t *testing.T) {

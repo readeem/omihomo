@@ -29,6 +29,7 @@ import (
 	"github.com/dlclark/regexp2"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/component/process"
+	mihomoprofile "github.com/metacubex/mihomo/component/profile"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/config"
@@ -119,6 +120,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 		log = slog.Default()
 	}
 	constant.SetHomeDir(home)
+	mihomoprofile.StoreSelected.Store(true)
 	c := &Core{historyDir: home, log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}
 	statistic.SetConnectionObserver(c.observeConnection)
 	return c, nil
@@ -509,12 +511,27 @@ func (c *Core) group(name string) (outboundgroup.ProxyGroup, error) {
 	return g, nil
 }
 
-func (c *Core) Groups(ctx context.Context) ([]protocol.Group, error) {
+func (c *Core) Groups(ctx context.Context, cfg core.Config) ([]protocol.Group, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	names, entries, err := c.state()
-	if err != nil {
+	proxies := tunnel.Proxies()
+	if errors.Is(err, core.ErrNotRunning) && len(cfg.Profile.Groups) > 0 {
+		rt, err := prepare(cfg)
+		if err != nil {
+			return nil, err
+		}
+		names, entries, proxies = rt.groups, rt.members, rt.parsed.Proxies
+		for name, selected := range cachefile.Cache().SelectedMap() {
+			if p := proxies[name]; p != nil {
+				if selector, ok := p.Adapter().(outboundgroup.SelectAble); ok {
+					selector.ForceSet(selected)
+				}
+			}
+		}
+	} else if err != nil {
 		return nil, err
 	}
-	proxies := tunnel.Proxies()
 	out := make([]protocol.Group, 0, len(names))
 	for _, name := range names {
 		p, ok := proxies[name]
@@ -550,13 +567,23 @@ func member(p constant.Proxy, entries map[string]protocol.Proxy) protocol.Proxy 
 	return out
 }
 
-func (c *Core) Select(ctx context.Context, group, proxy string) error {
+func (c *Core) Select(ctx context.Context, cfg core.Config, group, proxy string) error {
 	// A reload in between would restore the cached choice into a new
 	// selector before this one is cached.
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
 	g, err := c.group(group)
-	if err != nil {
+	if errors.Is(err, core.ErrNotRunning) && len(cfg.Profile.Groups) > 0 {
+		rt, err := prepare(cfg)
+		if err != nil {
+			return err
+		}
+		p := rt.parsed.Proxies[group]
+		if p == nil || !slices.Contains(rt.groups, group) {
+			return fmt.Errorf("group %q: %w", group, core.ErrNotFound)
+		}
+		g, _ = p.Adapter().(outboundgroup.ProxyGroup)
+	} else if err != nil {
 		return err
 	}
 	selector, ok := g.(*outboundgroup.Selector)

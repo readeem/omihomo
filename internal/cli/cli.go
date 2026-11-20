@@ -309,6 +309,16 @@ func (a *app) setCommand() *ffcli.Command {
 					return nil
 				}, nil
 			}),
+		setting("subscription-updates", "<on|off>", "automatically update subscriptions while the proxy is on",
+			func(v string) (change, error) {
+				if v != "on" && v != "off" {
+					return nil, fmt.Errorf("set subscription-updates takes on or off")
+				}
+				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
+					s.Settings.SubscriptionUpdatesDisabled = v == "off"
+					return nil
+				}, nil
+			}),
 		setting("mode", "<rule|global|direct>", "route by rules, everything through the proxy, or nothing",
 			func(v string) (change, error) {
 				return func(_ context.Context, _ *client.Client, s *protocol.ApplyArgs) error {
