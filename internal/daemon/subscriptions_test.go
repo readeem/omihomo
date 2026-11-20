@@ -797,6 +797,29 @@ func TestSubscriptionRefreshesPause(t *testing.T) {
 	waitFor(t, func() bool { return o.count("/work") == 3 })
 }
 
+func TestSubscriptionUpdatePreferenceDoesNotRequireRouting(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(fmt.Sprint(running), func(t *testing.T) {
+			o := newOrigin(t)
+			o.set("/work", page{body: workYAML})
+			h := serve(t, os.Getuid(), o.opts()...)
+			c := h.dial(t)
+			call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+			if running {
+				call[protocol.Status](t, c, protocol.OpStart, nil)
+			}
+			h.core.FailApply(fmt.Errorf("routing unavailable"))
+			h.core.FailCheck(fmt.Errorf("geodata unavailable"))
+			for _, disabled := range []bool{true, false} {
+				st := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{SubscriptionUpdatesDisabled: disabled}))
+				if st.SubscriptionUpdates == disabled || (st.State == protocol.StateOn) != running {
+					t.Fatalf("schedule preference changed routing: %+v", st)
+				}
+			}
+		})
+	}
+}
+
 func TestSettingsRulesAndTheRunningStateSurviveARestart(t *testing.T) {
 	o := newOrigin(t)
 	o.set("/work", page{body: workYAML})

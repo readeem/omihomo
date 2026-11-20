@@ -228,12 +228,17 @@ func TestSelect(t *testing.T) {
 
 func TestConfigsCanBeSelectedWhileStopped(t *testing.T) {
 	cfg := testConfig()
+	cfg.Profile.Groups[0].Name = "Offline selection"
+	cfg.Profile.Rules = []core.Rule{{Type: "MATCH", Target: "Offline selection"}}
 	c := shared
 	groups, err := c.Groups(t.Context(), cfg)
 	if err != nil || len(groups) != 2 || groups[0].Members[1].Name != "Dead" {
 		t.Fatalf("offline groups: %+v, %v", groups, err)
 	}
-	if err := c.Select(t.Context(), cfg, "Proxy", "Dead"); err != nil {
+	if groups[0].Now != "Local" {
+		t.Fatalf("initial offline selection: %+v", groups[0])
+	}
+	if err := c.Select(t.Context(), cfg, "Offline selection", "Dead"); err != nil {
 		t.Fatal(err)
 	}
 	groups, err = c.Groups(t.Context(), cfg)
@@ -250,6 +255,24 @@ func TestConfigsCanBeSelectedWhileStopped(t *testing.T) {
 	groups, err = c.Groups(t.Context(), cfg)
 	if err != nil || groups[0].Now != "Dead" {
 		t.Fatalf("selection after start: %+v, %v", groups, err)
+	}
+}
+
+func TestOfflineConfigsDoNotRequireRoutingData(t *testing.T) {
+	cfg := testConfig()
+	cfg.Profile.Groups[0].Name = "Without routing data"
+	cfg.Profile.Rules = []core.Rule{{Type: "GEOSITE", Value: "missing", Target: "DIRECT"}}
+	cfg.DNSDestination = "Unavailable destination"
+	groups, err := shared.Groups(t.Context(), cfg)
+	if err != nil || len(groups) != 2 || groups[0].Now != "Local" {
+		t.Fatalf("offline groups without routing data: %+v, %v", groups, err)
+	}
+	if err := shared.Select(t.Context(), cfg, "Without routing data", "Dead"); err != nil {
+		t.Fatal(err)
+	}
+	groups, err = shared.Groups(t.Context(), cfg)
+	if err != nil || groups[0].Now != "Dead" {
+		t.Fatalf("offline selection without routing data: %+v, %v", groups, err)
 	}
 }
 

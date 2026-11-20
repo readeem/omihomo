@@ -350,6 +350,9 @@ func (d *server) setState(state, detail string) {
 	defer d.mu.Unlock()
 	d.state = state
 	d.detail = detail
+	if state != protocol.StateOn && state != protocol.StateDegraded && d.refreshCancel != nil {
+		d.refreshCancel()
+	}
 	switch state {
 	case protocol.StateOn:
 		if d.startedAt == 0 {
@@ -463,6 +466,9 @@ func (d *server) saveSettings(next state.Settings) *protocol.Error {
 	}
 	d.mu.Lock()
 	d.settings = next
+	if next.SubscriptionUpdatesDisabled && d.refreshCancel != nil {
+		d.refreshCancel()
+	}
 	d.mu.Unlock()
 	return nil
 }
@@ -608,6 +614,20 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	} else if err := d.checkCore(in.Core); err != nil {
 		return nil, err
 	}
+	rules := protocol.PruneCategories(args.Rules)
+	current := next.Settings
+	current.Core = in.Core
+	current.SubscriptionUpdatesDisabled = in.SubscriptionUpdatesDisabled
+	if in == current && reflect.DeepEqual(rules, next.Rules) && d.preferredCore(in.Core) == d.preferredCore(next.Core) {
+		if in != next.Settings {
+			next.Settings = in
+			if err := d.saveSettings(next); err != nil {
+				return nil, err
+			}
+			d.publish(ctx)
+		}
+		return d.status(), nil
+	}
 	if in.DNSDestination != "" && (in.DNSDestination == "GLOBAL" || !(slices.ContainsFunc(p.Groups, func(g core.Group) bool { return g.Name == in.DNSDestination }) || slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == in.DNSDestination }))) {
 		return nil, fail(protocol.CodeNotFound, "DNS destination %q is unavailable in the active subscription", in.DNSDestination)
 	}
@@ -615,18 +635,6 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	// still apply after tailscaled is gone.
 	if (in.Tailscale && !next.Tailscale || in.TailnetProxy && !next.TailnetProxy) && !d.cfg.tailscalePresent() {
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
-	}
-	rules := protocol.PruneCategories(args.Rules)
-	current := next.Settings
-	current.Core = in.Core
-	if in == current && reflect.DeepEqual(rules, next.Rules) && d.preferredCore(in.Core) == d.preferredCore(next.Core) {
-		if in.Core != next.Core {
-			next.Core = in.Core
-			if err := d.saveSettings(next); err != nil {
-				return nil, err
-			}
-		}
-		return d.status(), nil
 	}
 	next.Settings, next.Rules = in, rules
 	if err := d.commitSettings(ctx, next, p); err != nil {

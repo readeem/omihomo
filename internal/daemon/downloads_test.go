@@ -158,6 +158,53 @@ func TestManualRefreshCanRetryAfterDecliningScheduledDownload(t *testing.T) {
 	}
 }
 
+func TestPausingScheduledRefreshCancelsItsApproval(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disable updates", true: "stop proxy"}[stop], func(t *testing.T) {
+			o := newOrigin(t)
+			o.set("/work", page{body: workYAML, header: titled("Work")})
+			transport := fetch.RoutedTransport(func(context.Context, string, string) (net.Conn, error) {
+				return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+			}, (&net.Dialer{}).DialContext)
+			transport.TLSClientConfig.RootCAs = o.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+			h := serve(t, os.Getuid(), daemon.WithTransport(transport), daemon.WithRefreshCheck(time.Millisecond))
+			c, watcher := h.dial(t), h.dial(t)
+			sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+			call[protocol.Status](t, c, protocol.OpStart, nil)
+			call[protocol.Empty](t, watcher, protocol.OpSubscribe, protocol.StreamsArgs{Streams: []string{protocol.StreamDownloads}})
+			h.clock.advance(time.Duration(sub.Interval) * time.Second)
+			pending := nextDownload(t, watcher)
+			if stop {
+				call[protocol.Status](t, c, protocol.OpStop, nil)
+			} else {
+				call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{SubscriptionUpdatesDisabled: true}))
+			}
+			waitFor(t, func() bool { return len(call[protocol.DownloadList](t, c, protocol.OpDownloads, nil).Downloads) == 0 })
+			if err := callErr(t, c, protocol.OpDownloadDecision, protocol.DownloadDecisionArgs{ID: pending.ID, Allow: true}); err.Code != protocol.CodeNotFound {
+				t.Fatalf("cancelled approval remained usable: %v", err)
+			}
+			after := call[protocol.SubscriptionList](t, c, protocol.OpSubscriptions, nil).Subscriptions[0]
+			if after.UpdatedAt != sub.UpdatedAt || after.NextUpdate != sub.NextUpdate || after.Error != sub.Error {
+				t.Fatalf("cancelling changed retry state: before=%+v after=%+v", sub, after)
+			}
+			done := make(chan error, 1)
+			go func() {
+				done <- c.Call(t.Context(), protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: "Work"}, nil)
+			}()
+			manual := nextDownload(t, watcher)
+			call[protocol.Empty](t, watcher, protocol.OpDownloadDecision, protocol.DownloadDecisionArgs{ID: manual.ID, Allow: true})
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("manual refresh blocked behind cancelled scheduled refresh")
+			}
+		})
+	}
+}
+
 func TestPolicyRefusalNeverRequestsDirectApproval(t *testing.T) {
 	transport := fetch.RoutedTransport(func(context.Context, string, string) (net.Conn, error) {
 		return nil, &net.OpError{Op: "dial", Err: uplink.ErrDownloadAddress}

@@ -316,6 +316,17 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		sub = d.subs.List[i]
 	}
 	paused := !manual && (d.settings.SubscriptionUpdatesDisabled || (d.state != protocol.StateOn && d.state != protocol.StateDegraded))
+	if !manual && !paused {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		d.refreshCancel = cancel
+		defer func() {
+			cancel()
+			d.mu.Lock()
+			d.refreshCancel = nil
+			d.mu.Unlock()
+		}()
+	}
 	d.mu.Unlock()
 	if paused {
 		return nil, nil
@@ -335,6 +346,9 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	dl, derr := d.download(ctx, sub.Name, sub.URL)
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	if !manual && ctx.Err() != nil {
+		return nil, nil
+	}
 	now := d.cfg.now()
 	interval := time.Duration(sub.IntervalSeconds) * time.Second
 	if derr != nil {

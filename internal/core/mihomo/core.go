@@ -346,6 +346,13 @@ func prepare(cfg core.Config) (*runtime, error) {
 	return rt, nil
 }
 
+func prepareGroups(cfg core.Config) (*runtime, error) {
+	return prepare(core.Config{
+		Mode: protocol.ModeRule, PrimaryGroup: cfg.PrimaryGroup,
+		Profile: core.Profile{Proxies: cfg.Profile.Proxies, Groups: cfg.Profile.Groups},
+	})
+}
+
 // parse parses raw without letting the running engine see any of it.
 // mihomo applies a config's general settings to the live engine while it
 // parses, so that geodata loads by them, and rolls them back afterwards.
@@ -517,7 +524,7 @@ func (c *Core) Groups(ctx context.Context, cfg core.Config) ([]protocol.Group, e
 	names, entries, err := c.state()
 	proxies := tunnel.Proxies()
 	if errors.Is(err, core.ErrNotRunning) && len(cfg.Profile.Groups) > 0 {
-		rt, err := prepare(cfg)
+		rt, err := prepareGroups(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -574,7 +581,7 @@ func (c *Core) Select(ctx context.Context, cfg core.Config, group, proxy string)
 	defer c.applyMu.Unlock()
 	g, err := c.group(group)
 	if errors.Is(err, core.ErrNotRunning) && len(cfg.Profile.Groups) > 0 {
-		rt, err := prepare(cfg)
+		rt, err := prepareGroups(cfg)
 		if err != nil {
 			return err
 		}

@@ -634,10 +634,26 @@ ShellRoot {
         } },
       { name: "pause automatic subscription updates", until: function() { return !panel.service.busy && !panel.service.subscriptionUpdates }, then: function() {
           t.check(panel.at("subscriptionUpdates"), true, "Enter toggles the focused update setting")
+          panel.service.toggleCore()
+        } },
+      { name: "paused preference while stopped", until: function() { return !panel.service.busy && !panel.service.coreRunning }, then: function() {
+          t.check(panel.service.subscriptionUpdatesActive, false, "stopping retains the paused preference")
+          panel.service.toggleCore()
+        } },
+      { name: "paused preference after start", until: function() { return !panel.service.busy && panel.service.coreRunning }, then: function() {
+          t.check(panel.service.subscriptionUpdatesActive, false, "starting retains the paused preference")
           key(Qt.Key_Right)
         } },
       { name: "resume automatic subscription updates", until: function() { return !panel.service.busy && panel.service.subscriptionUpdates }, then: function() {
           t.check(panel.service.subscriptionUpdatesActive, true, "arrow keys toggle the update setting")
+          panel.service.receive(JSON.stringify({ type: "event", stream: "status",
+            data: { state: "stopped", active_subscription: "", mode: "rule" } }))
+          panel.service.receive(JSON.stringify({ type: "event", stream: "groups", data: { groups: [] } }))
+          panel.openView("configs")
+        } },
+      { name: "fresh installation", then: function() {
+          t.check(testRoot.visibleText(panel, "Add and activate a subscription in Subs to browse its configs.") !== null,
+            true, "an empty installation explains how to get configs")
         } }
     ]
   }

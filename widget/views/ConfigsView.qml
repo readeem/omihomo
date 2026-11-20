@@ -48,12 +48,11 @@ ColumnLayout {
 
   PanelText {
     theme: view.theme
-    visible: !view.panel.configsReady || (view.service.proxiesLoaded && view.panel.visibleGroups.length === 0)
+    visible: view.service.activeSubscription === "" || !view.panel.configsReady
+      || (view.service.proxiesLoaded && view.panel.visibleGroups.length === 0)
     Layout.fillWidth: true
-    text: !view.panel.configsReady
-      ? (view.service.activeSubscription === "" ? "Add and activate a subscription in Subs to browse its configs."
-        : "Loading configs…")
-      : "This subscription declares no groups."
+    text: view.service.activeSubscription === "" ? "Add and activate a subscription in Subs to browse its configs."
+      : (!view.panel.configsReady ? "Loading configs…" : "This subscription declares no groups.")
     color: view.theme.dim
     font.pixelSize: Style.font.body
     wrapMode: Text.WordWrap

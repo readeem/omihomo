@@ -171,7 +171,7 @@ const ops = {
     return { result: {} }
   },
   start: () => later(400, () => {
-    Object.assign(status, { subscription_updates: true, state: "on", detail: "", started_at: Date.now() })
+    Object.assign(status, { state: "on", detail: "", started_at: Date.now() })
     push("status", "rules")
     return { result: status }
   }),
