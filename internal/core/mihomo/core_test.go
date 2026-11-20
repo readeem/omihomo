@@ -3,7 +3,6 @@ package mihomo
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -178,7 +177,12 @@ func TestGroupsLabelVLESSConfigs(t *testing.T) {
 		"reality-opts": cfg.Profile.Proxies[0].Options["reality-opts"],
 	}})
 	cfg.Profile.Groups[0].Members = append(cfg.Profile.Groups[0].Members, "Combined")
-	want := []string{"REALITY", "XHTTP", "WebSocket", "gRPC", "", "XHTTP"}
+	cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: "Incomplete Reality", Type: "vless", Options: map[string]any{
+		"server": "127.0.0.1", "port": 1, "uuid": "92d696db-0166-464e-91bb-b65f72b3d665", "tls": true,
+		"reality-opts": map[string]any{"public-key": "", "short-id": "0123"},
+	}})
+	cfg.Profile.Groups[0].Members = append(cfg.Profile.Groups[0].Members, "Incomplete Reality")
+	want := []string{"REALITY", "XHTTP", "WebSocket", "gRPC", "", "XHTTP", ""}
 	for _, engine := range []protocol.CoreName{protocol.CoreMihomo, protocol.CoreXray} {
 		t.Run(string(engine), func(t *testing.T) {
 			cfg.Core = engine
@@ -187,20 +191,10 @@ func TestGroupsLabelVLESSConfigs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := json.Marshal(groups)
-			if err != nil {
-				t.Fatal(err)
+			if len(groups) != 1 || len(groups[0].Members) != len(want) {
+				t.Fatalf("groups = %+v", groups)
 			}
-			var response []struct {
-				Members []struct{ Type, Label string }
-			}
-			if err := json.Unmarshal(data, &response); err != nil {
-				t.Fatal(err)
-			}
-			if len(response) != 1 || len(response[0].Members) != len(want) {
-				t.Fatalf("groups = %s", data)
-			}
-			for i, member := range response[0].Members {
+			for i, member := range groups[0].Members {
 				if member.Type != "vless" || member.Label != want[i] {
 					t.Errorf("member %d = %+v, want VLESS labeled %q", i, member, want[i])
 				}

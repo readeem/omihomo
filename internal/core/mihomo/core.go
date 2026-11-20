@@ -309,14 +309,15 @@ func prepare(cfg core.Config) (*runtime, error) {
 		if p.Type == "vless" {
 			network, _ := p.Options["network"].(string)
 			switch network {
-			case "xhttp", "splithttp":
+			case "xhttp":
 				label = "XHTTP"
-			case "ws", "websocket":
+			case "ws":
 				label = "WebSocket"
 			case "grpc":
 				label = "gRPC"
 			default:
-				if reality, ok := p.Options["reality-opts"].(map[string]any); ok && len(reality) > 0 {
+				reality, _ := p.Options["reality-opts"].(map[string]any)
+				if key, _ := reality["public-key"].(string); key != "" {
 					label = "REALITY"
 				}
 			}
