@@ -136,6 +136,16 @@ test("groups read in the config's order, with their members as configs", () => {
   assert.equal(parsed.configs.Proxy, undefined)
 })
 
+test("configs retain their display label separately from the protocol", () => {
+  const parsed = Model.readGroups({ groups: [{ name: "Proxy", members: [
+    { name: "Labeled", type: "vless", label: "REALITY" },
+    { name: "Plain", type: "vless" }
+  ] }] })
+  assert.equal(parsed.configs.Labeled.type, "vless")
+  assert.equal(parsed.configs.Labeled.label, "REALITY")
+  assert.equal(parsed.configs.Plain.label, "")
+})
+
 test("provider configs resolve through their owning group", () => {
   const groups = [{ name: "Proxy", all: ["Poland", "France"] }]
   assert.equal(Model.groupForConfig(groups, "Poland"), "Proxy")

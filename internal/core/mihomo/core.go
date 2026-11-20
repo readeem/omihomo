@@ -252,16 +252,13 @@ func started(cfg core.Config, logged []string) error {
 	return nil
 }
 
-// runtime is a parsed config and what the core reports about it: rules in
-// match order with their sources, the groups in profile order, and the type
-// each proxy and group was given.
 type runtime struct {
-	xray   *xray.Outbounds
-	cfg    core.Config
-	parsed *config.Config
-	rules  []protocol.Rule
-	groups []string
-	types  map[string]string
+	xray    *xray.Outbounds
+	cfg     core.Config
+	parsed  *config.Config
+	rules   []protocol.Rule
+	groups  []string
+	members map[string]protocol.Proxy
 }
 
 func prepare(cfg core.Config) (*runtime, error) {
@@ -303,15 +300,33 @@ func prepare(cfg core.Config) (*runtime, error) {
 			return nil, fmt.Errorf("rule set %q: %d of its %d lines do not parse", rs.Name, want-got, want)
 		}
 	}
-	rt := &runtime{cfg: cfg, parsed: parsed, rules: rules, types: map[string]string{
-		"DIRECT": "direct", "REJECT": "reject", "REJECT-DROP": "reject-drop", "PASS": "pass", "COMPATIBLE": "compatible",
+	rt := &runtime{cfg: cfg, parsed: parsed, rules: rules, members: map[string]protocol.Proxy{
+		"DIRECT": {Type: "direct"}, "REJECT": {Type: "reject"}, "REJECT-DROP": {Type: "reject-drop"},
+		"PASS": {Type: "pass"}, "COMPATIBLE": {Type: "compatible"},
 	}}
 	for _, p := range cfg.Profile.Proxies {
-		rt.types[p.Name] = p.Type
+		label := ""
+		if p.Type == "vless" {
+			network, _ := p.Options["network"].(string)
+			switch network {
+			case "xhttp":
+				label = "XHTTP"
+			case "ws":
+				label = "WebSocket"
+			case "grpc":
+				label = "gRPC"
+			default:
+				reality, _ := p.Options["reality-opts"].(map[string]any)
+				if key, _ := reality["public-key"].(string); key != "" {
+					label = "REALITY"
+				}
+			}
+		}
+		rt.members[p.Name] = protocol.Proxy{Type: p.Type, Label: label}
 	}
 	for _, g := range cfg.Profile.Groups {
 		if g.Name != globalGroup {
-			rt.types[g.Name] = g.Type
+			rt.members[g.Name] = protocol.Proxy{Type: g.Type}
 			rt.groups = append(rt.groups, g.Name)
 		}
 	}
@@ -448,13 +463,13 @@ func closeAll() {
 }
 
 // state returns the running config's description, or ErrNotRunning.
-func (c *Core) state() (groups []string, types map[string]string, err error) {
+func (c *Core) state() (groups []string, members map[string]protocol.Proxy, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.running {
 		return nil, nil, core.ErrNotRunning
 	}
-	return c.current.groups, c.current.types, nil
+	return c.current.groups, c.current.members, nil
 }
 
 func (c *Core) group(name string) (outboundgroup.ProxyGroup, error) {
@@ -477,7 +492,7 @@ func (c *Core) group(name string) (outboundgroup.ProxyGroup, error) {
 }
 
 func (c *Core) Groups(ctx context.Context) ([]protocol.Group, error) {
-	names, types, err := c.state()
+	names, entries, err := c.state()
 	if err != nil {
 		return nil, err
 	}
@@ -494,22 +509,22 @@ func (c *Core) Groups(ctx context.Context) ([]protocol.Group, error) {
 		}
 		_, selectable := g.(*outboundgroup.Selector)
 		members := g.Proxies()
-		group := protocol.Group{Name: name, Type: types[name], Now: g.Now(), Selectable: selectable,
+		group := protocol.Group{Name: name, Type: entries[name].Type, Now: g.Now(), Selectable: selectable,
 			Members: make([]protocol.Proxy, 0, len(members))}
 		for _, m := range members {
-			group.Members = append(group.Members, member(m, types))
+			group.Members = append(group.Members, member(m, entries))
 		}
 		out = append(out, group)
 	}
 	return out, nil
 }
 
-func member(p constant.Proxy, types map[string]string) protocol.Proxy {
-	typ, ok := types[p.Name()]
+func member(p constant.Proxy, entries map[string]protocol.Proxy) protocol.Proxy {
+	out, ok := entries[p.Name()]
 	if !ok {
-		typ = strings.ToLower(p.Type().String())
+		out.Type = strings.ToLower(p.Type().String())
 	}
-	out := protocol.Proxy{Name: p.Name(), Type: typ, Alive: p.AliveForTestUrl("")}
+	out.Name, out.Alive = p.Name(), p.AliveForTestUrl("")
 	if history := p.DelayHistory(); len(history) > 0 && out.Alive {
 		// A test faster than a millisecond still measured something.
 		out.Delay = max(1, int(history[len(history)-1].Delay))
