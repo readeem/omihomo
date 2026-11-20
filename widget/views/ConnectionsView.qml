@@ -47,19 +47,21 @@ ColumnLayout {
       Style.space(22) * Math.max(view.panel.flows.sources.length, view.panel.flows.targets.length))
   }
 
-  SectionLine {
-    theme: view.theme
-    Layout.fillWidth: true
-    title: "OPEN · " + view.service.openConnectionCount
-    note: view.service.openConnections.length < view.service.openConnectionCount ? "Showing " + view.service.openConnections.length : "bar = bytes, log scale"
-  }
-
-  SectionLine {
+  PanelText {
     theme: view.theme
     Layout.fillWidth: true
     visible: !!view.service.connectionSummary.session
-    title: "CLOSED · " + (view.service.connectionSummary.closed || 0)
-      + "     BLOCKED · " + (view.service.connectionSummary.blocked || 0)
+    color: view.theme.dim
+    wrapMode: Text.NoWrap
+    fontSizeMode: Text.HorizontalFit
+    minimumPixelSize: Style.font.caption
+    text: {
+      var open = view.service.openConnectionCount
+      var shown = view.service.openConnections.length
+      return "Open " + open + (shown < open ? " (" + shown + " shown)" : "")
+        + "   ·   Closed " + (view.service.connectionSummary.closed || 0)
+        + "   ·   Blocked " + (view.service.connectionSummary.blocked || 0)
+    }
   }
 
   PanelText {
