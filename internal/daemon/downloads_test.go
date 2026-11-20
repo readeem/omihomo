@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -233,6 +234,56 @@ func TestPausingScheduledRefreshCancelsItsApproval(t *testing.T) {
 				t.Fatal("manual refresh blocked behind cancelled scheduled refresh")
 			}
 		})
+	}
+}
+
+type validatingGeodata struct {
+	*fakecore.Core
+	entered, release chan struct{}
+}
+
+func (c *validatingGeodata) InstallGeodata(f core.GeodataFile, path string, p core.Profile) error {
+	close(c.entered)
+	<-c.release
+	return c.Core.InstallGeodata(f, path, p)
+}
+
+func TestCancelledRefreshDoesNotApplyAfterGeodataValidation(t *testing.T) {
+	o := newOrigin(t)
+	o.set("/work", page{body: workYAML, header: titled("Work")})
+	o.set("/geoip.metadb", page{body: "geodata"})
+	geoip := filepath.Join(t.TempDir(), "geoip.metadb")
+	c0 := &validatingGeodata{Core: fakecore.New(), entered: make(chan struct{}), release: make(chan struct{})}
+	c0.SetGeodata(func(p core.Profile) []core.GeodataFile {
+		if slices.ContainsFunc(p.Rules, func(r core.Rule) bool { return r.Type == "GEOIP" }) {
+			return []core.GeodataFile{{Path: geoip, URL: o.URL + "/geoip.metadb"}}
+		}
+		return nil
+	})
+	h := serveCore(t, os.Getuid(), c0, append(o.opts(), daemon.WithRefreshCheck(time.Millisecond))...)
+	unblock := sync.OnceFunc(func() { close(c0.release) })
+	t.Cleanup(unblock)
+	c := h.dial(t)
+	sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
+	call[protocol.Status](t, c, protocol.OpStart, nil)
+	o.set("/work", page{body: strings.Replace(workYAML, "  - MATCH,Proxy", "  - GEOIP,NL,DIRECT\n  - MATCH,Proxy", 1), header: titled("Work")})
+	h.clock.advance(time.Duration(sub.Interval) * time.Second)
+	select {
+	case <-c0.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled refresh did not validate geodata")
+	}
+	h.cancel()
+	unblock()
+	h.shutdown(t)
+	if cfg, _ := c0.Config(); slices.ContainsFunc(cfg.Profile.Rules, func(r core.Rule) bool { return r.Type == "GEOIP" }) {
+		t.Fatal("cancelled refresh applied new content after validation")
+	}
+	h.clock.advance(-time.Duration(sub.Interval) * time.Second)
+	h.restart(t)
+	after := call[protocol.SubscriptionList](t, h.dial(t), protocol.OpSubscriptions, nil).Subscriptions[0]
+	if after.UpdatedAt != sub.UpdatedAt || after.NextUpdate != sub.NextUpdate || after.Error != sub.Error {
+		t.Fatalf("cancelled refresh changed saved retry state: before=%+v after=%+v", sub, after)
 	}
 }
 

@@ -377,6 +377,7 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		d.publish(ctx)
 		return nil, err
 	}
+	// Once applied, finish saving even if cancellation arrives at the commit point.
 	if err := d.store.SaveSnapshot(id, dl.snap); err != nil {
 		if active && !d.rollback(ctx, settings, prev) {
 			d.mu.Lock()

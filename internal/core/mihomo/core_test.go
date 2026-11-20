@@ -230,6 +230,11 @@ func TestConfigsCanBeSelectedWhileStopped(t *testing.T) {
 	cfg := testConfig()
 	cfg.Profile.Groups[0].Name = "Offline selection"
 	cfg.Profile.Rules = []core.Rule{{Type: "MATCH", Target: "Offline selection"}}
+	t.Cleanup(func() {
+		if err := shared.Select(context.Background(), cfg, "Offline selection", "Local"); err != nil {
+			t.Error(err)
+		}
+	})
 	c := shared
 	groups, err := c.Groups(t.Context(), cfg)
 	if err != nil || len(groups) != 2 || groups[0].Members[1].Name != "Dead" {
@@ -263,6 +268,11 @@ func TestOfflineConfigsDoNotRequireRoutingData(t *testing.T) {
 	cfg.Profile.Groups[0].Name = "Without routing data"
 	cfg.Profile.Rules = []core.Rule{{Type: "GEOSITE", Value: "missing", Target: "DIRECT"}}
 	cfg.DNSDestination = "Unavailable destination"
+	t.Cleanup(func() {
+		if err := shared.Select(context.Background(), cfg, "Without routing data", "Local"); err != nil {
+			t.Error(err)
+		}
+	})
 	groups, err := shared.Groups(t.Context(), cfg)
 	if err != nil || len(groups) != 2 || groups[0].Now != "Local" {
 		t.Fatalf("offline groups without routing data: %+v, %v", groups, err)

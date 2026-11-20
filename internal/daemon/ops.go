@@ -555,6 +555,9 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 		if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 			return fail(protocol.CodeFetch, "%v", err)
 		}
+		if err := ctx.Err(); err != nil {
+			return coreError(err)
+		}
 		if err := d.core.Check(ctx, cfg); err != nil {
 			return fail(protocol.CodeCore, "the core would not run it: %v", err)
 		}
@@ -562,6 +565,9 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 	}
 	cfg := d.runConfig(next, p)
 	err := d.ensureGeodata(ctx, d.core, cfg.Profile)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err == nil {
 		err = d.core.Apply(ctx, cfg)
 	}
@@ -587,6 +593,9 @@ func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Pro
 	cfg := d.runConfig(s, p)
 	if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 		return fail(protocol.CodeFetch, "%v", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return coreError(err)
 	}
 	if err := d.core.Check(ctx, cfg); err != nil {
 		return fail(protocol.CodeRejected, "the core would not run it: %v", err)

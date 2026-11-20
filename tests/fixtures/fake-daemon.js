@@ -185,6 +185,7 @@ const ops = {
     return { result: { delays: result } }
   }),
   "egress.check": (client, a) => later(() => {
+    if (!running()) return failure("not_running", "the proxy is not running")
     if (a.group !== proxy.name || a.proxy !== proxy.now) return failure("not_found", "not the selected config")
     return { result: { ip: "203.0.113.7", ipv6: "2001:db8:1234:abcd:5678:ef01:2345:6789", latency: 42 } }
   }),
