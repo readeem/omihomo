@@ -22,6 +22,8 @@ NavRow {
   onActivated: panel.chooseConfigAt(configRow.rowIndex)
 
   RowLayout {
+    id: row
+
     anchors.fill: parent
     anchors.leftMargin: Style.space(10)
     anchors.rightMargin: Style.space(4)
@@ -37,8 +39,10 @@ NavRow {
       bold: configRow.selected
     }
     Item {
-      implicitWidth: protocolTag.maxWidth + Style.space(10)
+      implicitWidth: Math.max(0, Math.min(configRow.protocolLabelWidth + Style.space(10),
+        row.width - configRow.latencyColumnWidth - latencyAction.implicitWidth - 3 * row.spacing - 3 * Style.font.body))
       implicitHeight: protocolTag.implicitHeight
+      visible: implicitWidth > Style.space(10)
 
       Tag {
         id: protocolTag
@@ -47,7 +51,7 @@ NavRow {
         anchors.verticalCenter: parent.verticalCenter
         visible: text !== ""
         tint: Util.alpha(theme.foreground, 0.8)
-        maxWidth: configRow.protocolLabelWidth
+        maxWidth: Math.max(0, parent.width - Style.space(10))
         text: {
           const entry = configRow.panel.service.configEntries[configRow.configName]
           const type = entry ? entry.type : ""
@@ -106,6 +110,8 @@ NavRow {
     }
 
     InlineAction {
+      id: latencyAction
+
       theme: configRow.theme
       iconText: "󰓅"
       tooltipText: "Test latency · d"

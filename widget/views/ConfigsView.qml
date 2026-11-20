@@ -21,24 +21,28 @@ ColumnLayout {
     id: groupTypeMetrics
     font.family: view.theme.fontFamily
     font.pixelSize: Style.font.bodySmall
+    renderType: Text.NativeRendering
     text: "Load Balance"
   }
 
   TextMetrics {
     id: proxyTypeMetrics
     font: groupTypeMetrics.font
+    renderType: groupTypeMetrics.renderType
     text: "Shadowsocks"
   }
 
   TextMetrics {
     id: delayMetrics
     font: groupTypeMetrics.font
+    renderType: groupTypeMetrics.renderType
     text: "00000 ms"
   }
 
   TextMetrics {
     id: timeoutMetrics
     font: groupTypeMetrics.font
+    renderType: groupTypeMetrics.renderType
     text: "timeout"
   }
 
@@ -115,6 +119,7 @@ ColumnLayout {
     theme: view.theme
     Layout.fillWidth: true
     Layout.fillHeight: true
+    Layout.maximumWidth: view.width
     spacing: Style.space(1)
     model: view.panel.liveReady ? view.panel.visibleConfigs : []
 

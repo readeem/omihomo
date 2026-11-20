@@ -101,6 +101,12 @@ ShellRoot {
   property string savedConnection: ""
   property int savedFontSize: 0
   property bool savedSpacingScaleWithFont: true
+  readonly property Item popup: Array.prototype.find.call(panel.children, function(item) {
+    return item.contentHeight !== undefined
+  }) || null
+  property bool narrowConfigs: false
+
+  Binding { target: testRoot.popup; property: "width"; value: 350; when: testRoot.narrowConfigs }
 
   function settingsScroll(item) {
     if (item.visible && item.contentY !== undefined && item.flickableDirection !== undefined && item.model === undefined)
@@ -216,10 +222,21 @@ ShellRoot {
           var label = testRoot.visibleText(panel, "Shadowsocks")
           t.check(label !== null, true, "the filtered config still shows its protocol")
           t.check(label && !label.truncated, true, "protocol names fit when the font scales independently")
+          testRoot.narrowConfigs = true
+          Style.spacingScaleWithFont = true
+          Style.fontBaseSize = 20
+        } },
+      { name: "narrow configs with larger font", then: function() {
+          var name = testRoot.visibleText(panel, "Singapore 03")
+          var action = testRoot.visibleText(panel, "󰓅")
+          t.check(name && name.width > 0, true, "a narrow config row still shows its name")
+          t.check(action && action.parent.mapToItem(testRoot.popup, action.parent.width, 0).x <= testRoot.popup.width,
+            true, "a narrow config row keeps its latency button on screen")
+          testRoot.narrowConfigs = false
           Style.fontBaseSize = testRoot.savedFontSize
           Style.spacingScaleWithFont = testRoot.savedSpacingScaleWithFont
-          testRoot.key(Qt.Key_Escape)
         } },
+      { then: function() { testRoot.key(Qt.Key_Escape) } },
       { until: function() { return panel.editing === null }, then: function() { testRoot.type("3") } },
       { then: function() {
           panel.focusRow("ruleTest")
