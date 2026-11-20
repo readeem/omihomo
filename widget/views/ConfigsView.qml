@@ -11,8 +11,36 @@ ColumnLayout {
   readonly property Theme theme: panel.theme
   readonly property alias filterField: configFilterField
   readonly property alias list: configList
+  readonly property real protocolLabelWidth: Math.ceil(Math.max(groupTypeMetrics.advanceWidth, proxyTypeMetrics.advanceWidth))
+  readonly property real latencyColumnWidth: Math.max(Style.space(52),
+    Math.ceil(Math.max(delayMetrics.advanceWidth, timeoutMetrics.advanceWidth)) + Style.space(12))
 
   spacing: Style.space(8)
+
+  TextMetrics {
+    id: groupTypeMetrics
+    font.family: view.theme.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    text: "Load Balance"
+  }
+
+  TextMetrics {
+    id: proxyTypeMetrics
+    font: groupTypeMetrics.font
+    text: "Shadowsocks"
+  }
+
+  TextMetrics {
+    id: delayMetrics
+    font: groupTypeMetrics.font
+    text: "00000 ms"
+  }
+
+  TextMetrics {
+    id: timeoutMetrics
+    font: groupTypeMetrics.font
+    text: "timeout"
+  }
 
   PanelText {
     theme: view.theme
@@ -96,6 +124,8 @@ ColumnLayout {
       panel: view.panel
       width: configList.rowWidth
       configName: String(modelData)
+      protocolLabelWidth: view.protocolLabelWidth
+      latencyColumnWidth: view.latencyColumnWidth
       rowIndex: index
     }
   }

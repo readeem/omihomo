@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import Quickshell
+import qs.Commons
 import qs.Ui
 import "omihomo/widget" as Omihomo
 import "omihomo/widget/components" as Components
@@ -86,8 +87,20 @@ ShellRoot {
     return null
   }
 
+  function visibleText(item, text) {
+    if (!item.visible) return null
+    if (item.textFormat !== undefined && item.text === text) return item
+    for (var i = 0; i < item.children.length; i++) {
+      var found = visibleText(item.children[i], text)
+      if (found) return found
+    }
+    return null
+  }
+
   property real savedScroll: 0
   property string savedConnection: ""
+  property int savedFontSize: 0
+  property bool savedSpacingScaleWithFont: true
 
   function settingsScroll(item) {
     if (item.visible && item.contentY !== undefined && item.flickableDirection !== undefined && item.model === undefined)
@@ -180,8 +193,34 @@ ShellRoot {
           testRoot.checkNameFits(nameFixtures)
           testRoot.checkNameFits(destinationFixtures)
           testRoot.checkEmojiRuns(destinationFixtures)
-          testRoot.type("3")
         } },
+      { name: "config types", then: function() {
+          var labels = ["URL Test", "VLESS", "Hysteria2", "Trojan", "Shadowsocks", "Direct"]
+          var positions = labels.map(function(label) {
+            var item = testRoot.visibleText(panel, label)
+            t.check(item !== null, true, "Configs shows " + label)
+            return item ? item.mapToItem(panel, 0, 0).x : NaN
+          })
+          t.check(positions.every(function(x) { return x === positions[0] }), true,
+            "config types share a column")
+          testRoot.type("/")
+        } },
+      { until: function() { return panel.editing !== null }, then: function() {
+          testRoot.type("Singapore")
+          testRoot.savedFontSize = Style.fontBaseSize
+          testRoot.savedSpacingScaleWithFont = Style.spacingScaleWithFont
+          Style.spacingScaleWithFont = false
+          Style.fontBaseSize = 16
+        } },
+      { name: "config types with larger font", until: function() { return panel.visibleConfigs.length === 1 }, then: function() {
+          var label = testRoot.visibleText(panel, "Shadowsocks")
+          t.check(label !== null, true, "the filtered config still shows its protocol")
+          t.check(label && !label.truncated, true, "protocol names fit when the font scales independently")
+          Style.fontBaseSize = testRoot.savedFontSize
+          Style.spacingScaleWithFont = testRoot.savedSpacingScaleWithFont
+          testRoot.key(Qt.Key_Escape)
+        } },
+      { until: function() { return panel.editing === null }, then: function() { testRoot.type("3") } },
       { then: function() {
           panel.focusRow("ruleTest")
           panel.activateCursor()
