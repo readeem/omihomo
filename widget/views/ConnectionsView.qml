@@ -25,14 +25,15 @@ ColumnLayout {
     PanelText {
       theme: view.theme
       Layout.fillWidth: true
+      elide: Text.ElideRight
       text: "↓ " + Model.formatBytes(view.service.connectionsDownload)
-        + "  ↑ " + Model.formatBytes(view.service.connectionsUpload) + " total"
+        + "  ↑ " + Model.formatBytes(view.service.connectionsUpload) + " this session"
       color: view.theme.foreground
     }
 
     PanelText {
       theme: view.theme
-      text: "process → config · width = bytes"
+      text: "process → config"
       color: view.theme.faint
     }
   }
@@ -46,18 +47,29 @@ ColumnLayout {
       Style.space(22) * Math.max(view.panel.flows.sources.length, view.panel.flows.targets.length))
   }
 
-  SectionLine {
+  PanelText {
     theme: view.theme
     Layout.fillWidth: true
-    title: "OPEN · " + view.service.openConnectionCount
-    note: "bar = bytes, log scale"
+    visible: !!view.service.connectionSummary.session
+    color: view.theme.dim
+    wrapMode: Text.NoWrap
+    fontSizeMode: Text.HorizontalFit
+    minimumPixelSize: Style.font.caption
+    text: {
+      var open = view.service.openConnectionCount
+      var shown = view.service.openConnections.length
+      return "Open " + open + (shown < open ? " (" + shown + " shown)" : "")
+        + "   ·   Closed " + (view.service.connectionSummary.closed || 0)
+        + "   ·   Blocked " + (view.service.connectionSummary.blocked || 0)
+    }
   }
 
   PanelText {
     theme: view.theme
-    visible: view.service.connectionStacks.length === 0
+    visible: view.service.connectionStacks.length === 0 && !view.service.connectionHistoryLoading
+      && !view.service.connectionSummary.closed && !view.service.connectionSummary.blocked
     Layout.fillWidth: true
-    text: view.panel.liveReady ? "Nothing logged yet." : "The proxy is not running."
+    text: view.service.connectionSummary.session ? "Nothing logged yet." : "No proxy session yet."
     color: view.theme.dim
     font.pixelSize: Style.font.body
   }
@@ -72,36 +84,41 @@ ColumnLayout {
     keyedEntries: view.service.connectionStacks
     entryKey: function(e) { return e.key }
 
-    delegate: Item {
-      id: connectionEntry
+    delegate: ConnectionRow {
       required property var entry
       required property int index
-      readonly property bool closedHead: !entry.open
-        && (index === 0 || view.service.connectionStacks[index - 1]?.open === true)
+      panel: view.panel
       width: connList.rowWidth
-      height: connection.implicitHeight + (closedHead ? Style.space(28) : 0)
-
-      SectionLine {
-        theme: view.theme
-        visible: connectionEntry.closedHead
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.topMargin: Style.space(8)
-        title: "CLOSED · " + view.panel.closedLogged
-      }
-
-      ConnectionRow {
-        id: connection
-        panel: view.panel
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: implicitHeight
-        stack: connectionEntry.entry
-        rowIndex: connectionEntry.index
-      }
+      height: implicitHeight
+      stack: entry
+      rowIndex: index
     }
+  }
+
+  RowLayout {
+    visible: view.service.previousConnectionHistory || view.service.moreConnectionHistory
+    Layout.alignment: Qt.AlignHCenter
+    SmallButton {
+      theme: view.theme
+      enabled: view.service.previousConnectionHistory && !view.service.connectionHistoryLoading
+      text: "Newer history"
+      onClicked: view.service.changeHistoryPage(false)
+    }
+    SmallButton {
+      theme: view.theme
+      enabled: view.service.moreConnectionHistory && !view.service.connectionHistoryLoading
+      text: "Older history"
+      onClicked: view.service.changeHistoryPage(true)
+    }
+  }
+
+  PanelText {
+    theme: view.theme
+    visible: view.service.connectionSummary.incomplete === true
+    Layout.fillWidth: true
+    text: "History storage limit reached or unavailable. Session totals are still counted."
+    color: view.theme.urgent
+    wrapMode: Text.WordWrap
   }
 
   PanelText {

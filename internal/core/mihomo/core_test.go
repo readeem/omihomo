@@ -399,8 +399,18 @@ func TestDialGoesThroughTheRules(t *testing.T) {
 	if err := c.CloseConnections(t.Context(), []string{"gone", got.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if conns, _ := c.Connections(t.Context()); conns.Open != 0 {
-		t.Errorf("open after closing = %d", conns.Open)
+	deadline, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		conns, _ := c.Connections(deadline)
+		if conns.Open == 0 && conns.Summary.Closed == 1 {
+			break
+		}
+		select {
+		case <-deadline.Done():
+			t.Fatalf("connection did not finish after closing: %+v", conns)
+		case <-time.After(time.Millisecond):
+		}
 	}
 	if _, err := c.DialContext(t.Context(), "udp", srv.Listener.Addr().String()); err == nil {
 		t.Error("a UDP dial succeeded")
@@ -660,7 +670,7 @@ func TestARestoreThatFailsStops(t *testing.T) {
 }
 
 // socks5 answers a CONNECT only once released, then echoes.
-func socks5(t *testing.T, release <-chan struct{}) net.Listener {
+func socks5(t *testing.T, requested chan<- struct{}, release <-chan struct{}) net.Listener {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -682,6 +692,10 @@ func socks5(t *testing.T, release <-chan struct{}) net.Listener {
 				if _, err := conn.Read(buf); err != nil {
 					return
 				}
+				select {
+				case requested <- struct{}{}:
+				default:
+				}
 				<-release
 				conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
 				io.Copy(conn, conn)
@@ -694,7 +708,10 @@ func socks5(t *testing.T, release <-chan struct{}) net.Listener {
 
 func TestADialInFlightAtStopIsClosed(t *testing.T) {
 	release := make(chan struct{})
-	upstream := socks5(t, release)
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	requested := make(chan struct{}, 1)
+	upstream := socks5(t, requested, release)
 	cfg := testConfig()
 	port := upstream.Addr().(*net.TCPAddr).Port
 	cfg.Profile.Proxies = append(cfg.Profile.Proxies, core.Proxy{Name: "Slow", Type: "socks5",
@@ -709,11 +726,15 @@ func TestADialInFlightAtStopIsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	time.Sleep(100 * time.Millisecond) // the dial reaches the upstream
+	select {
+	case <-requested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("dial did not reach the upstream")
+	}
 	if err := c.Stop(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	close(release)
+	unblock()
 	go io.WriteString(conn, "after-stop")
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if _, err := io.ReadAll(conn); err != nil {

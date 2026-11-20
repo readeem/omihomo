@@ -116,12 +116,24 @@ ShellRoot {
         t.check(svc.traceTesting, true, "the widget's primary group change checks egress")
       } },
     { name: "traffic and connections", until: function() {
-        return svc.trafficHistory.length >= 2 && svc.connectionLog.length === 1
+        return svc.trafficHistory.length >= 2 && svc.openConnections.length === 1
       }, then: function() {
         t.check(svc.downloadRate, 2, "traffic pushes set the rates")
-        t.check(svc.connectionLog[0].process, "firefox", "connections carry their process")
+        t.check(svc.openConnections[0].process, "firefox", "connections carry their process")
         t.check(svc.connectionsDownload, 20, "connections carry the totals")
         t.check(svc.openConnectionCount, 1, "the log counts open connections")
+        svc.connectionView = true
+      } },
+    { name: "session history opens with blocked attempts", until: function() { return svc.connectionHistory.length === 1 }, then: function() {
+        t.check(svc.connectionHistory[0].blocked, true, "blocked attempts have their outcome")
+        t.check(svc.connectionHistory[0].count, 3, "deduplicated attempts keep their count")
+        t.check(svc.connectionHistory[0].chain, "REJECT", "blocked attempts show the actual outbound")
+        svc.changeHistoryPage(true)
+      } },
+    { name: "history pages replace the current page", until: function() { return svc.previousConnectionHistory }, then: function() {
+        t.check(svc.connectionHistory.length, 1, "only the current page is loaded")
+        t.check(svc.connectionHistory[0].host, "older.example:443", "paging shows older history")
+        svc.connectionView = false
         svc.addSubscription("https://example.test/sub")
       } },
     { name: "stream errors invalidate snapshots", until: function() { return !svc.busy && svc.subscriptions.length === 2 }, then: function() {
@@ -180,7 +192,7 @@ ShellRoot {
         t.check(svc.subscriptions.length, 0, "subscription errors remove stale entries")
         t.check(svc.downloadRate, 0, "traffic errors remove stale rates")
         t.check(svc.trafficHistory.length, 0, "traffic errors remove stale history")
-        t.check(svc.connectionLog.length, 0, "connection errors remove stale close targets")
+        t.check(svc.openConnections.length, 0, "connection errors remove stale close targets")
         t.check(svc.connectionsDownload, 0, "connection errors remove stale totals")
         t.check(svc.apiReady, false, "status errors make live controls unavailable")
         svc.removeRule(1)
@@ -193,7 +205,7 @@ ShellRoot {
       } },
     { name: "all snapshots recover", until: function() {
         return svc.apiReady && svc.subscriptions.length === 2 && svc.effectiveRules.length > 0
-          && svc.connectionLog.length > 0 && svc.trafficHistory.length > 0
+          && svc.openConnections.length > 0 && svc.trafficHistory.length > 0
       }, then: function() {
         t.check(svc.lastError, "", "recovered streams clear their errors")
         svc.call("test.hold-edit", {}, function() {
@@ -239,7 +251,7 @@ ShellRoot {
     { name: "stop", until: function() { return !svc.busy }, then: function() {
         t.check(svc.coreRunning, false, "the stop's reply confirms it")
         t.check(svc.groups.length, 0, "a stopped proxy has no groups")
-        t.check(svc.connectionLog.length, 0, "a stopped proxy has no connection log")
+        t.check(svc.openConnections.length, 0, "a stopped proxy has no open connections")
         t.check(svc.trafficHistory.length, 0, "a stopped proxy has no traffic history")
       } }
   ]

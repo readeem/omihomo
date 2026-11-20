@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/core/connlog"
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/state"
 )
@@ -147,6 +148,22 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return nil, err
 		}
 		return d.rules(ctx)
+	case protocol.OpConnectionHistory:
+		var args protocol.ConnectionHistoryArgs
+		if err := decode(req.Args, &args); err != nil {
+			return nil, err
+		}
+		if args.Before != 0 && args.Since != nil {
+			return nil, fail(protocol.CodeInvalid, "before and since cannot be combined")
+		}
+		page, err := d.core.ConnectionHistory(ctx, args)
+		if errors.Is(err, connlog.ErrSessionChanged) {
+			return nil, fail(protocol.CodeConflict, "%v", err)
+		}
+		if err != nil {
+			return nil, coreError(err)
+		}
+		return page, nil
 	case protocol.OpConnections:
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
@@ -318,6 +335,10 @@ func (d *server) subscribe(ctx context.Context, s *session, streams []string, on
 	for _, stream := range fresh {
 		if slices.Contains(stateStreams, stream) {
 			d.publishLocked(ctx, stream, s)
+		} else if stream == protocol.StreamConnections {
+			if data, err := d.core.Connections(ctx); err == nil {
+				s.sendLine(d.eventLine(stream, data))
+			}
 		}
 	}
 	return protocol.Empty{}, nil

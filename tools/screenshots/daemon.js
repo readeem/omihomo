@@ -38,16 +38,32 @@ const traffic = lines("traffic.jsonl")
 const allConnections = lines("connections.jsonl")
 const running = () => status.state !== "stopped"
 
-// The first push also lists the connections that close, so the panel's log
-// keeps them as closed from the second push on.
-const closed = new Set()
-let connectionPushes = 0
+const closed = new Set(allConnections.filter(c => c.closes).map(c => c.id))
+const blocked = [{ id: 1, destination: "ads.example:443", process: "firefox", network: "tcp", outbound: "REJECT",
+  rule: "RuleSet(ads)", count: 8, upload: 0, download: 0, blocked: true, last_at: Date.now() - 120000 }]
 function connections() {
-  const now = Date.now()
-  const open = allConnections.filter((c) => !closed.has(c.id) && (connectionPushes === 0 || !c.closes))
-  connectionPushes++
-  return { upload_total: 412000000, download_total: 5100000000, open: open.length,
-    connections: open.map(({ age, closes, ...c }) => ({ ...c, started_at: now - age * 1000 })) }
+  const open = allConnections.filter(c => running() && !closed.has(c.id))
+  const flows = new Map()
+  let upload = 0, download = 0
+  for (const c of allConnections) {
+    const key = c.process + "\0" + c.chain
+    if (!flows.has(key)) flows.set(key, { process: c.process, outbound: c.chain, bytes: 0 })
+    flows.get(key).bytes += c.upload + c.download
+    upload += c.upload
+    download += c.download
+  }
+  return { open: open.length, summary: { session: status.started_at || 1, revision: closed.size + blocked.length,
+    closed: closed.size, blocked: 8, upload, download, flows: [...flows.values()] },
+    connections: open.map(({ age, closes, ...c }) => ({ ...c, started_at: Date.now() - age * 1000 })) }
+}
+
+function connectionHistory() {
+  const rows = allConnections.filter(c => closed.has(c.id)).map((c, i) => ({
+    id: i + 2, destination: (c.host || c.destination_ip) + ":" + c.destination_port, process: c.process,
+    network: c.network, outbound: c.chain, rule: c.rule, count: 1, upload: c.upload, download: c.download,
+    last_at: Date.now() - c.age * 1000
+  }))
+  return { session: status.started_at || 1, revision: closed.size + blocked.length, rows: blocked.concat(rows.reverse()) }
 }
 
 function ruleSnapshot() {
@@ -201,6 +217,7 @@ const ops = {
     push("groups")
     return { result: { delays: result } }
   }),
+  "connections.history": () => ({ result: connectionHistory() }),
   "connections.close": (args) => {
     allConnections.filter((c) => args.all || args.ids.includes(c.id)).forEach((c) => closed.add(c.id))
     return { result: {} }
@@ -271,7 +288,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 6, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 7, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk

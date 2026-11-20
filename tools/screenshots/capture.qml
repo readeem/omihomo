@@ -72,7 +72,7 @@ ShellRoot {
       panel.view = "conns"
       stage = "log"
     } else if (stage === "log") {
-      if (service.connectionLog.length - service.openConnectionCount < 3) return
+      if (service.connectionHistory.length < 3) return
       stage = "shoot"
     } else if (stage === "shoot") {
       const next = shots[shot]
@@ -109,7 +109,7 @@ ShellRoot {
       state: capture.service.coreState, link: capture.service.link, proxies: capture.service.proxiesLoaded,
       subs: capture.service.subscriptions.length, rules: capture.service.subscriptionRules.length,
       traffic: capture.service.trafficHistory.length, egress: capture.service.egressIp,
-      log: capture.service.connectionLog.length, error: capture.service.lastError
+      log: capture.service.connectionHistory.length, error: capture.service.lastError
     }) : "no service"))
   }
 

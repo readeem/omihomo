@@ -437,12 +437,6 @@ function readEgress(data) {
   return { ip: text(data.ip), ipv6: text(data.ipv6), latency: Math.round(number(data.latency, 0)) }
 }
 
-// The `connections` stream only ever states what is open right now, so a
-// panel that renders it directly loses every connection the moment it
-// finishes and repaints its whole list on each push. The functions below turn
-// that snapshot into a log instead: `readConnections` reads one snapshot,
-// `mergeConnectionLog` folds it into what came before, and `stackConnections`
-// collapses the result into the rows the view draws.
 function readConnections(data, nowMs) {
   var now = number(nowMs, Date.now())
   var out = { downloadTotal: 0, uploadTotal: 0, items: [] }
@@ -460,115 +454,26 @@ function readConnections(data, nowMs) {
       host: connectionHost(entry),
       network: text(entry.network).toUpperCase(),
       process: baseName(entry.process) || (text(entry.inbound) === "inner" ? "mihomo" : ""),
-      inboundType: text(entry.inbound),
-      sourceIP: text(entry.source_ip),
-      sourcePort: number(entry.source_port, 0),
-      destinationIP: text(entry.destination_ip),
-      destinationPort: number(entry.destination_port, 0),
       chain: text(entry.chain),
       rule: text(entry.rule),
       upload: number(entry.upload, 0),
       download: number(entry.download, 0),
       startMs: started > 0 ? started : now,
-      open: true,
-      lastSeenMs: now,
-      closedAtMs: 0
+      open: true
     })
   }
   return out
 }
 
-// Fold one snapshot into the log. An id that is still there keeps its original
-// start and takes the fresh figures; an id that was open and is no longer in
-// the snapshot is closed, keeping the last figures it reported. It closes at
-// `lastSeenMs` rather than now, because a poll can only prove a connection was
-// already gone by the time it looked, and between two polls — or across a
-// stretch with the panel shut — that gap is the whole story.
-function mergeConnectionLog(log, items, nowMs, cap) {
-  var now = number(nowMs, Date.now())
-  var previous = log && typeof log.length === "number" ? log : []
-  var fresh = items && typeof items.length === "number" ? items : []
-  var incoming = dict()
-  var i
-  for (i = 0; i < fresh.length; i++) incoming[fresh[i].id] = fresh[i]
-
-  var out = []
-  var kept = dict()
-  for (i = 0; i < previous.length; i++) {
-    var entry = previous[i]
-    var update = incoming[entry.id]
-    kept[entry.id] = true
-    if (update) {
-      update.startMs = entry.startMs
-      if (update.process === "" && update.network === entry.network
-        && update.sourceIP === entry.sourceIP && update.sourcePort === entry.sourcePort
-        && update.destinationIP === entry.destinationIP && update.destinationPort === entry.destinationPort)
-        update.process = entry.process
-      out.push(update)
-    } else if (entry.open) {
-      out.push(closedEntry(entry, now))
-    } else {
-      out.push(entry)
-    }
-  }
-  for (i = 0; i < fresh.length; i++) {
-    if (!kept[fresh[i].id]) out.push(fresh[i])
-  }
-  return trimClosedConnections(out, number(cap, 200))
-}
-
-function closedEntry(entry, nowMs) {
-  var closed = {}
-  for (var field in entry) closed[field] = entry[field]
-  closed.open = false
-  closed.closedAtMs = entry.lastSeenMs > 0 ? entry.lastSeenMs : nowMs
-  return closed
-}
-
-// Closed entries are the half of the log that only grows, so cap them: keep
-// the most recently closed and drop the rest. Open ones are never dropped.
-function trimClosedConnections(log, limit) {
-  var closed = []
-  var i
-  for (i = 0; i < log.length; i++) if (!log[i].open) closed.push(log[i])
-  if (closed.length <= limit) return log
-  closed.sort(function(a, b) { return b.closedAtMs - a.closedAtMs })
-  var keep = dict()
-  for (i = 0; i < limit; i++) keep[closed[i].id] = true
-  var out = []
-  for (i = 0; i < log.length; i++) if (log[i].open || keep[log[i].id]) out.push(log[i])
-  return out
-}
-
-// One row per process, destination, and state: the four sockets Firefox has
-// open to github.com are one row reading x4, and the ones it has finished with
-// are a second, dimmed row rather than the same row quietly changing meaning.
-// Open stacks sort above closed ones, newest first within each, so a poll only
-// ever updates a row in place or puts a new one at the top.
-function stackConnections(log) {
-  var list = log && typeof log.length === "number" ? log : []
+function stackConnections(list) {
   var byKey = dict()
   var stacks = []
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
-    var key = connectionStackKey(entry)
+    var key = JSON.stringify([entry.process, entry.host, entry.network, entry.chain, entry.rule])
     var stack = byKey[key]
     if (!stack) {
-      stack = {
-        key: key,
-        host: entry.host,
-        process: entry.process,
-        network: entry.network,
-        chain: entry.chain,
-        rule: entry.rule,
-        open: entry.open,
-        count: 0,
-        upload: 0,
-        download: 0,
-        startMs: entry.startMs,
-        closedAtMs: entry.closedAtMs,
-        ids: []
-      }
+      stack = Object.assign({}, entry, { key: key, count: 0, upload: 0, download: 0, ids: [] })
       byKey[key] = stack
       stacks.push(stack)
     }
@@ -576,29 +481,17 @@ function stackConnections(log) {
     stack.upload += entry.upload
     stack.download += entry.download
     stack.ids.push(entry.id)
-    // A stack is as old as its oldest member and as recent as its last close.
     if (entry.startMs < stack.startMs) stack.startMs = entry.startMs
-    if (entry.closedAtMs > stack.closedAtMs) stack.closedAtMs = entry.closedAtMs
-    if (stack.chain === "") stack.chain = entry.chain
-    if (stack.rule === "") stack.rule = entry.rule
-    if (stack.network === "") stack.network = entry.network
   }
-  stacks.sort(function(a, b) {
-    if (a.open !== b.open) return a.open ? -1 : 1
-    return a.open ? b.startMs - a.startMs : b.closedAtMs - a.closedAtMs
+  return stacks.sort(function(a, b) { return b.startMs - a.startMs })
+}
+
+function readConnectionHistory(rows) {
+  return rows.map(function(row) {
+    return { key: "history:" + row.id, id: row.id, host: row.destination, process: row.process,
+      network: text(row.network).toUpperCase(), chain: row.outbound, rule: row.rule, blocked: row.blocked,
+      open: false, count: row.count, upload: row.upload, download: row.download, closedAtMs: row.last_at }
   })
-  return stacks
-}
-
-function connectionStackKey(entry) {
-  return text(entry.process) + "\u0000" + text(entry.host) + "\u0000" + (entry.open ? "open" : "closed")
-}
-
-function openConnectionCount(log) {
-  var list = log && typeof log.length === "number" ? log : []
-  var open = 0
-  for (var i = 0; i < list.length; i++) if (list[i].open) open++
-  return open
 }
 
 function connectionHost(entry) {
@@ -736,58 +629,22 @@ function ruleTargetTally(rules) {
   return out
 }
 
-// Open traffic as process → config flows, for the connections diagram. Past
-// `maxSources` processes or `maxTargets` configs the smallest fold into one
-// "other" node, so the diagram always fits its box.
-function connectionFlows(stacks, maxSources, maxTargets) {
-  var list = stacks && typeof stacks.length === "number" ? stacks : []
+function connectionFlows(flows) {
   var bySource = dict()
   var byTarget = dict()
-  var links = dict()
-  var i
-  for (i = 0; i < list.length; i++) {
-    var stack = list[i]
-    if (!stack.open) continue
-    var bytes = number(stack.download, 0) + number(stack.upload, 0)
-    var source = text(stack.process) || "unknown"
-    var target = text(stack.chain) || "DIRECT"
-    bySource[source] = (bySource[source] || 0) + bytes
-    byTarget[target] = (byTarget[target] || 0) + bytes
-    var key = source + "\u0000" + target
-    links[key] = (links[key] || 0) + bytes
+  var links = flows.map(function(flow) {
+    var source = flow.process || "other"
+    var target = flow.outbound || "other"
+    bySource[source] = (bySource[source] || 0) + flow.bytes
+    byTarget[target] = (byTarget[target] || 0) + flow.bytes
+    return { source: source, target: target, bytes: flow.bytes }
+  })
+  function nodes(totals) {
+    return Object.keys(totals).map(function(name) { return { name: name, bytes: totals[name] } })
+      .sort(function(a, b) { return b.bytes - a.bytes })
   }
-  var sources = topNodes(bySource, maxSources)
-  var targets = topNodes(byTarget, maxTargets)
-  var merged = dict()
-  for (var key2 in links) {
-    var parts = key2.split("\u0000")
-    var s = sources.names[parts[0]] ? parts[0] : "other"
-    var t = targets.names[parts[1]] ? parts[1] : "other"
-    merged[s + "\u0000" + t] = (merged[s + "\u0000" + t] || 0) + links[key2]
-  }
-  var out = []
-  for (var key3 in merged) {
-    var pair = key3.split("\u0000")
-    out.push({ source: pair[0], target: pair[1], bytes: merged[key3] })
-  }
-  out.sort(function(a, b) { return b.bytes - a.bytes })
-  return { sources: sources.nodes, targets: targets.nodes, links: out }
-}
-
-function topNodes(totals, max) {
-  var nodes = []
-  for (var name in totals) nodes.push({ name: name, bytes: totals[name] })
-  nodes.sort(function(a, b) { return b.bytes - a.bytes })
-  var limit = Math.max(1, number(max, 6))
-  var names = dict()
-  if (nodes.length > limit) {
-    var rest = 0
-    for (var i = limit - 1; i < nodes.length; i++) rest += nodes[i].bytes
-    nodes = nodes.slice(0, limit - 1)
-    nodes.push({ name: "other", bytes: rest })
-  }
-  for (var j = 0; j < nodes.length; j++) names[nodes[j].name] = true
-  return { nodes: nodes, names: names }
+  links.sort(function(a, b) { return b.bytes - a.bytes })
+  return { sources: nodes(bySource), targets: nodes(byTarget), links: links }
 }
 
 // ---------------------------------------------------------------- formatting
@@ -954,9 +811,8 @@ if (typeof module !== "undefined") {
     readTraffic: readTraffic,
     readEgress: readEgress,
     readConnections: readConnections,
-    mergeConnectionLog: mergeConnectionLog,
+    readConnectionHistory: readConnectionHistory,
     stackConnections: stackConnections,
-    openConnectionCount: openConnectionCount,
     connectionHost: connectionHost,
     baseName: baseName,
     ruleQueryHost: ruleQueryHost,

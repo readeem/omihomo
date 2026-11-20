@@ -205,7 +205,7 @@ Panel {
     rulesView.bulkSelector.openPicker()
   }
 
-  readonly property var flows: Model.connectionFlows(omihomo.connectionStacks, 6, 4)
+  readonly property var flows: omihomo.connectionFlows
   readonly property double largestStack: {
     var most = 0
     for (let i = 0; i < omihomo.connectionStacks.length; i++) {
@@ -214,7 +214,6 @@ Panel {
     }
     return most
   }
-  readonly property int closedLogged: omihomo.connectionLog.length - omihomo.openConnectionCount
 
   readonly property string statusText: {
     if (!omihomo.streamsReady(["status"]) && omihomo.link === "connecting") return "RECONNECTING"
@@ -448,7 +447,8 @@ Panel {
       else if (key === "/") { focusRow("ruleTest"); beginEdit(rulesView.testField) }
     } else if (view === "conns") {
       if (key === "A") omihomo.closeAllConnections()
-      else if (key === "L") omihomo.clearConnectionLog()
+      else if (key === "L") omihomo.changeHistoryPage(true)
+      else if (key === "H") omihomo.changeHistoryPage(false)
     } else if (view === "settings") {
       if (key === "A") omihomo.toggleTunRedirect()
       else if (key === "T") omihomo.toggleTailscale()
@@ -523,7 +523,7 @@ Panel {
       { keys: "/", label: "test", key: "/" }, { keys: "esc", label: "back", key: "esc" }]
     case "conns": return [
       { keys: "↵", label: "close", key: "enter" }, { keys: "A", label: "close all", key: "A" },
-      { keys: "L", label: "clear log", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
+      { keys: "H", label: "newer", key: "H" }, { keys: "L", label: "older", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
     case "settings": return [
       { keys: "↵", label: "activate", key: "enter" }, { keys: "u", label: "check", key: "u" },
       { keys: "t", label: "TUN", key: "t" }, { keys: "A", label: "accel", key: "A" },
@@ -575,7 +575,6 @@ Panel {
     var stack = connectionAt(index)
     if (!stack) return
     if (stack.open) omihomo.closeStack(stack)
-    else omihomo.forgetStack(stack)
   }
 
   function activateSubscriptionAt(index) {
@@ -867,6 +866,7 @@ Panel {
   Service {
     id: omihomo
     panelOpen: root.opened
+    connectionView: root.opened && root.view === "conns"
     onRuleMoved: function(index) {
       root.focusRow("rule", index - 1)
       root.scrollCursorIntoView()

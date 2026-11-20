@@ -1,0 +1,84 @@
+package connlog_test
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/readeem/omihomo/internal/core/connlog"
+	"github.com/readeem/omihomo/internal/protocol"
+)
+
+func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
+	h := connlog.New(t.TempDir(), 1)
+	t.Cleanup(h.Discard)
+	const distinct = 10030
+	key := connlog.Key{Process: "browser", Network: "tcp", Outbound: "DIRECT"}
+	for i := range distinct {
+		key.Destination = fmt.Sprintf("host-%d.example:443", i)
+		h.Start("flow", key, func() (int64, int64) { return 7, 11 }, nil)()
+	}
+	page, err := h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) != 100 || page.Rows[0].ID != distinct {
+		t.Fatalf("first history page has %d rows, error %v", len(page.Rows), err)
+	}
+	since := page.Revision
+	done := h.Start("flow", key, func() (int64, int64) { return 5, 9 }, nil)
+	done()
+	done()
+	delta, err := h.Page(t.Context(), protocol.ConnectionHistoryArgs{Since: &since, Session: page.Session})
+	if err != nil || len(delta.Rows) != 1 || delta.Rows[0].ID != distinct || delta.Rows[0].Count != 2 || delta.Rows[0].Upload != 12 || delta.Rows[0].Download != 20 {
+		t.Fatalf("changed row = %+v, %v", delta, err)
+	}
+	total := len(page.Rows)
+	for page.Next != 0 {
+		page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{Before: page.Next, Session: page.Session})
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += len(page.Rows)
+	}
+	if total != distinct {
+		t.Fatalf("history has %d rows, want %d", total, distinct)
+	}
+	if summary, _ := h.Summary(); summary.Incomplete || summary.Closed != distinct+1 || summary.Upload != 70215 || summary.Download != 110339 {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func TestHistoryRecoversWhenSpillBecomesAvailable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "history")
+	h := connlog.New(dir, 1)
+	t.Cleanup(h.Discard)
+	key := connlog.Key{Network: "tcp", Outbound: "REJECT", Blocked: true}
+	for i := range 10001 {
+		key.Destination = fmt.Sprintf("host-%d.example:443", i)
+		h.Start("", key, nil, nil)
+	}
+	page, err := h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) == 0 || page.Rows[0].ID != 10000 {
+		t.Fatalf("page during spill failure has %d rows, error %v", len(page.Rows), err)
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h.Start("", key, nil, nil)
+	page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) == 0 || page.Rows[0].ID != 10001 || page.Rows[0].Destination != key.Destination {
+		t.Fatalf("page after recovery has %d rows, error %v", len(page.Rows), err)
+	}
+	if summary, _ := h.Summary(); summary.Blocked != 10002 || !summary.Incomplete {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func BenchmarkHistory(b *testing.B) {
+	h := connlog.New(b.TempDir(), 1)
+	b.Cleanup(h.Discard)
+	key := connlog.Key{Process: "browser", Destination: "example.com:443", Network: "tcp", Outbound: "REJECT", Rule: "Domain(example.com)", Blocked: true}
+	b.ReportAllocs()
+	for b.Loop() {
+		h.Start("", key, nil, nil)
+	}
+}

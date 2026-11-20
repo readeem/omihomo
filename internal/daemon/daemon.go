@@ -385,10 +385,7 @@ func (d *server) tick(ctx context.Context) {
 			continue
 		case <-t.C:
 		}
-		if !d.running() {
-			continue
-		}
-		if d.listening(protocol.StreamTraffic) {
+		if d.running() && d.listening(protocol.StreamTraffic) {
 			if v, err := d.core.Traffic(ctx); err == nil {
 				d.broadcast(protocol.StreamTraffic, v)
 			}

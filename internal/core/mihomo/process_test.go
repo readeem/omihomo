@@ -17,6 +17,7 @@ func trackedProcess(t *testing.T, m *constant.Metadata) {
 	t.Helper()
 	local, peer := net.Pipe()
 	tracker := statistic.NewTCPTracker(outbound.NewConn(local, outbound.NewDirect()), statistic.DefaultManager, m, nil, 0, 0, true)
+	tracker.Info().Session.Store(shared.history.Session())
 	t.Cleanup(func() { tracker.Close(); peer.Close() })
 }
 

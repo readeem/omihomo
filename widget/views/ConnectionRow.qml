@@ -14,7 +14,7 @@ NavRow {
 
   section: "conn"
   implicitHeight: Style.space(24)
-  opacity: live ? 1 : 0.55
+  opacity: live || (stack && stack.blocked) ? 1 : 0.72
   onActivated: panel.activateConnectionAt(connectionRow.rowIndex)
 
   Rectangle {
@@ -36,8 +36,8 @@ NavRow {
 
     PanelText {
       theme: connectionRow.theme
-      text: connectionRow.live ? "●" : "○"
-      color: connectionRow.live ? connectionRow.theme.accent : connectionRow.theme.faint
+      text: connectionRow.stack && connectionRow.stack.blocked ? "⊘" : (connectionRow.live ? "●" : "○")
+      color: connectionRow.stack && connectionRow.stack.blocked ? connectionRow.theme.urgent : (connectionRow.live ? connectionRow.theme.accent : connectionRow.theme.faint)
       font.pixelSize: Style.font.caption
     }
 
@@ -80,9 +80,9 @@ NavRow {
 
     InlineAction {
       theme: connectionRow.theme
-      opacity: connectionRow.hasCursor ? 1 : 0
-      iconText: connectionRow.live ? "×" : "󰩹"
-      tooltipText: connectionRow.live ? "Close · x" : "Remove from log · x"
+      opacity: connectionRow.hasCursor && connectionRow.live ? 1 : 0
+      iconText: "×"
+      tooltipText: "Close · x"
       foreground: connectionRow.theme.foreground
       hoverColor: connectionRow.theme.urgent
       size: Style.space(18)
@@ -96,11 +96,11 @@ NavRow {
       if (!stack) return ""
       var parts = []
       if (stack.network !== "") parts.push(stack.network)
+      if (stack.rule !== "") parts.push(stack.rule)
       if (connectionRow.live) {
-        if (stack.rule !== "") parts.push(stack.rule)
         parts.push(Model.formatDuration(connectionRow.panel.nowMs - stack.startMs))
       } else {
-        parts.push("closed " + Model.relativeSince(stack.closedAtMs, connectionRow.panel.nowMs))
+        parts.push((stack.blocked ? "blocked " : "closed ") + Model.relativeSince(stack.closedAtMs, connectionRow.panel.nowMs))
       }
       return parts.join(" · ")
     }

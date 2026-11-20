@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 6
+  readonly property int protocolVersion: 7
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -112,16 +112,22 @@ Item {
   // `groups` means "not read yet" until it has, and "this subscription
   // declares none" after — two states the panel has to word differently.
   property bool proxiesLoaded: false
-  // The `connections` stream is a snapshot of what is open right now, so the
-  // panel keeps its own log of it: `connectionLog` holds every connection seen
-  // since the core started, open or closed, and `connectionStacks` is what the
-  // view draws — one row per process, destination, and state.
-  property var connectionLog: []
-  readonly property var connectionStacks: Model.stackConnections(connectionLog)
-  readonly property int openConnectionCount: Model.openConnectionCount(connectionLog)
-  readonly property int connectionLogCap: 200
-  property double connectionsDownload: 0
-  property double connectionsUpload: 0
+  property var openConnections: []
+  property var connectionHistory: []
+  property var connectionSummary: ({})
+  property bool connectionView: false
+  property double _historyBefore: 0
+  property var _historyPages: [0]
+  property double _historyRevision: -1
+  property int _historyCall: 0
+  readonly property var connectionStacks: Model.stackConnections(openConnections).concat(connectionHistory)
+  readonly property bool moreConnectionHistory: _historyBefore > 0
+  readonly property bool previousConnectionHistory: _historyPages.length > 1
+  readonly property bool connectionHistoryLoading: _historyCall !== 0
+  property int openConnectionCount: 0
+  readonly property double connectionsDownload: connectionSummary.download || 0
+  readonly property double connectionsUpload: connectionSummary.upload || 0
+  readonly property var connectionFlows: Model.connectionFlows(connectionSummary.flows || [])
 
   property double downloadRate: 0
   property double uploadRate: 0
@@ -338,6 +344,7 @@ Item {
   function disconnected() {
     if (link === "ready") link = "connecting"
     _statusKnown = false
+    applyConnections(null)
     pendingDownloads = []
     helloTimer.stop()
     clearDesired()
@@ -515,6 +522,7 @@ Item {
     var runtimeChanged = runtimeKey !== previousRuntime
     var primaryChanged = configuredPrimaryGroup !== previousPrimaryGroup
     if (runtimeChanged) forgetRuntime()
+    if (!coreRunning) openConnections = []
     if (runtimeChanged || primaryChanged || !coreRunning) {
       if (_manualTrace || !coreRunning) cancelDelayTest()
       cancelTrace()
@@ -539,13 +547,14 @@ Item {
     cancelDelayTest()
     cancelTrace()
     applyGroups(null)
-    applyConnections(null)
+    openConnections = []
     applyTraffic(null)
   }
 
   // Everything the daemon said, for when there is no daemon to talk to.
   function forgetAll() {
     _statusKnown = false
+    applyConnections(null)
     pendingDownloads = []
     streamErrors = ({})
     coreName = ""
@@ -626,17 +635,74 @@ Item {
   }
 
   function applyConnections(data) {
-    if (data === null) {
-      connectionLog = []
-      connectionsDownload = 0
-      connectionsUpload = 0
-      return
-    }
-    var now = Date.now()
-    var parsed = Model.readConnections(data, now)
-    connectionLog = Model.mergeConnectionLog(connectionLog, parsed.items, now, connectionLogCap)
-    connectionsDownload = parsed.downloadTotal
-    connectionsUpload = parsed.uploadTotal
+    var summary = data ? (data.summary || {}) : {}
+    if (!data || connectionSummary.session !== summary.session) resetConnectionHistory()
+    connectionSummary = summary
+    openConnectionCount = data ? data.open || 0 : 0
+    openConnections = data ? Model.readConnections(data).items : []
+    syncConnectionHistory()
+  }
+
+  function resetConnectionHistory() {
+    _historyCall = 0
+    _historyRevision = -1
+    _historyBefore = 0
+    _historyPages = [0]
+    connectionHistory = []
+  }
+
+  onConnectionViewChanged: {
+    if (connectionView) syncConnectionHistory()
+    else resetConnectionHistory()
+  }
+
+  function syncConnectionHistory() {
+    if (!connectionView || !ready || !connectionSummary.session || _historyCall !== 0) return
+    if (_historyRevision < 0) readConnectionHistory({ session: connectionSummary.session })
+    else if (_historyRevision < connectionSummary.revision)
+      readConnectionHistory({ session: connectionSummary.session, since: _historyRevision })
+  }
+
+  function changeHistoryPage(forward) {
+    if (!connectionView || !ready || connectionHistoryLoading) return
+    if (forward ? !moreConnectionHistory : !previousConnectionHistory) return
+    var pages = forward ? _historyPages.concat([_historyBefore]) : _historyPages.slice(0, -1)
+    readConnectionHistory({ session: connectionSummary.session, before: pages[pages.length - 1] }, pages)
+  }
+
+  function readConnectionHistory(args, pages) {
+    let callId = call("connections.history", args, function(page, error) {
+      if (root._historyCall !== callId) return
+      root._historyCall = 0
+      if (error) {
+        if (error.code !== "conflict") root.reportError(error, "conns")
+        return
+      }
+      if (page.session !== root.connectionSummary.session) return
+      if (page.reset) {
+        root.readConnectionHistory({ session: page.session, before: root._historyPages[root._historyPages.length - 1] })
+        return
+      }
+      var rows = Model.readConnectionHistory(page.rows || [])
+      if (args.since !== undefined) {
+        var changes = Model.dict()
+        for (var i = 0; i < rows.length; i++) changes[rows[i].id] = rows[i]
+        var current = root.connectionHistory.map(function(row) { return changes[row.id] || row })
+        var first = current.length ? current[0].id : 0
+        if (!root.previousConnectionHistory && rows.some(function(row) { return row.id > first })) {
+          root.readConnectionHistory({ session: page.session })
+          return
+        }
+        root.connectionHistory = current
+      } else {
+        if (pages) root._historyPages = pages
+        root._historyBefore = page.next || 0
+        root.connectionHistory = rows
+      }
+      root._historyRevision = page.revision
+      root.syncConnectionHistory()
+    })
+    _historyCall = callId
   }
 
   property var _editDone: null
@@ -1018,30 +1084,6 @@ Item {
 
   function closeAllConnections() {
     closeConnections({ all: true })
-  }
-
-  // A closed connection exists only in the panel's log, so dropping one is a
-  // local edit and needs no call at all.
-  function forgetStack(stack) {
-    var ids = stack ? stack.ids : null
-    if (!ids || ids.length === 0) return
-    var drop = {}
-    var i
-    for (i = 0; i < ids.length; i++) drop[ids[i]] = true
-    var kept = []
-    for (i = 0; i < connectionLog.length; i++) {
-      const entry = connectionLog[i]
-      if (entry.open || !drop[entry.id]) kept.push(entry)
-    }
-    connectionLog = kept
-  }
-
-  function clearConnectionLog() {
-    var kept = []
-    for (let i = 0; i < connectionLog.length; i++) {
-      if (connectionLog[i].open) kept.push(connectionLog[i])
-    }
-    connectionLog = kept
   }
 
   Timer {

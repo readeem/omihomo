@@ -245,17 +245,6 @@ test("connection labels use the process name and identify internal traffic", () 
   assert.deepEqual(items.map(c => c.process), ["firefox", "curl", "mihomo", ""])
 })
 
-test("a connection keeps its resolved owner while its endpoints stay the same", () => {
-  const raw = snapshot([{ id: "udp", network: "udp", inbound: "tun", source_ip: "192.168.42.10",
-    source_port: 53000, destination_ip: "203.0.113.5", destination_port: 443 }])
-  const first = Model.readConnections(raw).items
-  first[0].process = "firefox"
-  assert.equal(Model.mergeConnectionLog(first, Model.readConnections(raw).items)[0].process, "firefox")
-  const changed = Model.readConnections(raw).items
-  changed[0].sourcePort = 53001
-  assert.equal(Model.mergeConnectionLog(first, changed)[0].process, "")
-})
-
 test("a connection snapshot carries a host, a start, and its totals", () => {
   const now = Date.parse("2026-08-18T12:00:00Z")
   const parsed = Model.readConnections(snapshot([
@@ -274,79 +263,16 @@ test("a connection snapshot carries a host, a start, and its totals", () => {
   assert.equal(parsed.items[1].host, "1.1.1.1:53")
 })
 
-test("a connection missing from the next snapshot is closed, not dropped", () => {
-  const first = Model.readConnections(snapshot([
-    conn("a", "github.com", "firefox"),
-    conn("b", "cdn.jsdelivr.net", "firefox")
+test("open stacks preserve the route and protocol for each destination", () => {
+  const { items } = Model.readConnections(snapshot([
+    conn("a", "github.com", "firefox", { download: 10 }),
+    conn("b", "github.com", "firefox", { download: 20 }),
+    conn("c", "github.com", "firefox", { download: 30, chain: "DIRECT" }),
+    conn("d", "github.com", "firefox", { download: 40, network: "udp" })
   ]), 1000)
-  let log = Model.mergeConnectionLog([], first.items, 1000, 200)
-  assert.equal(Model.openConnectionCount(log), 2)
-
-  // "b" is gone from the second snapshot, and "c" is new.
-  const second = Model.readConnections(snapshot([
-    conn("a", "github.com", "firefox", { download: 900 }),
-    conn("c", "github.com", "firefox")
-  ]), 5000)
-  log = Model.mergeConnectionLog(log, second.items, 5000, 200)
-
-  assert.deepEqual(log.map(e => e.id), ["a", "b", "c"])
-  assert.equal(Model.openConnectionCount(log), 2)
-  const closed = log.find(e => e.id === "b")
-  assert.equal(closed.open, false)
-  // It closed when it was last seen, not when the poll noticed it was gone.
-  assert.equal(closed.closedAtMs, 1000)
-  // The reopened figures land, but the original start survives them.
-  assert.equal(log.find(e => e.id === "a").download, 900)
-  assert.equal(log.find(e => e.id === "a").startMs, first.items[0].startMs)
-})
-
-test("the log keeps every open connection and caps the closed ones", () => {
-  const open = Model.readConnections(snapshot([conn("keep", "github.com", "firefox")]), 1000)
-  let log = Model.mergeConnectionLog([], open.items, 1000, 2)
-  for (let i = 0; i < 4; i++) {
-    const round = Model.readConnections(snapshot([
-      conn("keep", "github.com", "firefox"),
-      conn("gone" + i, "cdn.jsdelivr.net", "firefox")
-    ]), 2000 + i * 1000)
-    log = Model.mergeConnectionLog(log, round.items, 2000 + i * 1000, 2)
-  }
-  // "keep" and the last round's "gone3" are still open, and of the three that
-  // have closed only the two most recent survive the cap.
-  assert.deepEqual(log.filter(e => e.open).map(e => e.id), ["keep", "gone3"])
-  assert.deepEqual(log.filter(e => !e.open).map(e => e.id), ["gone1", "gone2"])
-  assert.equal(Model.openConnectionCount(log), 2)
-})
-
-test("stacks group by process, destination, and state", () => {
-  const first = Model.readConnections(snapshot([
-    conn("a", "github.com", "firefox", { started_at: Date.parse("2026-08-18T11:00:00Z"), download: 10 }),
-    conn("b", "github.com", "firefox", { started_at: Date.parse("2026-08-18T11:30:00Z"), download: 20 }),
-    conn("c", "github.com", "curl", { started_at: Date.parse("2026-08-18T11:45:00Z"), download: 30 })
-  ]), 1000)
-  let log = Model.mergeConnectionLog([], first.items, 1000, 200)
-
-  // Firefox keeps one socket to github and loses the other.
-  const second = Model.readConnections(snapshot([
-    conn("a", "github.com", "firefox", { started_at: Date.parse("2026-08-18T11:00:00Z"), download: 10 }),
-    conn("c", "github.com", "curl", { started_at: Date.parse("2026-08-18T11:45:00Z"), download: 30 })
-  ]), 5000)
-  log = Model.mergeConnectionLog(log, second.items, 5000, 200)
-
-  const stacks = Model.stackConnections(log)
-  // Two processes on one host, newest open stack first, and firefox's closed
-  // socket is its own row rather than a count hidden inside the open one.
-  assert.equal(stacks.length, 3)
-  assert.deepEqual(stacks.map(s => [s.process, s.open, s.count]),
-    [["curl", true, 1], ["firefox", true, 1], ["firefox", false, 1]])
-  assert.deepEqual(stacks[2].ids, ["b"])
-  assert.equal(stacks[2].closedAtMs, 1000)
-
-  // A stack sums its members and is as old as the oldest of them.
-  const together = Model.stackConnections(Model.mergeConnectionLog([], first.items, 1000, 200))
-  const firefox = together.find(s => s.process === "firefox")
-  assert.equal(firefox.count, 2)
-  assert.equal(firefox.download, 30)
-  assert.equal(firefox.startMs, Date.parse("2026-08-18T11:00:00Z"))
+  const stacks = Model.stackConnections(items)
+  assert.deepEqual(stacks.map(s => [s.ids, s.download, s.count]),
+    [[["a", "b"], 30, 2], [["c"], 30, 1], [["d"], 40, 1]])
 })
 
 test("the rule tester stops at the first hit, mihomo's order", () => {
@@ -410,23 +336,17 @@ test("remote names that shadow object prototypes stay plain data", () => {
   assert.deepEqual(Object.keys(parsed.configs), ["__proto__"])
   assert.deepEqual(Object.keys(Model.readDelays(JSON.parse('{"delays":{"__proto__":5}}'))), ["__proto__"])
   assert.deepEqual(Model.ruleTargetTally([{ target: "constructor" }]), [{ target: "constructor", count: 1 }])
-  const flows = Model.connectionFlows([{ process: "constructor", chain: "DIRECT", download: 5, upload: 0, open: true }], 4, 4)
+  const flows = Model.connectionFlows([{ process: "constructor", outbound: "DIRECT", bytes: 5 }])
   assert.deepEqual(flows.sources, [{ name: "constructor", bytes: 5 }])
 })
 
-test("connection flows fold the smallest nodes into other", () => {
-  const stack = (process, chain, bytes, open) => ({ process, chain, download: bytes, upload: 0, open })
+test("session flows retain the complete byte totals from the daemon", () => {
   const flows = Model.connectionFlows([
-    stack("firefox", "London 05", 500, true),
-    stack("firefox", "Frankfurt 04", 300, true),
-    stack("steam", "DIRECT", 900, true),
-    stack("git", "Frankfurt 04", 50, true),
-    stack("code", "Frankfurt 04", 999999, false)
-  ], 2, 3)
-  assert.deepEqual(flows.sources.map(n => n.name), ["steam", "other"])
-  assert.equal(flows.sources[1].bytes, 850)
-  assert.deepEqual(flows.targets.map(n => n.name), ["DIRECT", "London 05", "Frankfurt 04"])
-  assert.deepEqual(flows.links[0], { source: "steam", target: "DIRECT", bytes: 900 })
+    { process: "steam", outbound: "DIRECT", bytes: 900 },
+    { process: "", outbound: "London 05", bytes: 500 },
+    { process: "", outbound: "Frankfurt 04", bytes: 350 }
+  ])
+  assert.deepEqual(flows.sources, [{ name: "steam", bytes: 900 }, { name: "other", bytes: 850 }])
   assert.equal(flows.links.reduce((sum, link) => sum + link.bytes, 0), 1750)
 })
 

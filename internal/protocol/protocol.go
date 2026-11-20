@@ -15,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 6
+	Version = 7
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -128,6 +128,7 @@ const (
 	OpSelect             = "groups.select"          // SelectArgs -> Group
 	OpProbeCancel        = "probe.cancel"           // ProbeCancelArgs -> Empty
 	OpDelayTest          = "delay.test"             // DelayArgs -> DelayResult
+	OpConnectionHistory  = "connections.history"    // ConnectionHistoryArgs -> ConnectionHistory
 	OpConnections        = "connections.list"       // nil -> Connections
 	OpCloseConnections   = "connections.close"      // CloseArgs -> Empty
 	OpEgress             = "egress.check"           // EgressArgs -> Egress
@@ -385,10 +386,56 @@ type Connection struct {
 // Connections is a snapshot of what is open now. Connections lists the
 // newest of them when there are too many for one message; Open counts all.
 type Connections struct {
-	UploadTotal   int64        `json:"upload_total"`
-	DownloadTotal int64        `json:"download_total"`
-	Open          int          `json:"open"`
-	Connections   []Connection `json:"connections"`
+	UploadTotal   int64             `json:"upload_total"`
+	DownloadTotal int64             `json:"download_total"`
+	Open          int               `json:"open"`
+	Summary       ConnectionSummary `json:"summary"`
+	Connections   []Connection      `json:"connections"`
+}
+
+type ConnectionHistoryArgs struct {
+	Session uint64  `json:"session,omitempty"`
+	Since   *uint64 `json:"since,omitempty"`
+	Before  uint64  `json:"before,omitempty"`
+}
+
+type ConnectionSummary struct {
+	Session    uint64           `json:"session"`
+	Revision   uint64           `json:"revision"`
+	Closed     uint64           `json:"closed"`
+	Blocked    uint64           `json:"blocked"`
+	Upload     int64            `json:"upload"`
+	Download   int64            `json:"download"`
+	Flows      []ConnectionFlow `json:"flows"`
+	Incomplete bool             `json:"incomplete,omitempty"`
+}
+
+type ConnectionFlow struct {
+	Process  string `json:"process"`
+	Outbound string `json:"outbound"`
+	Bytes    int64  `json:"bytes"`
+}
+
+type ConnectionHistory struct {
+	Reset    bool                   `json:"reset,omitempty"`
+	Session  uint64                 `json:"session"`
+	Revision uint64                 `json:"revision"`
+	Rows     []ConnectionHistoryRow `json:"rows"`
+	Next     uint64                 `json:"next,omitempty"`
+}
+
+type ConnectionHistoryRow struct {
+	ID          uint64 `json:"id"`
+	Process     string `json:"process"`
+	Destination string `json:"destination"`
+	Network     string `json:"network"`
+	Outbound    string `json:"outbound"`
+	Rule        string `json:"rule"`
+	Blocked     bool   `json:"blocked,omitempty"`
+	Count       uint64 `json:"count"`
+	Upload      int64  `json:"upload"`
+	Download    int64  `json:"download"`
+	LastAt      int64  `json:"last_at"`
 }
 
 // CloseArgs closes connections by id, or every connection with All.

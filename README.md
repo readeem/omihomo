@@ -23,7 +23,7 @@ Subscriptions, groups, latency, rules, TUN, and live connections, one keypress a
 - **Subscriptions.** Paste a URL, and Omihomo imports it, names it, and refreshes it on the provider's schedule.
 - **Groups and configs.** Pick a config, latency-test one or a whole group, and choose the primary group. Latency is colour-coded.
 - **Live readout.** A traffic graph, uptime, and the egress IP with its round trip through the selected config.
-- **Connections log.** Traffic drawn as process → config flows, and open and recently closed connections grouped by process and destination. Close one stack or all of them.
+- **Connections log.** Session totals and process → config flows, with open, closed, and blocked connections grouped by process, destination, and route. History keeps recording while the panel is closed and stays available after Stop until the next Start.
 - **Your rules first.** Add `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, and `PROCESS-NAME` rules that apply before the subscription's own rules, and test a domain or IP to see which rule catches it.
 - **TUN, mode, Tailscale.** Toggle TUN, cycle rule, global, and direct mode, and route the tailnet through the proxy.
 - **Keyboard first.** `1`–`4` switch views, `j`/`k` walk the view, and every action has a single-letter key.

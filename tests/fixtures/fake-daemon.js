@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 6 by default
+// --protocol  the version its hello announces, 7 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 6, refuse: false, busy: 0, latency: 0, fail: new Set() }
+const options = { protocol: 7, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -72,7 +72,7 @@ function ruleList() {
 }
 
 function connections() {
-  return { upload_total: 10, download_total: 20, open: 1, connections: [{
+  return { open: 1, summary: { session: 1, revision: 1, upload: 10, download: 20, flows: [] }, connections: [{
     id: "c1", network: "tcp", inbound: "tun", host: "example.com", process: "firefox",
     source_ip: "198.18.0.1", source_port: 50000, destination_ip: "93.184.215.14",
     destination_port: 443, chain: "Pass", rule: "MATCH", upload: 10, download: 20,
@@ -220,6 +220,12 @@ const ops = {
     return { result: {} }
   },
   "connections.list": () => ({ result: connections() }),
+  "connections.history": (client, args) => ({ result: { session: args.session || 1, revision: 1,
+    next: args.before ? 0 : 2, rows: args.before ? [
+      { id: 1, process: "curl", destination: "older.example:443", network: "tcp", outbound: "DIRECT", rule: "Match", count: 1, upload: 10, download: 20, last_at: 1000 }
+    ] : [
+      { id: 2, process: "firefox", destination: "blocked.example:443", network: "tcp", outbound: "REJECT", rule: "Match", count: 3, upload: 0, download: 0, blocked: true, last_at: 2000 }
+    ] } }),
   "connections.close": () => ({ result: {} }),
   "test.drop": () => {
     setImmediate(() => clients.forEach((client) => client.destroy()))
