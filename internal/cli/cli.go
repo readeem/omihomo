@@ -445,9 +445,19 @@ func (a *app) connCommand() *ffcli.Command {
 			return protocol.OpCloseConnections, protocol.CloseArgs{IDs: rest}, nil
 		})
 	all = closeCmd.FlagSet.Bool("all", false, "close every connection")
-	return a.group("conn", "omihomo conn <command>", "list and close connections",
+	var before, session *uint64
+	historyCmd := a.call("history", "omihomo conn history [--pretty] [--before <id>] [--session <id>]", "read a page of session connection history",
+		func(cmd *ffcli.Command, rest []string) (string, any, error) {
+			if len(rest) != 0 {
+				return "", nil, usage(cmd, "conn history takes flags only")
+			}
+			return protocol.OpConnectionHistory, protocol.ConnectionHistoryArgs{Before: *before, Session: *session}, nil
+		})
+	before = historyCmd.FlagSet.Uint64("before", 0, "continue from the previous page's next value")
+	session = historyCmd.FlagSet.Uint64("session", 0, "require the previous page's session")
+	return a.group("conn", "omihomo conn <command>", "list, close and inspect connections",
 		a.call("list", "omihomo conn list [--pretty]", "list open connections", nargs(0, protocol.OpConnections, nil)),
-		closeCmd,
+		closeCmd, historyCmd,
 	)
 }
 

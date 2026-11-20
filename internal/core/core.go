@@ -131,6 +131,8 @@ type Core interface {
 	// Connections lists the newest connections, at most MaxConnections of
 	// them; Open and the totals count every one.
 	Connections(ctx context.Context) (protocol.Connections, error)
+	// ConnectionHistory also serves the most recent session after Stop.
+	ConnectionHistory(ctx context.Context, args protocol.ConnectionHistoryArgs) (protocol.ConnectionHistory, error)
 	// CloseConnections closes the given ids; ids that are already gone are
 	// not an error. A nil slice closes every connection.
 	CloseConnections(ctx context.Context, ids []string) error

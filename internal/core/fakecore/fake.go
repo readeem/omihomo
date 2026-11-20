@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/core/connlog"
 	"github.com/readeem/omihomo/internal/protocol"
 )
 
@@ -25,14 +27,17 @@ var Delays = map[string]int{"Tokyo": 120, "Frankfurt": 0, "Amsterdam": 85, "DIRE
 // Core is a fake core.Core with a fixed set of groups, rules and
 // connections. The zero value is not usable; call New.
 type Core struct {
-	mu          sync.Mutex
-	running     bool
-	cfg         core.Config
-	applyErr    error
-	checkErr    error
-	groups      []protocol.Group
-	connections []protocol.Connection
-	geodata     func(core.Profile) []core.GeodataFile
+	mu           sync.Mutex
+	running      bool
+	cfg          core.Config
+	applyErr     error
+	checkErr     error
+	groups       []protocol.Group
+	connections  []protocol.Connection
+	history      *connlog.History
+	session      uint64
+	closeRecords map[string]func()
+	geodata      func(core.Profile) []core.GeodataFile
 }
 
 var _ core.Core = (*Core)(nil)
@@ -102,12 +107,14 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 	defer c.mu.Unlock()
 	if c.applyErr != nil {
 		if errors.Is(c.applyErr, core.ErrStopped) {
+			c.closeConnections(nil)
 			c.running = false
 		}
 		return c.applyErr
 	}
 	if !c.running {
 		c.reset()
+		c.beginHistory()
 	}
 	c.cfg = cfg
 	c.running = true
@@ -117,6 +124,7 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 func (c *Core) Stop(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closeConnections(nil)
 	c.running = false
 	return nil
 }
@@ -215,15 +223,28 @@ func (c *Core) Rules(ctx context.Context) ([]protocol.Rule, error) {
 func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.running {
-		return protocol.Connections{}, core.ErrNotRunning
+	out := protocol.Connections{Connections: []protocol.Connection{}}
+	if c.history != nil {
+		out.Summary, _ = c.history.Summary()
+		out.UploadTotal, out.DownloadTotal = out.Summary.Upload, out.Summary.Download
 	}
-	out := protocol.Connections{Open: len(c.connections), Connections: slices.Clone(c.connections)}
-	for _, conn := range c.connections {
-		out.UploadTotal += conn.Upload
-		out.DownloadTotal += conn.Download
+	if c.running {
+		out.Open = len(c.connections)
+		out.Connections = slices.Clone(c.connections)
 	}
 	return out, nil
+}
+
+func (c *Core) ConnectionHistory(ctx context.Context, args protocol.ConnectionHistoryArgs) (protocol.ConnectionHistory, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.history == nil {
+		if args.Session != 0 {
+			return protocol.ConnectionHistory{}, connlog.ErrSessionChanged
+		}
+		return protocol.ConnectionHistory{Rows: []protocol.ConnectionHistoryRow{}}, nil
+	}
+	return c.history.Page(ctx, args)
 }
 
 func (c *Core) CloseConnections(ctx context.Context, ids []string) error {
@@ -232,10 +253,37 @@ func (c *Core) CloseConnections(ctx context.Context, ids []string) error {
 	if !c.running {
 		return core.ErrNotRunning
 	}
-	c.connections = slices.DeleteFunc(c.connections, func(conn protocol.Connection) bool {
-		return ids == nil || slices.Contains(ids, conn.ID)
-	})
+	c.closeConnections(ids)
 	return nil
+}
+
+func (c *Core) closeConnections(ids []string) {
+	c.connections = slices.DeleteFunc(c.connections, func(conn protocol.Connection) bool {
+		if c.history == nil || ids != nil && !slices.Contains(ids, conn.ID) {
+			return false
+		}
+		c.closeRecords[conn.ID]()
+		delete(c.closeRecords, conn.ID)
+		return true
+	})
+}
+
+func (c *Core) beginHistory() {
+	if c.history != nil {
+		c.history.Discard()
+	}
+	c.session++
+	c.history = connlog.New("", c.session)
+	c.closeRecords = make(map[string]func(), len(c.connections))
+	for _, conn := range c.connections {
+		process := conn.Process
+		if process == "" {
+			process = "unknown"
+		} else {
+			process = filepath.Base(process)
+		}
+		c.closeRecords[conn.ID] = c.history.Start(conn.ID, connlog.Key{Process: process, Destination: net.JoinHostPort(conn.Host, strconv.Itoa(conn.DestinationPort)), Network: conn.Network, Outbound: conn.Chain, Rule: conn.Rule}, func() (int64, int64) { return conn.Upload, conn.Download }, nil)
+	}
 }
 
 func (c *Core) Traffic(ctx context.Context) (protocol.Traffic, error) {

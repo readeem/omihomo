@@ -42,6 +42,7 @@ import (
 	"github.com/metacubex/mihomo/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core"
+	"github.com/readeem/omihomo/internal/core/connlog"
 	"github.com/readeem/omihomo/internal/core/xray"
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/uplink"
@@ -72,6 +73,9 @@ type Core struct {
 	tap         *logTap
 	xrayNetwork xray.Network
 	delaySlots  chan struct{}
+	historyDir  string
+	nextSession uint64
+	capture     atomic.Pointer[connlog.History]
 
 	// applyMu serializes everything that parses or applies a config:
 	// parsing mutates mihomo's globals while it runs.
@@ -82,6 +86,7 @@ type Core struct {
 	mu      sync.Mutex
 	running bool
 	current *runtime
+	history *connlog.History
 	// generation counts commits and stops, so a drain knows when the
 	// stop it follows is over.
 	generation uint64
@@ -114,7 +119,9 @@ func New(home string, log *slog.Logger) (*Core, error) {
 		log = slog.Default()
 	}
 	constant.SetHomeDir(home)
-	return &Core{log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}, nil
+	c := &Core{historyDir: home, log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}
+	statistic.SetConnectionObserver(c.observeConnection)
+	return c, nil
 }
 
 func privateDir(dir string) error {
@@ -147,14 +154,18 @@ func (c *Core) Apply(ctx context.Context, cfg core.Config) error {
 	c.mu.Unlock()
 	if !wasRunning {
 		c.reloadDatabases()
+		c.nextSession++
+		c.capture.Store(connlog.New(c.historyDir, c.nextSession))
 	}
 
 	if err := c.run(next); err != nil {
 		if !wasRunning {
+			c.capture.Swap(nil).Discard()
 			c.stop()
 			return err
 		}
 		if rerr := c.restore(previous); rerr != nil {
+			c.capture.Store(nil)
 			return fmt.Errorf("%w; the previous config did not come back either (%v): %w", err, rerr, core.ErrStopped)
 		}
 		return err
@@ -359,9 +370,15 @@ func (c *Core) commit(rt *runtime) {
 	rt.parsed = nil
 	c.mu.Lock()
 	previous := c.current.xray
+	oldHistory := c.history
+	c.history = c.capture.Load()
+	newHistory := c.history
 	c.running, c.current = true, rt
 	c.generation++
 	c.mu.Unlock()
+	if oldHistory != nil && oldHistory != newHistory {
+		oldHistory.Discard()
+	}
 	if previous != rt.xray {
 		c.closeXray(previous)
 	}
@@ -387,6 +404,7 @@ func (c *Core) restore(previous core.Config) error {
 func (c *Core) Stop(ctx context.Context) error {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
+	c.capture.Store(nil)
 	c.stop()
 	return nil
 }
@@ -694,21 +712,33 @@ func (c *Core) Rules(ctx context.Context) ([]protocol.Rule, error) {
 }
 
 func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
-	if _, _, err := c.state(); err != nil {
-		return protocol.Connections{}, err
+	c.mu.Lock()
+	running, history := c.running, c.history
+	c.mu.Unlock()
+	out := protocol.Connections{Connections: []protocol.Connection{}}
+	if history == nil {
+		return out, nil
 	}
-	snap := statistic.DefaultManager.Snapshot()
-	infos := snap.Connections
+	summary, open := history.Summary()
+	out.Summary = summary
+	out.UploadTotal, out.DownloadTotal = out.Summary.Upload, out.Summary.Download
+	if !running {
+		return out, nil
+	}
+	var infos []*statistic.TrackerInfo
+	statistic.DefaultManager.Range(func(t statistic.Tracker) bool {
+		if info := t.Info(); info.Session.Load() == history.Session() {
+			infos = append(infos, info)
+		}
+		return true
+	})
 	slices.SortFunc(infos, func(a, b *statistic.TrackerInfo) int { return b.Start.Compare(a.Start) })
-	out := protocol.Connections{
-		UploadTotal:   snap.UploadTotal,
-		DownloadTotal: snap.DownloadTotal,
-		Open:          len(infos),
-		Connections:   make([]protocol.Connection, 0, min(len(infos), core.MaxConnections)),
-	}
+	out.Open = open
+	out.Connections = make([]protocol.Connection, 0, min(len(infos), core.MaxConnections))
 	c.procMu.Lock()
 	defer c.procMu.Unlock()
 	procs := make(map[string]processLookup, cap(out.Connections))
+	var rowBytes int
 	for _, info := range infos[:min(len(infos), core.MaxConnections)] {
 		conn := connection(info)
 		m := info.Metadata
@@ -717,10 +747,23 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 			if lookup.name == "" && lookup.attempts < 3 {
 				lookup.attempts++
 				lookup.name = c.lookupProcess(m)
+				if lookup.name != "" {
+					history.NameProcess(conn.ID, lookup.name)
+				}
 			}
 			procs[conn.ID] = lookup
 			conn.Process = lookup.name
 		}
+		// Reserve room for the session summary and worst-case JSON escaping.
+		size := 384 + 6*(len(conn.ID)+len(conn.Network)+len(conn.Inbound)+len(conn.Host)+len(conn.Process)+
+			len(conn.SourceIP)+len(conn.DestinationIP)+len(conn.Chain)+len(conn.Rule))
+		if size > protocol.MaxLine/2 {
+			continue
+		}
+		if rowBytes+size > protocol.MaxLine/2 {
+			break
+		}
+		rowBytes += size
 		out.Connections = append(out.Connections, conn)
 	}
 	c.procs = procs
@@ -769,9 +812,10 @@ func connection(info *statistic.TrackerInfo) protocol.Connection {
 	if m.DstIP.IsValid() {
 		conn.DestinationIP = m.DstIP.String()
 	}
-	if len(info.Chain) > 0 {
-		conn.Chain = info.Chain[0]
+	if info.MultipleDestinations.Load() {
+		conn.Host, conn.DestinationIP, conn.DestinationPort = "Multiple destinations", "", 0
 	}
+	conn.Chain = info.Chain.Last()
 	if info.RulePayload != "" {
 		conn.Rule += "(" + info.RulePayload + ")"
 	}

@@ -551,18 +551,18 @@ ShellRoot {
           var list = testRoot.findObject(panel, "ruleList")
           t.check(Math.round(list.contentY), Math.round(testRoot.savedScroll), "category collapse retains the scrolled viewport")
           panel.openView("conns")
-          var connections = panel.service.connectionLog.slice()
+          var connections = panel.service.openConnections.slice()
           for (var i = 0; i < 15; i++) connections.push(Object.assign({}, connections[0], {
             id: "scroll-" + i, host: "scroll-" + i + ".example", open: false, closedAtMs: Date.now()
           }))
-          panel.service.connectionLog = connections
+          panel.service.openConnections = connections
         } },
       { then: function() {
           var list = testRoot.findObject(panel, "connectionList")
           t.check(list.contentHeight > list.height + 40, true, "the connections fixture is scrollable")
           list.contentY = 40
           testRoot.savedScroll = list.contentY
-          panel.service.connectionLog = panel.service.connectionLog.map(function(c) { return Object.assign({}, c, { upload: c.upload + 1 }) })
+          panel.service.openConnections = panel.service.openConnections.map(function(c) { return Object.assign({}, c, { upload: c.upload + 1 }) })
         } },
       { then: function() {
           var list = testRoot.findObject(panel, "connectionList")
@@ -570,7 +570,7 @@ ShellRoot {
           var index = list.indexAt(1, list.contentY + 1)
           testRoot.savedConnection = panel.service.connectionStacks[index].key
           testRoot.savedScroll = list.itemAtIndex(index).y - list.contentY
-          panel.service.connectionLog = panel.service.connectionLog.concat([Object.assign({}, panel.service.connectionLog[0], {
+          panel.service.openConnections = panel.service.openConnections.concat([Object.assign({}, panel.service.openConnections[0], {
             id: "new-connection", host: "new.example", startMs: Date.now(), open: true
           })])
         } },
