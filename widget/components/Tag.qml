@@ -12,8 +12,9 @@ Rectangle {
   property bool filled: false
   property bool pill: true
   property real maxWidth: Style.space(110)
+  readonly property real horizontalPadding: Style.space(10)
 
-  implicitWidth: icon ? implicitHeight : Math.min(tagText.implicitWidth, maxWidth) + Style.space(10)
+  implicitWidth: icon ? implicitHeight : Math.min(tagText.implicitWidth, maxWidth) + horizontalPadding
   implicitHeight: tagText.implicitHeight + Style.space(2)
   radius: pill ? (Style.cornerRadius > 0 ? height / 2 : 0) : Math.min(theme.controlRadius, Style.space(4))
   color: filled ? tint : "transparent"
