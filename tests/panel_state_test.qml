@@ -237,12 +237,12 @@ ShellRoot {
           Style.spacingScaleWithFont = testRoot.savedSpacingScaleWithFont
         } },
       { then: function() { testRoot.key(Qt.Key_Escape) } },
-      { until: function() { return panel.editing === null }, then: function() { testRoot.type("3") } },
+      { until: function() { return panel.editing === null }, then: function() { panel.openView("rules") } },
       { then: function() {
           panel.focusRow("ruleTest")
           panel.activateCursor()
-          testRoot.type("unmatched.example")
         } },
+      { until: function() { return panel.editing && panel.editing.activeFocus }, then: function() { testRoot.type("unmatched.example") } },
       { then: function() {
           t.check(panel.ruleTest.unknown > 0, true, "the query passes rules needing runtime context")
           var result = testRoot.findObject(panel, "ruleTestResult")
