@@ -39,10 +39,10 @@ NavRow {
       bold: configRow.selected
     }
     Item {
-      implicitWidth: Math.max(0, Math.min(configRow.protocolLabelWidth + Style.space(10),
+      implicitWidth: Math.max(0, Math.min(configRow.protocolLabelWidth + protocolTag.horizontalPadding,
         row.width - configRow.latencyColumnWidth - latencyAction.implicitWidth - 3 * row.spacing - 3 * Style.font.body))
       implicitHeight: protocolTag.implicitHeight
-      visible: implicitWidth > Style.space(10)
+      visible: implicitWidth >= protocolTag.horizontalPadding + 3 * Style.font.bodySmall
 
       Tag {
         id: protocolTag
@@ -51,7 +51,7 @@ NavRow {
         anchors.verticalCenter: parent.verticalCenter
         visible: text !== ""
         tint: Util.alpha(theme.foreground, 0.8)
-        maxWidth: Math.max(0, parent.width - Style.space(10))
+        maxWidth: Math.max(0, parent.width - horizontalPadding)
         text: {
           const entry = configRow.panel.service.configEntries[configRow.configName]
           const type = entry ? entry.type : ""

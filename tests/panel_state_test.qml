@@ -229,6 +229,7 @@ ShellRoot {
       { name: "narrow configs with larger font", then: function() {
           var name = testRoot.visibleText(panel, "Singapore 03")
           var action = testRoot.visibleText(panel, "󰓅")
+          t.check(testRoot.visibleText(panel, "Shadowsocks"), null, "an unreadable protocol pill is hidden")
           t.check(name && name.width > 0, true, "a narrow config row still shows its name")
           t.check(action && action.parent.mapToItem(testRoot.popup, action.parent.width, 0).x <= testRoot.popup.width,
             true, "a narrow config row keeps its latency button on screen")
