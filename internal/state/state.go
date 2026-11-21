@@ -44,7 +44,7 @@ type Settings struct {
 
 // DefaultSettings are the settings of a fresh install.
 func DefaultSettings() Settings {
-	return Settings{Mode: protocol.ModeRule, Rules: []protocol.RuleEntry{}}
+	return Settings{Mode: protocol.ModeRule, SubscriptionUpdates: true, Rules: []protocol.RuleEntry{}}
 }
 
 // Subscription is one subscription's record. Times are unix milliseconds.

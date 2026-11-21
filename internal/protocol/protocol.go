@@ -215,16 +215,16 @@ type StreamsArgs struct {
 // Settings are the owner's typed choices, as their settings.json holds them.
 type Settings struct {
 	// Empty preserves a preference saved before the owner file held it.
-	Core                        CoreName        `json:"core,omitempty"`
-	CategoryTargets             CategoryTargets `json:"category_targets,omitzero"`
-	OmihomoRulesDisabled        bool            `json:"omihomo_rules_disabled,omitempty"`
-	SubscriptionRulesDisabled   bool            `json:"subscription_rules_disabled,omitempty"`
-	SubscriptionUpdatesDisabled bool            `json:"subscription_updates_disabled,omitempty"`
-	Mode                        Mode            `json:"mode"`
-	TUN                         bool            `json:"tun,omitzero"`
-	TUNRedirect                 bool            `json:"tun_redirect,omitzero"`
-	Tailscale                   bool            `json:"tailscale,omitzero"`
-	TailnetProxy                bool            `json:"tailnet_proxy,omitzero"`
+	Core                      CoreName        `json:"core,omitempty"`
+	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
+	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
+	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`
+	SubscriptionUpdates       bool            `json:"subscription_updates"`
+	Mode                      Mode            `json:"mode"`
+	TUN                       bool            `json:"tun,omitzero"`
+	TUNRedirect               bool            `json:"tun_redirect,omitzero"`
+	Tailscale                 bool            `json:"tailscale,omitzero"`
+	TailnetProxy              bool            `json:"tailnet_proxy,omitzero"`
 	// PrimaryGroup may name a group the active subscription lacks; the
 	// first selectable group stands in for it.
 	PrimaryGroup string `json:"primary_group,omitzero"`

@@ -94,7 +94,13 @@ func TestSubscriptionUpdatesSettingIsSaved(t *testing.T) {
 		}
 		dir, _ := settings.Dir()
 		data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-		if err != nil || strings.Contains(string(data), `"subscription_updates_disabled": true`) != (value == "off") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		var savedSettings struct {
+			SubscriptionUpdates *bool `json:"subscription_updates"`
+		}
+		if err := json.Unmarshal(data, &savedSettings); err != nil || savedSettings.SubscriptionUpdates == nil || *savedSettings.SubscriptionUpdates != (value == "on") {
 			t.Fatalf("saved after %s: %s, %v", value, data, err)
 		}
 	}
@@ -248,7 +254,7 @@ func TestSettingsFilesHoldTheChanges(t *testing.T) {
 	if code, _, errOut := run(t, "", "rule", "add", "domain-suffix", "example.com", "Elsewhere"); code != cli.ExitOK {
 		t.Fatalf("rule add while stopped: %d %s", code, errOut)
 	}
-	if got := file("settings.json"); got != "{\n  \"mode\": \"rule\",\n  \"tun\": true\n}\n" {
+	if got := file("settings.json"); got != "{\n  \"subscription_updates\": true,\n  \"mode\": \"rule\",\n  \"tun\": true\n}\n" {
 		t.Errorf("settings.json = %q", got)
 	}
 	if got := file("rules.json"); !strings.Contains(got, `"type": "DOMAIN-SUFFIX"`) {

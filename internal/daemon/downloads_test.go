@@ -208,7 +208,7 @@ func TestPausingScheduledRefreshCancelsItsApproval(t *testing.T) {
 			if tc.stop {
 				call[protocol.Status](t, c, protocol.OpStop, nil)
 			} else {
-				call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{SubscriptionUpdatesDisabled: true}))
+				call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{SubscriptionUpdates: false}))
 			}
 			waitFor(t, func() bool { return len(call[protocol.DownloadList](t, c, protocol.OpDownloads, nil).Downloads) == 0 })
 			if err := callErr(t, c, protocol.OpDownloadDecision, protocol.DownloadDecisionArgs{ID: pending.ID, Allow: true}); err.Code != protocol.CodeNotFound {

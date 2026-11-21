@@ -144,7 +144,7 @@ const ops = {
       return failure("conflict", "tailscaled is not installed")
     Object.assign(status, { mode: "rule", tun: false, tun_redirect: false, tailscale: false,
       tailnet_proxy: false, primary_group: "", dns_destination: "" }, a.settings)
-    status.subscription_updates = a.settings.subscription_updates_disabled !== true
+    status.subscription_updates = a.settings.subscription_updates !== false
     rules = a.rules
     publish()
     if (holdEdit) return new Promise((resolve) => { heldEdit = () => resolve({ result: { ...status } }) })

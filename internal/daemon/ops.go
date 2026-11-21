@@ -117,7 +117,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		}
 		return d.stop(ctx)
 	case protocol.OpApply:
-		var args protocol.ApplyArgs
+		args := protocol.ApplyArgs{Settings: protocol.Settings{SubscriptionUpdates: true}}
 		if err := decode(req.Args, &args); err != nil {
 			return nil, err
 		}
@@ -242,7 +242,7 @@ func (d *server) status() protocol.Status {
 		Tailscale:           d.settings.Tailscale,
 		TailscalePresent:    d.cfg.tailscalePresent(),
 		TailnetProxy:        d.settings.TailnetProxy,
-		SubscriptionUpdates: !d.settings.SubscriptionUpdatesDisabled,
+		SubscriptionUpdates: d.settings.SubscriptionUpdates,
 		StartedAt:           d.startedAt,
 		TUNBypass:           routed,
 	}
@@ -468,7 +468,7 @@ func (d *server) saveSettings(next state.Settings) *protocol.Error {
 	}
 	d.mu.Lock()
 	d.settings = next
-	if next.SubscriptionUpdatesDisabled && d.refreshCancel != nil {
+	if !next.SubscriptionUpdates && d.refreshCancel != nil {
 		d.refreshCancel()
 	}
 	d.mu.Unlock()
@@ -612,7 +612,7 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	if err := checkRules(args.Rules); err != nil {
 		return nil, err
 	}
-	if args.Settings.SubscriptionUpdatesDisabled {
+	if !args.Settings.SubscriptionUpdates {
 		resume := d.pauseRefreshes()
 		defer resume()
 	}
@@ -632,7 +632,7 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	rules := protocol.PruneCategories(args.Rules)
 	current := next.Settings
 	current.Core = in.Core
-	current.SubscriptionUpdatesDisabled = in.SubscriptionUpdatesDisabled
+	current.SubscriptionUpdates = in.SubscriptionUpdates
 	if in == current && reflect.DeepEqual(rules, next.Rules) && d.preferredCore(in.Core) == d.preferredCore(next.Core) {
 		if in != next.Settings {
 			next.Settings = in

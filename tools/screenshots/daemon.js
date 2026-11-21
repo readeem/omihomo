@@ -189,7 +189,7 @@ const ops = {
     if (args.settings.core) status.core = args.settings.core
     status.omihomo_rules_disabled = args.settings.omihomo_rules_disabled === true
     status.subscription_rules_disabled = args.settings.subscription_rules_disabled === true
-    status.subscription_updates = args.settings.subscription_updates_disabled !== true
+    status.subscription_updates = args.settings.subscription_updates !== false
     userRules = args.rules
     push("status", "rules")
     return { result: status }

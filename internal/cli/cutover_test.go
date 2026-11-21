@@ -276,7 +276,7 @@ func TestCutoverGivesTheOwnerTheImportedSettingsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"omihomo/settings.json": "{\n  \"mode\": \"global\",\n  \"tun\": true\n}\n",
+		"omihomo/settings.json": "{\n  \"subscription_updates\": true,\n  \"mode\": \"global\",\n  \"tun\": true\n}\n",
 		"omihomo/rules.json": "[\n  {\n    \"type\": \"DOMAIN-SUFFIX\",\n    \"value\": \"example.com\",\n" +
 			"    \"target\": \"DIRECT\"\n  }\n]\n",
 	}

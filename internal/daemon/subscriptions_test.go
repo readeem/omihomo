@@ -777,7 +777,7 @@ func TestSubscriptionRefreshesPause(t *testing.T) {
 		}
 	}
 	assertPaused()
-	args := owned(protocol.Settings{SubscriptionUpdatesDisabled: true})
+	args := owned(protocol.Settings{SubscriptionUpdates: false})
 	call[protocol.Status](t, c, protocol.OpApply, args)
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 	assertPaused()
@@ -792,7 +792,7 @@ func TestSubscriptionRefreshesPause(t *testing.T) {
 		t.Fatalf("manual update with automatic updates disabled: %d requests", n)
 	}
 	clock.advance(7 * time.Hour)
-	args.Settings.SubscriptionUpdatesDisabled = false
+	args.Settings.SubscriptionUpdates = true
 	call[protocol.Status](t, c, protocol.OpApply, args)
 	waitFor(t, func() bool { return o.count("/work") == 3 })
 }
@@ -810,11 +810,15 @@ func TestSubscriptionUpdatePreferenceDoesNotRequireRouting(t *testing.T) {
 			}
 			h.core.FailApply(fmt.Errorf("routing unavailable"))
 			h.core.FailCheck(fmt.Errorf("geodata unavailable"))
-			for _, disabled := range []bool{true, false} {
-				st := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{SubscriptionUpdatesDisabled: disabled}))
-				if st.SubscriptionUpdates == disabled || (st.State == protocol.StateOn) != running {
+			for _, enabled := range []bool{false, true, false} {
+				st := call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{SubscriptionUpdates: enabled}))
+				if st.SubscriptionUpdates != enabled || (st.State == protocol.StateOn) != running {
 					t.Fatalf("schedule preference changed routing: %+v", st)
 				}
+			}
+			st := call[protocol.Status](t, c, protocol.OpApply, json.RawMessage(`{"settings":{"mode":"rule"},"rules":[]}`))
+			if !st.SubscriptionUpdates {
+				t.Fatal("omitting the update preference did not enable updates")
 			}
 		})
 	}

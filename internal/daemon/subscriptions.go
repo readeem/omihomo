@@ -315,7 +315,7 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	if i >= 0 {
 		sub = d.subs.List[i]
 	}
-	paused := !manual && (d.refreshPauses > 0 || d.settings.SubscriptionUpdatesDisabled || (d.state != protocol.StateOn && d.state != protocol.StateDegraded))
+	paused := !manual && (d.refreshPauses > 0 || !d.settings.SubscriptionUpdates || (d.state != protocol.StateOn && d.state != protocol.StateDegraded))
 	if !manual && !paused {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
@@ -657,7 +657,7 @@ func (d *server) refreshDue(ctx context.Context) {
 	d.mu.Lock()
 	var due []string
 	now := ms(d.cfg.now())
-	if d.settings.SubscriptionUpdatesDisabled || (d.state != protocol.StateOn && d.state != protocol.StateDegraded) {
+	if !d.settings.SubscriptionUpdates || (d.state != protocol.StateOn && d.state != protocol.StateDegraded) {
 		d.mu.Unlock()
 		return
 	}
