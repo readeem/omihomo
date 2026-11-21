@@ -112,7 +112,7 @@ func TestAStoppedCoreRefusesCalls(t *testing.T) {
 	if err := c.Stop(t.Context()); err != nil {
 		t.Fatalf("a second stop: %v", err)
 	}
-	if _, err := c.Groups(t.Context()); !errors.Is(err, core.ErrNotRunning) {
+	if _, err := c.Groups(t.Context(), core.Config{}); !errors.Is(err, core.ErrNotRunning) {
 		t.Errorf("groups = %v, want ErrNotRunning", err)
 	}
 	if _, err := c.Rules(t.Context()); !errors.Is(err, core.ErrNotRunning) {
@@ -125,7 +125,7 @@ func TestAStoppedCoreRefusesCalls(t *testing.T) {
 
 func TestGroupsFollowTheProfile(t *testing.T) {
 	c := running(t, testConfig())
-	groups, err := c.Groups(t.Context())
+	groups, err := c.Groups(t.Context(), core.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestGroupsLabelVLESSConfigs(t *testing.T) {
 		t.Run(string(engine), func(t *testing.T) {
 			cfg.Core = engine
 			c := running(t, cfg)
-			groups, err := c.Groups(t.Context())
+			groups, err := c.Groups(t.Context(), core.Config{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -205,24 +205,84 @@ func TestGroupsLabelVLESSConfigs(t *testing.T) {
 
 func TestSelect(t *testing.T) {
 	c := running(t, testConfig())
-	if err := c.Select(t.Context(), "Proxy", "Dead"); err != nil {
+	if err := c.Select(t.Context(), core.Config{}, "Proxy", "Dead"); err != nil {
 		t.Fatal(err)
 	}
-	groups, _ := c.Groups(t.Context())
+	groups, _ := c.Groups(t.Context(), core.Config{})
 	if groups[0].Now != "Dead" {
 		t.Errorf("Proxy now = %q, want Dead", groups[0].Now)
 	}
 	c.Stop(t.Context())
 	c = running(t, testConfig())
-	if groups, _ := c.Groups(t.Context()); groups[0].Now != "Dead" {
+	if groups, _ := c.Groups(t.Context(), core.Config{}); groups[0].Now != "Dead" {
 		t.Errorf("Proxy now after a restart = %q, want the selection kept", groups[0].Now)
 	}
 	for _, tc := range []struct{ group, proxy string }{
 		{"Proxy", "Nowhere"}, {"Nowhere", "Local"}, {"Auto", "Local"}, {"GLOBAL", "Dead"},
 	} {
-		if err := c.Select(t.Context(), tc.group, tc.proxy); !errors.Is(err, core.ErrNotFound) {
+		if err := c.Select(t.Context(), core.Config{}, tc.group, tc.proxy); !errors.Is(err, core.ErrNotFound) {
 			t.Errorf("select %s in %s = %v, want ErrNotFound", tc.proxy, tc.group, err)
 		}
+	}
+}
+
+func TestConfigsCanBeSelectedWhileStopped(t *testing.T) {
+	cfg := testConfig()
+	cfg.Profile.Groups[0].Name = "Offline selection"
+	cfg.Profile.Rules = []core.Rule{{Type: "MATCH", Target: "Offline selection"}}
+	t.Cleanup(func() {
+		if err := shared.Select(context.Background(), cfg, "Offline selection", "Local"); err != nil {
+			t.Error(err)
+		}
+	})
+	c := shared
+	groups, err := c.Groups(t.Context(), cfg)
+	if err != nil || len(groups) != 2 || groups[0].Members[1].Name != "Dead" {
+		t.Fatalf("offline groups: %+v, %v", groups, err)
+	}
+	if groups[0].Now != "Local" {
+		t.Fatalf("initial offline selection: %+v", groups[0])
+	}
+	if err := c.Select(t.Context(), cfg, "Offline selection", "Dead"); err != nil {
+		t.Fatal(err)
+	}
+	groups, err = c.Groups(t.Context(), cfg)
+	if err != nil || groups[0].Now != "Dead" {
+		t.Fatalf("offline selection: %+v, %v", groups, err)
+	}
+	if _, err := c.TestDelay(t.Context(), "Proxy", nil, ""); !errors.Is(err, core.ErrNotRunning) {
+		t.Fatalf("offline latency test: %v", err)
+	}
+	if _, err := c.DialContext(t.Context(), "tcp", "127.0.0.1:1"); !errors.Is(err, core.ErrNotRunning) {
+		t.Fatalf("offline selection started the core: %v", err)
+	}
+	c = running(t, cfg)
+	groups, err = c.Groups(t.Context(), cfg)
+	if err != nil || groups[0].Now != "Dead" {
+		t.Fatalf("selection after start: %+v, %v", groups, err)
+	}
+}
+
+func TestOfflineConfigsDoNotRequireRoutingData(t *testing.T) {
+	cfg := testConfig()
+	cfg.Profile.Groups[0].Name = "Without routing data"
+	cfg.Profile.Rules = []core.Rule{{Type: "GEOSITE", Value: "missing", Target: "DIRECT"}}
+	cfg.DNSDestination = "Unavailable destination"
+	t.Cleanup(func() {
+		if err := shared.Select(context.Background(), cfg, "Without routing data", "Local"); err != nil {
+			t.Error(err)
+		}
+	})
+	groups, err := shared.Groups(t.Context(), cfg)
+	if err != nil || len(groups) != 2 || groups[0].Now != "Local" {
+		t.Fatalf("offline groups without routing data: %+v, %v", groups, err)
+	}
+	if err := shared.Select(t.Context(), cfg, "Without routing data", "Dead"); err != nil {
+		t.Fatal(err)
+	}
+	groups, err = shared.Groups(t.Context(), cfg)
+	if err != nil || groups[0].Now != "Dead" {
+		t.Fatalf("offline selection without routing data: %+v, %v", groups, err)
 	}
 }
 
@@ -281,7 +341,7 @@ func TestDelay(t *testing.T) {
 	defer func() { delayURL, delayIPv6URL = old4, old6 }()
 
 	c := running(t, testConfig())
-	before, err := c.Groups(t.Context())
+	before, err := c.Groups(t.Context(), core.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +352,7 @@ func TestDelay(t *testing.T) {
 	if delays["Local"] <= 0 || delays["Dead"] != 0 || len(delays) != 3 {
 		t.Errorf("delays = %v, want Local measured, Dead failed, every member tested", delays)
 	}
-	groups, err := c.Groups(t.Context())
+	groups, err := c.Groups(t.Context(), core.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +426,7 @@ func TestDialGoesThroughTheRules(t *testing.T) {
 	defer srv.Close()
 	c := running(t, testConfig())
 	// Selections outlive a config, so an earlier test may have left Dead.
-	if err := c.Select(t.Context(), "Proxy", "Local"); err != nil {
+	if err := c.Select(t.Context(), core.Config{}, "Proxy", "Local"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -428,7 +488,7 @@ func TestAConfigThatDoesNotParseChangesNothing(t *testing.T) {
 	if err != nil || len(rules) != 3 {
 		t.Errorf("rules after the failure = %v, %v; want the previous three", rules, err)
 	}
-	if groups, err := c.Groups(t.Context()); err != nil || len(groups) != 2 {
+	if groups, err := c.Groups(t.Context(), core.Config{}); err != nil || len(groups) != 2 {
 		t.Errorf("groups after the failure = %v, %v", groups, err)
 	}
 }
@@ -447,7 +507,7 @@ func TestAFailedTUNKeepsThePreviousConfig(t *testing.T) {
 	if strings.Contains(err.Error(), "no reason was logged") {
 		t.Errorf("the failure does not say why: %v", err)
 	}
-	if _, err := c.Groups(t.Context()); err != nil {
+	if _, err := c.Groups(t.Context(), core.Config{}); err != nil {
 		t.Errorf("the previous config is gone: %v", err)
 	}
 
@@ -455,7 +515,7 @@ func TestAFailedTUNKeepsThePreviousConfig(t *testing.T) {
 	if err := c.Apply(t.Context(), withTUN); err == nil {
 		t.Fatal("TUN started unprivileged")
 	}
-	if _, err := c.Groups(t.Context()); !errors.Is(err, core.ErrNotRunning) {
+	if _, err := c.Groups(t.Context(), core.Config{}); !errors.Is(err, core.ErrNotRunning) {
 		t.Errorf("a failed start left the core running: %v", err)
 	}
 }
@@ -477,7 +537,7 @@ func TestAnEmptyProfileRunsDirect(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
 	c := running(t, core.Config{Mode: protocol.ModeRule})
-	if groups, err := c.Groups(t.Context()); err != nil || len(groups) != 0 {
+	if groups, err := c.Groups(t.Context(), core.Config{}); err != nil || len(groups) != 0 {
 		t.Fatalf("groups = %v, %v", groups, err)
 	}
 	conn, err := c.DialContext(t.Context(), "tcp", srv.Listener.Addr().String())
@@ -541,7 +601,7 @@ func TestAMalformedRegexFailsTheApply(t *testing.T) {
 	if err := c.Apply(t.Context(), bad); err == nil {
 		t.Fatal("a group with a broken filter applied")
 	}
-	if _, err := c.Groups(t.Context()); err != nil {
+	if _, err := c.Groups(t.Context(), core.Config{}); err != nil {
 		t.Errorf("the previous config is gone: %v", err)
 	}
 }
@@ -569,7 +629,7 @@ func TestATakenPortFailsTheApply(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "did not open") {
 				t.Fatalf("apply with %s taken = %v", network, err)
 			}
-			if _, err := c.Groups(t.Context()); !errors.Is(err, core.ErrNotRunning) {
+			if _, err := c.Groups(t.Context(), core.Config{}); !errors.Is(err, core.ErrNotRunning) {
 				t.Errorf("the core runs with no way in: %v", err)
 			}
 		})
@@ -613,7 +673,7 @@ func TestARuleSetWithUnreadableLinesFailsTheApply(t *testing.T) {
 			t.Errorf("%s set with a bad line = %v", rs.Behavior, err)
 		}
 	}
-	if _, err := shared.Groups(t.Context()); !errors.Is(err, core.ErrNotRunning) {
+	if _, err := shared.Groups(t.Context(), core.Config{}); !errors.Is(err, core.ErrNotRunning) {
 		t.Errorf("a refused config started the core: %v", err)
 	}
 }
@@ -664,7 +724,7 @@ func TestARestoreThatFailsStops(t *testing.T) {
 	if taken == nil {
 		t.Fatal("the test could not take the port")
 	}
-	if _, err := c.Groups(t.Context()); !errors.Is(err, core.ErrNotRunning) {
+	if _, err := c.Groups(t.Context(), core.Config{}); !errors.Is(err, core.ErrNotRunning) {
 		t.Errorf("the core claims to run: %v", err)
 	}
 }
@@ -718,7 +778,7 @@ func TestADialInFlightAtStopIsClosed(t *testing.T) {
 		Options: map[string]any{"server": "127.0.0.1", "port": port}})
 	cfg.Profile.Groups[0].Members = append(cfg.Profile.Groups[0].Members, "Slow")
 	c := running(t, cfg)
-	if err := c.Select(t.Context(), "Proxy", "Slow"); err != nil {
+	if err := c.Select(t.Context(), core.Config{}, "Proxy", "Slow"); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := c.DialContext(t.Context(), "tcp", "192.0.2.1:80")
@@ -753,7 +813,7 @@ func TestADrainSparesTheNextStart(t *testing.T) {
 	c := running(t, testConfig())
 	c.Stop(t.Context())
 	c = running(t, testConfig())
-	if err := c.Select(t.Context(), "Proxy", "Local"); err != nil {
+	if err := c.Select(t.Context(), core.Config{}, "Proxy", "Local"); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := c.DialContext(t.Context(), "tcp", srv.Listener.Addr().String())
@@ -774,7 +834,7 @@ func TestImportedSelectionsSurviveOfflineStart(t *testing.T) {
 	p := profile()
 	if os.Getenv("OMIHOMO_TEST_CORE_HOME") != "" {
 		c := running(t, core.Config{Mode: "rule", Profile: p})
-		groups, err := c.Groups(t.Context())
+		groups, err := c.Groups(t.Context(), core.Config{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -835,7 +895,7 @@ func TestHiddenPrimaryAgreesWithListedGroups(t *testing.T) {
 			}
 			c := running(t, cfg)
 			global := tunnel.Proxies()[globalGroup].Adapter().(interface{ Now() string }).Now()
-			groups, err := c.Groups(t.Context())
+			groups, err := c.Groups(t.Context(), core.Config{})
 			if err != nil {
 				t.Fatal(err)
 			}

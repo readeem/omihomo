@@ -117,7 +117,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		}
 		return d.stop(ctx)
 	case protocol.OpApply:
-		var args protocol.ApplyArgs
+		args := protocol.ApplyArgs{Settings: protocol.Settings{SubscriptionUpdates: true}}
 		if err := decode(req.Args, &args); err != nil {
 			return nil, err
 		}
@@ -126,7 +126,7 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err
 		}
-		groups, err := d.core.Groups(ctx)
+		groups, err := d.core.Groups(ctx, d.groupConfig())
 		if err != nil {
 			return nil, coreError(err)
 		}
@@ -229,21 +229,22 @@ func (d *server) status() protocol.Status {
 		choices = d.cfg.cores
 	}
 	return protocol.Status{
-		Core:               d.preferredCore(d.settings.Core),
-		CoreChoices:        choices,
-		State:              d.state,
-		Detail:             d.detail,
-		ActiveSubscription: active,
-		PrimaryGroup:       d.settings.PrimaryGroup,
-		DNSDestination:     d.settings.DNSDestination,
-		Mode:               d.settings.Mode,
-		TUN:                d.settings.TUN,
-		TUNRedirect:        d.settings.TUNRedirect,
-		Tailscale:          d.settings.Tailscale,
-		TailscalePresent:   d.cfg.tailscalePresent(),
-		TailnetProxy:       d.settings.TailnetProxy,
-		StartedAt:          d.startedAt,
-		TUNBypass:          routed,
+		Core:                d.preferredCore(d.settings.Core),
+		CoreChoices:         choices,
+		State:               d.state,
+		Detail:              d.detail,
+		ActiveSubscription:  active,
+		PrimaryGroup:        d.settings.PrimaryGroup,
+		DNSDestination:      d.settings.DNSDestination,
+		Mode:                d.settings.Mode,
+		TUN:                 d.settings.TUN,
+		TUNRedirect:         d.settings.TUNRedirect,
+		Tailscale:           d.settings.Tailscale,
+		TailscalePresent:    d.cfg.tailscalePresent(),
+		TailnetProxy:        d.settings.TailnetProxy,
+		SubscriptionUpdates: d.settings.SubscriptionUpdates,
+		StartedAt:           d.startedAt,
+		TUNBypass:           routed,
 	}
 }
 
@@ -260,7 +261,7 @@ func (d *server) snapshot(ctx context.Context, stream string) any {
 	case protocol.StreamStatus:
 		return d.status()
 	case protocol.StreamGroups:
-		groups, err := d.core.Groups(ctx)
+		groups, err := d.core.Groups(ctx, d.groupConfig())
 		if err != nil {
 			groups = []protocol.Group{}
 		}
@@ -349,6 +350,9 @@ func (d *server) setState(state, detail string) {
 	defer d.mu.Unlock()
 	d.state = state
 	d.detail = detail
+	if state != protocol.StateOn && state != protocol.StateDegraded && d.refreshCancel != nil {
+		d.refreshCancel()
+	}
 	switch state {
 	case protocol.StateOn:
 		if d.startedAt == 0 {
@@ -424,6 +428,8 @@ func (d *server) startLocked(ctx context.Context) *protocol.Error {
 }
 
 func (d *server) stop(ctx context.Context) (any, *protocol.Error) {
+	resume := d.pauseRefreshes()
+	defer resume()
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
@@ -462,6 +468,9 @@ func (d *server) saveSettings(next state.Settings) *protocol.Error {
 	}
 	d.mu.Lock()
 	d.settings = next
+	if !next.SubscriptionUpdates && d.refreshCancel != nil {
+		d.refreshCancel()
+	}
 	d.mu.Unlock()
 	return nil
 }
@@ -546,6 +555,9 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 		if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 			return fail(protocol.CodeFetch, "%v", err)
 		}
+		if err := ctx.Err(); err != nil {
+			return coreError(err)
+		}
 		if err := d.core.Check(ctx, cfg); err != nil {
 			return fail(protocol.CodeCore, "the core would not run it: %v", err)
 		}
@@ -553,6 +565,9 @@ func (d *server) reapply(ctx context.Context, next state.Settings, p core.Profil
 	}
 	cfg := d.runConfig(next, p)
 	err := d.ensureGeodata(ctx, d.core, cfg.Profile)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err == nil {
 		err = d.core.Apply(ctx, cfg)
 	}
@@ -579,6 +594,9 @@ func (d *server) acceptContent(ctx context.Context, s state.Settings, p core.Pro
 	if err := d.ensureGeodata(ctx, d.core, cfg.Profile); err != nil {
 		return fail(protocol.CodeFetch, "%v", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return coreError(err)
+	}
 	if err := d.core.Check(ctx, cfg); err != nil {
 		return fail(protocol.CodeRejected, "the core would not run it: %v", err)
 	}
@@ -594,6 +612,10 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	if err := checkRules(args.Rules); err != nil {
 		return nil, err
 	}
+	if !args.Settings.SubscriptionUpdates {
+		resume := d.pauseRefreshes()
+		defer resume()
+	}
 
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
@@ -607,6 +629,20 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	} else if err := d.checkCore(in.Core); err != nil {
 		return nil, err
 	}
+	rules := protocol.PruneCategories(args.Rules)
+	current := next.Settings
+	current.Core = in.Core
+	current.SubscriptionUpdates = in.SubscriptionUpdates
+	if in == current && reflect.DeepEqual(rules, next.Rules) && d.preferredCore(in.Core) == d.preferredCore(next.Core) {
+		if in != next.Settings {
+			next.Settings = in
+			if err := d.saveSettings(next); err != nil {
+				return nil, err
+			}
+			d.publish(ctx)
+		}
+		return d.status(), nil
+	}
 	if in.DNSDestination != "" && (in.DNSDestination == "GLOBAL" || !(slices.ContainsFunc(p.Groups, func(g core.Group) bool { return g.Name == in.DNSDestination }) || slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == in.DNSDestination }))) {
 		return nil, fail(protocol.CodeNotFound, "DNS destination %q is unavailable in the active subscription", in.DNSDestination)
 	}
@@ -614,18 +650,6 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 	// still apply after tailscaled is gone.
 	if (in.Tailscale && !next.Tailscale || in.TailnetProxy && !next.TailnetProxy) && !d.cfg.tailscalePresent() {
 		return nil, fail(protocol.CodeConflict, "tailscaled is not installed")
-	}
-	rules := protocol.PruneCategories(args.Rules)
-	current := next.Settings
-	current.Core = in.Core
-	if in == current && reflect.DeepEqual(rules, next.Rules) && d.preferredCore(in.Core) == d.preferredCore(next.Core) {
-		if in.Core != next.Core {
-			next.Core = in.Core
-			if err := d.saveSettings(next); err != nil {
-				return nil, err
-			}
-		}
-		return d.status(), nil
 	}
 	next.Settings, next.Rules = in, rules
 	if err := d.commitSettings(ctx, next, p); err != nil {
@@ -665,11 +689,11 @@ func (d *server) selectProxy(ctx context.Context, args protocol.SelectArgs) (any
 	if err := validName("proxy", args.Proxy); err != nil {
 		return nil, err
 	}
-	if err := d.core.Select(ctx, args.Group, args.Proxy); err != nil {
+	if err := d.core.Select(ctx, d.groupConfig(), args.Group, args.Proxy); err != nil {
 		return nil, coreError(err)
 	}
 	d.publish(ctx)
-	groups, err := d.core.Groups(ctx)
+	groups, err := d.core.Groups(ctx, d.groupConfig())
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -762,7 +786,7 @@ func (d *server) egress(ctx context.Context, args protocol.EgressArgs) (any, *pr
 		if err := validName("proxy", args.Proxy); err != nil {
 			return nil, err
 		}
-		groups, err := d.core.Groups(ctx)
+		groups, err := d.core.Groups(ctx, d.groupConfig())
 		if err != nil {
 			return nil, coreError(err)
 		}

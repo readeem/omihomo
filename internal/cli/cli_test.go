@@ -81,6 +81,31 @@ func run(t *testing.T, stdin string, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+func TestSubscriptionUpdatesSettingIsSaved(t *testing.T) {
+	serve(t, os.Getuid())
+	for _, value := range []string{"off", "on"} {
+		code, out, stderr := run(t, "", "set", "subscription-updates", value)
+		if code != 0 {
+			t.Fatalf("set %s: %d %s", value, code, stderr)
+		}
+		var status protocol.Status
+		if err := json.Unmarshal([]byte(out), &status); err != nil || status.SubscriptionUpdates != (value == "on") {
+			t.Fatalf("status after %s: %s, %v", value, out, err)
+		}
+		dir, _ := settings.Dir()
+		data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var savedSettings struct {
+			SubscriptionUpdates *bool `json:"subscription_updates"`
+		}
+		if err := json.Unmarshal(data, &savedSettings); err != nil || savedSettings.SubscriptionUpdates == nil || *savedSettings.SubscriptionUpdates != (value == "on") {
+			t.Fatalf("saved after %s: %s, %v", value, data, err)
+		}
+	}
+}
+
 func TestCommandsRunOverTheSocket(t *testing.T) {
 	serve(t, os.Getuid())
 
@@ -192,6 +217,15 @@ func TestSubscriptionAndSettingsCommands(t *testing.T) {
 	if code, _, _ := run(t, "", "stop"); code != cli.ExitOK {
 		t.Fatalf("stop exit %d", code)
 	}
+	if code, out, errOut := run(t, "", "group", "list"); code != cli.ExitOK || !strings.Contains(out, `"name":"Proxy"`) {
+		t.Fatalf("offline subscription groups: %d %s %s", code, out, errOut)
+	}
+	if code, out, errOut := run(t, "", "set", "group", "Elsewhere"); code != cli.ExitOK || !strings.Contains(out, `"primary_group":"Elsewhere"`) {
+		t.Fatalf("stage a primary group from another subscription: %d %s %s", code, out, errOut)
+	}
+	if code, _, errOut := run(t, "", "rule", "add", "DOMAIN", "a.example", "Elsewhere"); code != cli.ExitOK {
+		t.Fatalf("stage a rule target from another subscription: %d %s", code, errOut)
+	}
 	if code, out, _ := run(t, "", "sub", "remove", "Work"); code != cli.ExitOK || out != "" {
 		t.Fatalf("sub remove: %d %q", code, out)
 	}
@@ -220,7 +254,7 @@ func TestSettingsFilesHoldTheChanges(t *testing.T) {
 	if code, _, errOut := run(t, "", "rule", "add", "domain-suffix", "example.com", "Elsewhere"); code != cli.ExitOK {
 		t.Fatalf("rule add while stopped: %d %s", code, errOut)
 	}
-	if got := file("settings.json"); got != "{\n  \"mode\": \"rule\",\n  \"tun\": true\n}\n" {
+	if got := file("settings.json"); got != "{\n  \"subscription_updates\": true,\n  \"mode\": \"rule\",\n  \"tun\": true\n}\n" {
 		t.Errorf("settings.json = %q", got)
 	}
 	if got := file("rules.json"); !strings.Contains(got, `"type": "DOMAIN-SUFFIX"`) {

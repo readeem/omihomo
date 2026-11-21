@@ -169,6 +169,7 @@ func (f *Fetcher) get(ctx context.Context, r Request) (*Response, error) {
 	defer cancel()
 
 	ctx = context.WithValue(ctx, directPermission{}, r.AllowDirect)
+	ctx = context.WithValue(ctx, requestCancellation{}, ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
 	if err != nil {
 		return nil, errors.New("not a valid URL") // the parse error quotes it

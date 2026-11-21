@@ -150,8 +150,10 @@ type server struct {
 
 	// refreshMu serializes downloads, so one subscription is never fetched
 	// twice at once. It is taken before opMu.
-	refreshMu sync.Mutex
-	addAsked  map[string]time.Time
+	refreshMu     sync.Mutex
+	addAsked      map[string]time.Time
+	refreshCancel context.CancelFunc // guarded by mu; automatic refreshes only
+	refreshPauses int                // guarded by mu; pending stop or disable operations
 
 	store     *state.Store
 	fetcher   *fetch.Fetcher

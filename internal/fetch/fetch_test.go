@@ -512,6 +512,65 @@ func TestDownloadConnectivityRecovery(t *testing.T) {
 	}
 }
 
+func TestCancellingDownloadCancelsItsDial(t *testing.T) {
+	for _, route := range []string{"proxy", "direct"} {
+		t.Run(route, func(t *testing.T) {
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			defer close(release)
+			returned := make(chan struct{})
+			blocked := func(ctx context.Context) (net.Conn, error) {
+				entered <- struct{}{}
+				select {
+				case <-ctx.Done():
+				case <-release:
+				}
+				close(returned)
+				return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+			}
+			var directCalls atomic.Int32
+			transport := RoutedTransport(func(ctx context.Context, _, _ string) (net.Conn, error) {
+				if route == "proxy" {
+					return blocked(ctx)
+				}
+				return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+			}, func(ctx context.Context, _, _ string) (net.Conn, error) {
+				if route == "direct" {
+					return blocked(ctx)
+				}
+				directCalls.Add(1)
+				return nil, context.Canceled
+			})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := New(transport).Get(ctx, Request{URL: "https://example.com/sub", AllowDirect: true})
+				done <- err
+			}()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("download did not begin dialing")
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("download did not cancel")
+			}
+			select {
+			case <-returned:
+			case <-time.After(time.Second):
+				t.Fatal("dial outlived the cancelled download")
+			}
+			if directCalls.Load() != 0 {
+				t.Fatal("cancelled proxy dial started direct recovery")
+			}
+		})
+	}
+}
+
 func TestRecoveryDoesNotRetryTLSAuthenticationOrHTTPFailures(t *testing.T) {
 	for _, failure := range []error{
 		errors.New("proxy authentication failed"),

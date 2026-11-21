@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 7
+  readonly property int protocolVersion: 8
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -54,6 +54,7 @@ Item {
   // rather than offering a toggle that can only fail.
   property bool tailscalePresent: false
   property bool tailnetProxy: false
+  property bool subscriptionUpdates: true
   property double startedMs: 0
   // What the rule tester needs to know about TUN routing.
   property var routing: ({})
@@ -67,6 +68,7 @@ Item {
   property int _desiredTunRedirect: -1
   property int _desiredTailscaleEnabled: -1
   property int _desiredTailnetProxy: -1
+  property int _desiredSubscriptionUpdates: -1
   property string _desiredMode: ""
   property var _desiredDNSDestination: null
 
@@ -84,11 +86,13 @@ Item {
     ? tailscaleEnabled : _desiredTailscaleEnabled === 1
   readonly property bool tailnetProxyActive: _desiredTailnetProxy === -1
     ? tailnetProxy : _desiredTailnetProxy === 1
+  readonly property bool subscriptionUpdatesActive: _desiredSubscriptionUpdates === -1
+    ? subscriptionUpdates : _desiredSubscriptionUpdates === 1
   readonly property string effectiveDNSDestination: _desiredDNSDestination === null ? dnsDestination : _desiredDNSDestination
   readonly property string effectiveMode: _desiredMode !== "" ? _desiredMode : mode
   // Whether live state — groups, traffic, connections — can be read now.
   readonly property bool apiReady: streamsReady(["status"]) && coreRunning
-  readonly property bool groupsReady: apiReady && streamsReady(["groups"])
+  readonly property bool groupsReady: streamsReady(["status", "groups"])
   // One run of one subscription. Anything read from the core belongs to the
   // runtime it was read from, and is dropped when this changes.
   readonly property string runtimeKey: coreName + "|" + activeSubscription + "|" + startedMs
@@ -502,6 +506,7 @@ Item {
     tailscaleEnabled = status.tailscaleEnabled
     tailscalePresent = status.tailscalePresent
     tailnetProxy = status.tailnetProxy
+    subscriptionUpdates = status.subscriptionUpdates
     startedMs = status.startedMs
     routing = Model.statusRouting(status)
     _statusKnown = true
@@ -515,6 +520,8 @@ Item {
       _desiredTailscaleEnabled = -1
     if (_desiredTailnetProxy !== -1 && tailnetProxy === (_desiredTailnetProxy === 1))
       _desiredTailnetProxy = -1
+    if (_desiredSubscriptionUpdates !== -1 && subscriptionUpdates === (_desiredSubscriptionUpdates === 1))
+      _desiredSubscriptionUpdates = -1
     if (_desiredMode !== "" && mode === _desiredMode) _desiredMode = ""
     // A proxy that is starting keeps its last start time, so a hiccup keeps the
     // last snapshot on screen. A stop, restart, or another subscription is a
@@ -570,6 +577,7 @@ Item {
     tailscaleEnabled = false
     tailscalePresent = false
     tailnetProxy = false
+    subscriptionUpdates = true
     startedMs = 0
     routing = ({})
     subscriptions = []
@@ -587,6 +595,7 @@ Item {
     _desiredTunRedirect = -1
     _desiredTailscaleEnabled = -1
     _desiredTailnetProxy = -1
+    _desiredSubscriptionUpdates = -1
     _desiredMode = ""
     _desiredDNSDestination = null
   }
@@ -598,7 +607,7 @@ Item {
     var parsed = Model.readGroups(data)
     groups = parsed.groups
     configEntries = parsed.configs
-    proxiesLoaded = data !== null && coreRunning
+    proxiesLoaded = data !== null
     if (data === null) {
       configTestResults = ({})
       groupTestedAt = ({})
@@ -778,7 +787,7 @@ Item {
     if (desired !== "") root[desired] = pending
     reportDone(message || "")
     var key = Object.keys(args)[0]
-    var names = { primary_group: "group", dns_destination: "dns-destination", tun_redirect: "tun-redirect", tailnet_proxy: "tailnet-proxy" }
+    var names = { primary_group: "group", dns_destination: "dns-destination", tun_redirect: "tun-redirect", tailnet_proxy: "tailnet-proxy", subscription_updates: "subscription-updates" }
     var value = typeof args[key] === "boolean" ? (args[key] ? "on" : "off") : args[key]
     _settingsCall = edit(["set", names[key] || key, "--", value], function(result, error) {
       root._settingsCall = 0
@@ -824,6 +833,11 @@ Item {
     var desired = tailnetProxyActive ? 0 : 1
     changeSetting({ tailnet_proxy: desired === 1 }, "_desiredTailnetProxy", desired,
       desired === 1 ? "Routing the tailnet through the proxy…" : "Routing the tailnet through Tailscale…")
+  }
+
+  function toggleSubscriptionUpdates() {
+    var desired = subscriptionUpdatesActive ? 0 : 1
+    changeSetting({ subscription_updates: desired === 1 }, "_desiredSubscriptionUpdates", desired)
   }
 
   function setDNSDestination(name) {
@@ -1036,7 +1050,7 @@ Item {
   }
 
   function testConfig(name) {
-    if (!groupsReady || pingTestsRunning || pendingConfig !== "" || name === "") return
+    if (!apiReady || !coreActive || !groupsReady || pingTestsRunning || pendingConfig !== "" || name === "") return
     if (errorScope === "configs") clearMessages()
     if (name === currentConfig) {
       startManualTrace()
@@ -1048,7 +1062,7 @@ Item {
   }
 
   function testGroup(name) {
-    if (!groupsReady || pingTestsRunning || pendingConfig !== "" || name === "") return
+    if (!apiReady || !coreActive || !groupsReady || pingTestsRunning || pendingConfig !== "" || name === "") return
     const group = Model.groupByName(groups, name)
     if (!group || group.all.length === 0) return
     if (errorScope === "configs") clearMessages()

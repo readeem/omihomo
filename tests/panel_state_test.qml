@@ -313,7 +313,7 @@ ShellRoot {
           testRoot.type("M")
         } },
       { then: function() { testRoot.key(Qt.Key_Down); testRoot.key(Qt.Key_Down); testRoot.key(Qt.Key_Return) } },
-      { name: "DNS picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { name: "DNS picker", until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           t.check(panel.activeSelector.value, "", "DNS starts with the confirmed default")
           t.check(panel.activeSelector.choices.some(function(c) { return c.value === "REJECT" }), false,
             "DNS excludes rule-only destinations")
@@ -335,7 +335,7 @@ ShellRoot {
       { name: "DNS saved", until: function() { return !panel.service.busy && panel.service.dnsDestination === "Proxy" }, then: function() {
           testRoot.key(Qt.Key_Return)
         } },
-      { until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           t.check(panel.activeSelector.label, "Proxy", "reopening shows the saved DNS destination")
           testRoot.type("Streaming")
           testRoot.key(Qt.Key_Escape)
@@ -347,7 +347,7 @@ ShellRoot {
           panel.focusRow("ruleTarget")
           panel.activateCursor()
         } },
-      { name: "rule picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { name: "rule picker", until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           t.check(panel.activeSelector.choices.some(function(c) { return c.value === "REJECT" }), true,
             "rules include their built-in destinations")
           testRoot.type("Streaming")
@@ -362,7 +362,7 @@ ShellRoot {
           panel.focusRow("ruleType")
           panel.activateCursor()
         } },
-      { name: "rule type picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { name: "rule type picker", until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           t.check(panel.activeSelector.section, "ruleType", "rule types open through the shared picker")
           t.check(panel.hintsFor("rules")[0].label, "pick", "rule types use the same selection hints")
           testRoot.type("GEOSITE")
@@ -384,7 +384,7 @@ ShellRoot {
           panel.focusRow("ruleCategory")
           panel.activateCursor()
         } },
-      { until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           testRoot.type("Discarded")
           testRoot.key(Qt.Key_Return)
         } },
@@ -402,7 +402,7 @@ ShellRoot {
           panel.focusRow("ruleCategory")
           panel.activateCursor()
         } },
-      { name: "category selector", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { name: "category selector", until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           t.check(panel.activeSelector.section, "ruleCategory", "categories use the shared selector")
           testRoot.type("tttttttooooppppAAAA")
           var field = panel.activeSelector.field
@@ -485,7 +485,7 @@ ShellRoot {
           t.check(panel.service.subscriptionRules.every(function(r) { return r.inactive }), true, "the read-only subscription category can be disabled")
           t.check(testRoot.clickObject("categoryTarget-" + testRoot.categoryId), true, "the category target action is clickable")
         } },
-      { name: "bulk destination picker", until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { name: "bulk destination picker", until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           t.check(panel.activeSelector.section, "categoryTarget", "bulk targeting uses the shared bottom picker")
           testRoot.type("REJECT")
           testRoot.key(Qt.Key_Return)
@@ -518,8 +518,11 @@ ShellRoot {
           panel.focusRow("ruleCategory")
           panel.activateCursor()
         } },
-      { until: function() { return panel.activeSelector !== null && panel.editing !== null }, then: function() {
+      { until: function() { return panel.activeSelector !== null && panel.activeSelector.field.activeFocus }, then: function() {
           testRoot.type("Moved")
+          t.check(panel.activeSelector.field.text, "Moved", "the category picker receives the complete name")
+          t.check(panel.ruleFormValue, panel.service.rules[panel.editingRule - 1].value,
+            "typing in the picker leaves the rule value unchanged")
           testRoot.key(Qt.Key_Return)
         } },
       { until: function() { return panel.activeSelector === null && panel.editing !== null }, then: function() {
@@ -628,6 +631,32 @@ ShellRoot {
         } },
       { name: "switch back to mihomo", until: function() { return !panel.service.busy && panel.service.coreName === "mihomo" }, then: function() {
           t.check(panel.service.coreState, "on", "the proxy keeps running after switching back")
+          panel.focusRow("subscriptionUpdates")
+          panel.scrollCursorIntoView()
+          key(Qt.Key_Return)
+        } },
+      { name: "pause automatic subscription updates", until: function() { return !panel.service.busy && !panel.service.subscriptionUpdates }, then: function() {
+          t.check(panel.at("subscriptionUpdates"), true, "Enter toggles the focused update setting")
+          panel.service.toggleCore()
+        } },
+      { name: "paused preference while stopped", until: function() { return !panel.service.busy && !panel.service.coreRunning }, then: function() {
+          t.check(panel.service.subscriptionUpdatesActive, false, "stopping retains the paused preference")
+          panel.service.toggleCore()
+        } },
+      { name: "paused preference after start", until: function() { return !panel.service.busy && panel.service.coreRunning }, then: function() {
+          t.check(panel.service.subscriptionUpdatesActive, false, "starting retains the paused preference")
+          key(Qt.Key_Right)
+        } },
+      { name: "resume automatic subscription updates", until: function() { return !panel.service.busy && panel.service.subscriptionUpdates }, then: function() {
+          t.check(panel.service.subscriptionUpdatesActive, true, "arrow keys toggle the update setting")
+          panel.service.receive(JSON.stringify({ type: "event", stream: "status",
+            data: { state: "stopped", active_subscription: "", mode: "rule" } }))
+          panel.service.receive(JSON.stringify({ type: "event", stream: "groups", data: { groups: [] } }))
+          panel.openView("configs")
+        } },
+      { name: "fresh installation", then: function() {
+          t.check(testRoot.visibleText(panel, "Add and activate a subscription in Subs to browse its configs.") !== null,
+            true, "an empty installation explains how to get configs")
         } }
     ]
   }

@@ -21,6 +21,34 @@ func TestMissingFilesHoldTheDefaults(t *testing.T) {
 	}
 }
 
+func TestSubscriptionUpdatesDefaultOnAndPreserveExplicitValues(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		enabled    bool
+	}{
+		{"omitted", `{"mode":"rule"}`, true},
+		{"off", `{"mode":"rule","subscription_updates":false}`, false},
+		{"on", `{"mode":"rule","subscription_updates":true}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := settings.Load(dir)
+			if err != nil || got.Settings.SubscriptionUpdates != tc.enabled {
+				t.Fatalf("loaded settings: %+v, %v", got, err)
+			}
+			if err := settings.Save(dir, got); err != nil {
+				t.Fatal(err)
+			}
+			if saved, err := settings.Load(dir); err != nil || saved.Settings.SubscriptionUpdates != tc.enabled {
+				t.Fatalf("saved settings: %+v, %v", saved, err)
+			}
+		})
+	}
+}
+
 func TestSavedFilesLeaveOutZeroSettings(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "omihomo")
 	v := protocol.ApplyArgs{Settings: protocol.Settings{Mode: "global", TUN: true},
@@ -29,7 +57,7 @@ func TestSavedFilesLeaveOutZeroSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"settings.json": "{\n  \"mode\": \"global\",\n  \"tun\": true\n}\n",
+		"settings.json": "{\n  \"subscription_updates\": false,\n  \"mode\": \"global\",\n  \"tun\": true\n}\n",
 		"rules.json": "[\n  {\n    \"type\": \"DOMAIN-SUFFIX\",\n    \"value\": \"example.com\",\n" +
 			"    \"target\": \"DIRECT\"\n  }\n]\n",
 	}

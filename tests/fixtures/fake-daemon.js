@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 7 by default
+// --protocol  the version its hello announces, 8 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 7, refuse: false, busy: 0, latency: 0, fail: new Set() }
+const options = { protocol: 8, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -37,7 +37,7 @@ const status = {
   core: "mihomo", core_choices: ["mihomo", "xray"],
   state: "stopped", detail: "", active_subscription: "work", primary_group: "",
   mode: "rule", tun: false, tun_redirect: false, tailscale: false, tailscale_present: true,
-  tailnet_proxy: false, started_at: 0, tun_bypass: ["10.0.0.0/8", "192.168.0.0/16"]
+  tailnet_proxy: false, subscription_updates: true, started_at: 0, tun_bypass: ["10.0.0.0/8", "192.168.0.0/16"]
 }
 const delays = { Pass: 40, Fail: 50 }
 let partialDelay = false
@@ -57,7 +57,6 @@ function running() {
 }
 
 function groups() {
-  if (!running()) return { groups: [] }
   const members = Object.keys(delays).map((name) =>
     ({ name, type: "vless", alive: delays[name] > 0, delay: delays[name] }))
   return { groups: [{ ...proxy, members }] }
@@ -145,6 +144,7 @@ const ops = {
       return failure("conflict", "tailscaled is not installed")
     Object.assign(status, { mode: "rule", tun: false, tun_redirect: false, tailscale: false,
       tailnet_proxy: false, primary_group: "", dns_destination: "" }, a.settings)
+    status.subscription_updates = a.settings.subscription_updates !== false
     rules = a.rules
     publish()
     if (holdEdit) return new Promise((resolve) => { heldEdit = () => resolve({ result: { ...status } }) })
@@ -159,7 +159,6 @@ const ops = {
   },
   "groups.list": () => ({ result: groups() }),
   "groups.select": (client, a) => later(() => {
-    if (!running()) return failure("not_running", "the proxy is not running")
     if (a.group !== proxy.name || delays[a.proxy] === undefined) return failure("not_found", "not found")
     proxy.now = a.proxy
     const group = groups().groups[0]

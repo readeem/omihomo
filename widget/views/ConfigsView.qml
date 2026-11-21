@@ -48,24 +48,23 @@ ColumnLayout {
 
   PanelText {
     theme: view.theme
-    visible: !view.panel.liveReady || (view.service.proxiesLoaded && view.panel.visibleGroups.length === 0)
+    visible: view.service.activeSubscription === "" || !view.panel.configsReady
+      || (view.service.proxiesLoaded && view.panel.visibleGroups.length === 0)
     Layout.fillWidth: true
-    text: !view.panel.liveReady
-      ? (view.service.activeSubscription === "" ? "Add and activate a subscription in Subs to browse its configs."
-        : (view.service.coreRunning ? "Reconnecting to the core…" : "Start the proxy to browse configs."))
-      : "This subscription declares no groups."
+    text: view.service.activeSubscription === "" ? "Add and activate a subscription in Subs to browse its configs."
+      : (!view.panel.configsReady ? "Loading configs…" : "This subscription declares no groups.")
     color: view.theme.dim
     font.pixelSize: Style.font.body
     wrapMode: Text.WordWrap
   }
 
   Flow {
-    visible: view.panel.liveReady
+    visible: view.panel.configsReady
     Layout.fillWidth: true
     spacing: Style.space(6)
 
     Repeater {
-      model: view.panel.liveReady ? view.panel.visibleGroups : []
+      model: view.panel.configsReady ? view.panel.visibleGroups : []
       GroupChip {
         required property var modelData
         required property int index
@@ -121,7 +120,7 @@ ColumnLayout {
     Layout.fillHeight: true
     Layout.maximumWidth: view.width
     spacing: Style.space(1)
-    model: view.panel.liveReady ? view.panel.visibleConfigs : []
+    model: view.panel.configsReady ? view.panel.visibleConfigs : []
 
     delegate: ConfigRow {
       required property var modelData
@@ -145,7 +144,7 @@ ColumnLayout {
   }
 
   RowLayout {
-    visible: view.panel.browsedGroupEntry !== null
+    visible: view.panel.browsedGroupEntry !== null && view.service.coreActive
     Layout.fillWidth: true
     spacing: Style.space(6)
 

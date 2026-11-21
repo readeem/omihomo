@@ -41,7 +41,7 @@ func Dir() (string, error) {
 
 // Default is what a fresh install runs.
 func Default() protocol.ApplyArgs {
-	return protocol.ApplyArgs{Settings: protocol.Settings{Mode: protocol.ModeRule}, Rules: []protocol.RuleEntry{}}
+	return protocol.ApplyArgs{Settings: protocol.Settings{Mode: protocol.ModeRule, SubscriptionUpdates: true}, Rules: []protocol.RuleEntry{}}
 }
 
 // Load reads the files in dir. Only their shape is checked here; the daemon
@@ -87,8 +87,6 @@ type File struct {
 	Data []byte
 }
 
-// Encode is what Save writes for v: indented JSON without the settings at
-// their zero value.
 func Encode(v protocol.ApplyArgs) []File {
 	rules := protocol.PruneCategories(v.Rules)
 	return []File{{settingsFile, indent(v.Settings)}, {rulesFile, indent(rules)}}

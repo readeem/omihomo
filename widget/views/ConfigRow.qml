@@ -117,7 +117,7 @@ NavRow {
       iconText: "󰓅"
       tooltipText: "Test latency · d"
       size: Style.space(22)
-      enabled: !configRow.panel.service.pingTestsRunning
+      enabled: configRow.panel.service.apiReady && configRow.panel.service.coreActive && !configRow.panel.service.pingTestsRunning
       onClicked: configRow.panel.service.testConfig(configRow.configName)
     }
   }

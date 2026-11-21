@@ -15,7 +15,7 @@ Item {
     mode: modeRow, dns: dnsSelector, tun: tunRow, tunRedirect: tunRedirectRow,
     tailscale: tailscaleRow, tailnetProxy: tailnetProxyRow, uninstall: maintenanceCard,
     checkUpdates: checkRow, update: updateRow, releaseNotes: releaseNotesRow,
-    core: coreControl
+    core: coreControl, subscriptionUpdates: subscriptionUpdatesRow
   })
 
   readonly property var updater: panel.updater
@@ -220,7 +220,7 @@ Item {
         Layout.fillWidth: true
         Layout.topMargin: Style.space(8)
         title: "UPDATES"
-        note: "checked every 12 hours"
+        note: "app checked every 12 hours"
       }
 
       Rectangle {
@@ -237,6 +237,16 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           anchors.margins: Style.space(3)
           spacing: 0
+          SettingRow {
+            id: subscriptionUpdatesRow
+            panel: view.panel
+            Layout.fillWidth: true
+            section: "subscriptionUpdates"
+            title: "Automatic subscription updates"
+            subtitle: "refresh subscriptions while the proxy is on"
+            checked: view.service.subscriptionUpdatesActive
+            onActivated: view.service.toggleSubscriptionUpdates()
+          }
           SettingRow {
             id: checkRow
             panel: view.panel

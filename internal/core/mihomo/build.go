@@ -348,6 +348,7 @@ func ruleLine(r core.Rule) (string, error) {
 
 func stoppedConfig() *config.RawConfig {
 	raw := config.DefaultRawConfig()
+	raw.Profile.StoreSelected = true
 	raw.Mode = tunnel.Rule
 	raw.Rule = []string{"MATCH,REJECT"}
 	raw.LogLevel = log.WARNING

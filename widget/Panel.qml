@@ -109,7 +109,7 @@ Panel {
   readonly property bool coreAlert: omihomo.pendingDownloads.length > 0 || omihomo.link === "outdated" || omihomo.link === "newer"
     || omihomo.link === "refused"
 
-  readonly property bool liveReady: omihomo.apiReady
+  readonly property bool configsReady: omihomo.groupsReady
   readonly property bool tunRedirectBlocked: omihomo.coreState === "degraded"
     && omihomo.tunRedirectActive
   readonly property bool compactHeader: view === "rules" || view === "conns" || view === "settings"
@@ -268,7 +268,7 @@ Panel {
     }
     switch (view) {
     case "configs":
-      if (liveReady) {
+      if (configsReady) {
         for (i = 0; i < visibleGroups.length; i++) rows.push({ s: "group", i: i })
         for (i = 0; i < visibleConfigs.length; i++) rows.push({ s: "config", i: i })
       }
@@ -289,7 +289,7 @@ Panel {
       rows.push({ s: "mode" }, { s: "dns" })
       rows.push({ s: "tun" }, { s: "tunRedirect" })
       if (omihomo.tailscalePresent) rows.push({ s: "tailscale" }, { s: "tailnetProxy" })
-      rows.push({ s: "checkUpdates" })
+      rows.push({ s: "subscriptionUpdates" }, { s: "checkUpdates" })
       if (updater.updateAvailable) rows.push({ s: "update" })
       if (updater.releaseUrl !== "") rows.push({ s: "releaseNotes" })
       rows.push({ s: "uninstall" })
@@ -356,6 +356,7 @@ Panel {
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
+    case "subscriptionUpdates": omihomo.toggleSubscriptionUpdates(); break
     case "ruleType": cycleRuleType(delta); break
     case "ruleTarget": cycleRuleTarget(delta); break
     }
@@ -388,6 +389,7 @@ Panel {
     case "tunRedirect": omihomo.toggleTunRedirect(); break
     case "tailscale": omihomo.toggleTailscale(); break
     case "tailnetProxy": omihomo.toggleTailnetProxy(); break
+    case "subscriptionUpdates": omihomo.toggleSubscriptionUpdates(); break
     case "checkUpdates": checkUpdates(); break
     case "update": updateOmihomo(); break
     case "releaseNotes": openReleaseNotes(); break
@@ -512,7 +514,9 @@ Panel {
     case "configs": return [
       { keys: "↵", label: "select", key: "enter" }, { keys: "d", label: "test", key: "d" },
       { keys: "D", label: omihomo.pingTestsRunning ? "cancel test" : "test all", key: "D" }, { keys: "g", label: "group", key: "g" },
-      { keys: "s", label: "core", key: "s" }]
+      { keys: "s", label: "core", key: "s" }].filter(function(hint) {
+        return omihomo.coreActive || (hint.key !== "d" && hint.key !== "D")
+      })
     case "subs": return [
       { keys: "↵", label: "activate", key: "enter" }, { keys: "u", label: "update", key: "u" },
       { keys: "a", label: "add", key: "a" }, { keys: "x", label: "remove", key: "x" },

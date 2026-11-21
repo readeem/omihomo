@@ -109,7 +109,7 @@ func TestSettingsSavedWithEveryFieldStillRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	want := Settings{Mode: "global", TUN: true,
+	want := Settings{Mode: "global", TUN: true, SubscriptionUpdates: true,
 		Rules: []protocol.RuleEntry{{Type: "DOMAIN", Value: "a.example", Target: "DIRECT"}}, Running: true}
 	if got, err := s.Settings(); err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("settings = %+v, %v", got, err)

@@ -15,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 7
+	Version = 8
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -191,14 +191,15 @@ type Status struct {
 	ActiveSubscription string     `json:"active_subscription"`
 	// PrimaryGroup is the group whose selection is "the current proxy".
 	// Empty means the first selectable group.
-	PrimaryGroup     string `json:"primary_group"`
-	DNSDestination   string `json:"dns_destination"`
-	Mode             Mode   `json:"mode"`
-	TUN              bool   `json:"tun"`
-	TUNRedirect      bool   `json:"tun_redirect"`
-	Tailscale        bool   `json:"tailscale"`
-	TailscalePresent bool   `json:"tailscale_present"`
-	TailnetProxy     bool   `json:"tailnet_proxy"`
+	PrimaryGroup        string `json:"primary_group"`
+	DNSDestination      string `json:"dns_destination"`
+	Mode                Mode   `json:"mode"`
+	TUN                 bool   `json:"tun"`
+	TUNRedirect         bool   `json:"tun_redirect"`
+	Tailscale           bool   `json:"tailscale"`
+	TailscalePresent    bool   `json:"tailscale_present"`
+	TailnetProxy        bool   `json:"tailnet_proxy"`
+	SubscriptionUpdates bool   `json:"subscription_updates"`
 	// StartedAt is unix milliseconds of the current run, 0 when stopped. A
 	// new value means a new runtime: anything read from the old one is stale.
 	StartedAt int64 `json:"started_at"`
@@ -218,6 +219,7 @@ type Settings struct {
 	CategoryTargets           CategoryTargets `json:"category_targets,omitzero"`
 	OmihomoRulesDisabled      bool            `json:"omihomo_rules_disabled,omitempty"`
 	SubscriptionRulesDisabled bool            `json:"subscription_rules_disabled,omitempty"`
+	SubscriptionUpdates       bool            `json:"subscription_updates"`
 	Mode                      Mode            `json:"mode"`
 	TUN                       bool            `json:"tun,omitzero"`
 	TUNRedirect               bool            `json:"tun_redirect,omitzero"`

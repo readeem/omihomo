@@ -70,6 +70,7 @@ function defaultStatus() {
     tailscaleEnabled: false,
     tailscalePresent: false,
     tailnetProxy: false,
+    subscriptionUpdates: true,
     startedMs: 0,
     tunBypass: []
   }
@@ -93,6 +94,7 @@ function readStatus(data) {
     tailscaleEnabled: data.tailscale === true,
     tailscalePresent: data.tailscale_present === true,
     tailnetProxy: data.tailnet_proxy === true,
+    subscriptionUpdates: data.subscription_updates !== false,
     startedMs: number(data.started_at, 0),
     tunBypass: Array.isArray(data.tun_bypass)
       ? data.tun_bypass.filter(function(cidr) { return typeof cidr === "string" }) : []

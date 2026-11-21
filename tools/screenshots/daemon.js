@@ -22,7 +22,7 @@ const lines = (name) => read(name).split("\n").filter((line) => line !== "").map
 
 const status = {
   core: "mihomo", core_choices: ["mihomo", "xray"],
-  state: "on", detail: "", active_subscription: "Aerowave", ...json("settings/settings.json"),
+  subscription_updates: true, state: "on", detail: "", active_subscription: "Aerowave", ...json("settings/settings.json"),
   tailscale_present: true, started_at: after === "--after" ? Date.now() : Number(started) * 1000,
   tun_bypass: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
 }
@@ -189,12 +189,13 @@ const ops = {
     if (args.settings.core) status.core = args.settings.core
     status.omihomo_rules_disabled = args.settings.omihomo_rules_disabled === true
     status.subscription_rules_disabled = args.settings.subscription_rules_disabled === true
+    status.subscription_updates = args.settings.subscription_updates !== false
     userRules = args.rules
     push("status", "rules")
     return { result: status }
   },
   "rules.list": () => ({ result: snapshots.rules() }),
-  "groups.list": () => running() ? { result: groups } : fail("not_running", "the proxy is stopped"),
+  "groups.list": () => ({ result: groups }),
   "groups.select": (args) => {
     const group = findGroup(args.group)
     if (!group) return fail("not_found", `no group ${args.group}`)
@@ -206,6 +207,7 @@ const ops = {
   },
   "probe.cancel": () => ({ result: {} }),
   "delay.test": (args) => later(300, () => {
+    if (!running()) return fail("not_running", "the proxy is stopped")
     const group = findGroup(args.group)
     if (!group) return fail("not_found", `no group ${args.group}`)
     const result = {}
@@ -288,7 +290,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 7, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 8, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk
