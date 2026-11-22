@@ -145,7 +145,7 @@ Item {
   property bool traceFailed: false
   property bool _traceQueued: false
 
-  // Manual results sit above the groups stream. A push may have left the
+  // Widget probe results sit above the groups stream. A push may have left the
   // daemon before the click, so it must not repaint an old latency over the
   // test that the user is watching.
   property var configTestResults: ({}) // config name -> { state, delay }
@@ -476,6 +476,7 @@ Item {
           root.egressIpv6 = egress.ipv6
           root.egressLatency = egress.latency
         }
+        if (config !== "") root.finishConfigTests({ [config]: root.traceFailed ? 0 : egress.latency })
       }
       if (!root._manualTrace) return
       root._manualTrace = false
