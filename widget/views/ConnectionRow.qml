@@ -44,7 +44,7 @@ NavRow {
     PanelText {
       theme: connectionRow.theme
       Layout.maximumWidth: Style.space(96)
-      text: connectionRow.stack ? (connectionRow.stack.process || "unknown") : ""
+      text: connectionRow.stack ? (connectionRow.stack.processStatus === "no_local_socket" ? "No socket" : connectionRow.stack.process || "unknown") : ""
       color: connectionRow.live ? connectionRow.theme.foreground : connectionRow.theme.dim
       font.bold: connectionRow.live
       elide: Text.ElideRight
@@ -96,6 +96,9 @@ NavRow {
       if (!stack) return ""
       var parts = []
       if (stack.network !== "") parts.push(stack.network)
+      if (stack.inbound !== "") parts.push(stack.inbound)
+      var attribution = Model.processDiagnostic(stack)
+      if (attribution !== "") parts.push(attribution)
       if (stack.rule !== "") parts.push(stack.rule)
       if (connectionRow.live) {
         parts.push(Model.formatDuration(connectionRow.panel.nowMs - stack.startMs))

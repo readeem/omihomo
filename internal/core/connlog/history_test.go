@@ -14,7 +14,8 @@ func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
 	h := connlog.New(t.TempDir(), 1)
 	t.Cleanup(h.Discard)
 	const distinct = 10030
-	key := connlog.Key{Process: "browser", Network: "tcp", Outbound: "DIRECT"}
+	key := connlog.Key{Process: "unknown", Network: "tcp", Inbound: "redir", Outbound: "DIRECT",
+		ProcessStatus: protocol.ProcessLookupFailed, ProcessReason: protocol.ProcessSocketNotFound}
 	for i := range distinct {
 		key.Destination = fmt.Sprintf("host-%d.example:443", i)
 		h.Start("flow", key, func() (int64, int64) { return 7, 11 }, nil)()
@@ -31,6 +32,9 @@ func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
 	if err != nil || len(delta.Rows) != 1 || delta.Rows[0].ID != distinct || delta.Rows[0].Count != 2 || delta.Rows[0].Upload != 12 || delta.Rows[0].Download != 20 {
 		t.Fatalf("changed row = %+v, %v", delta, err)
 	}
+	if row := delta.Rows[0]; row.Inbound != key.Inbound || row.ProcessStatus != key.ProcessStatus || row.ProcessReason != key.ProcessReason {
+		t.Fatalf("spilled attribution = %+v", row)
+	}
 	total := len(page.Rows)
 	for page.Next != 0 {
 		page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{Before: page.Next, Session: page.Session})
@@ -44,6 +48,12 @@ func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
 	}
 	if summary, _ := h.Summary(); summary.Incomplete || summary.Closed != distinct+1 || summary.Upload != 70215 || summary.Download != 110339 {
 		t.Fatalf("summary = %+v", summary)
+	}
+	key.ProcessReason = protocol.ProcessOwnerUnavailable
+	h.Start("flow", key, func() (int64, int64) { return 1, 1 }, nil)()
+	page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) != 100 || page.Rows[0].ProcessReason != key.ProcessReason || page.Rows[0].Count != 1 || page.Rows[1].Count != 2 {
+		t.Fatalf("history did not distinguish lookup reasons: %+v, %v", page, err)
 	}
 }
 

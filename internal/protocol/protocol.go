@@ -371,22 +371,43 @@ type DelayResult struct {
 	Delays map[string]int `json:"delays"`
 }
 
+type ProcessStatus string
+
+const (
+	ProcessResolved      ProcessStatus = "resolved"
+	ProcessInternal      ProcessStatus = "internal"
+	ProcessNoLocalSocket ProcessStatus = "no_local_socket"
+	ProcessLookupFailed  ProcessStatus = "lookup_failed"
+)
+
+type ProcessReason string
+
+const (
+	ProcessSocketNotFound   ProcessReason = "socket_not_found"
+	ProcessSocketAmbiguous  ProcessReason = "ambiguous_socket"
+	ProcessOwnerUnavailable ProcessReason = "owner_unavailable"
+	ProcessPermissionDenied ProcessReason = "permission_denied"
+	ProcessLookupTimeout    ProcessReason = "timeout"
+)
+
 // Connection is one open connection through the proxy.
 type Connection struct {
-	ID              string `json:"id"`
-	Network         string `json:"network"`
-	Inbound         string `json:"inbound"`
-	Host            string `json:"host"`
-	Process         string `json:"process"`
-	SourceIP        string `json:"source_ip"`
-	SourcePort      int    `json:"source_port"`
-	DestinationIP   string `json:"destination_ip"`
-	DestinationPort int    `json:"destination_port"`
-	Chain           string `json:"chain"`
-	Rule            string `json:"rule"`
-	Upload          int64  `json:"upload"`
-	Download        int64  `json:"download"`
-	StartedAt       int64  `json:"started_at"`
+	ID              string        `json:"id"`
+	Network         string        `json:"network"`
+	Inbound         string        `json:"inbound"`
+	Host            string        `json:"host"`
+	Process         string        `json:"process"`
+	ProcessStatus   ProcessStatus `json:"process_status,omitempty"`
+	ProcessReason   ProcessReason `json:"process_reason,omitempty"`
+	SourceIP        string        `json:"source_ip"`
+	SourcePort      int           `json:"source_port"`
+	DestinationIP   string        `json:"destination_ip"`
+	DestinationPort int           `json:"destination_port"`
+	Chain           string        `json:"chain"`
+	Rule            string        `json:"rule"`
+	Upload          int64         `json:"upload"`
+	Download        int64         `json:"download"`
+	StartedAt       int64         `json:"started_at"`
 }
 
 // Connections is a snapshot of what is open now. Connections lists the
@@ -431,17 +452,20 @@ type ConnectionHistory struct {
 }
 
 type ConnectionHistoryRow struct {
-	ID          uint64 `json:"id"`
-	Process     string `json:"process"`
-	Destination string `json:"destination"`
-	Network     string `json:"network"`
-	Outbound    string `json:"outbound"`
-	Rule        string `json:"rule"`
-	Blocked     bool   `json:"blocked,omitempty"`
-	Count       uint64 `json:"count"`
-	Upload      int64  `json:"upload"`
-	Download    int64  `json:"download"`
-	LastAt      int64  `json:"last_at"`
+	ID            uint64        `json:"id"`
+	Process       string        `json:"process"`
+	ProcessStatus ProcessStatus `json:"process_status,omitempty"`
+	ProcessReason ProcessReason `json:"process_reason,omitempty"`
+	Inbound       string        `json:"inbound,omitempty"`
+	Destination   string        `json:"destination"`
+	Network       string        `json:"network"`
+	Outbound      string        `json:"outbound"`
+	Rule          string        `json:"rule"`
+	Blocked       bool          `json:"blocked,omitempty"`
+	Count         uint64        `json:"count"`
+	Upload        int64         `json:"upload"`
+	Download      int64         `json:"download"`
+	LastAt        int64         `json:"last_at"`
 }
 
 // CloseArgs closes connections by id, or every connection with All.

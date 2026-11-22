@@ -471,6 +471,9 @@ function readConnections(data, nowMs) {
       host: connectionHost(entry),
       network: text(entry.network).toUpperCase(),
       process: baseName(entry.process) || (text(entry.inbound) === "inner" ? "mihomo" : ""),
+      inbound: text(entry.inbound),
+      processStatus: text(entry.process_status),
+      processReason: text(entry.process_reason),
       chain: text(entry.chain),
       rule: text(entry.rule),
       upload: number(entry.upload, 0),
@@ -487,7 +490,8 @@ function stackConnections(list) {
   var stacks = []
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
-    var key = JSON.stringify([entry.process, entry.host, entry.network, entry.chain, entry.rule])
+    var key = JSON.stringify([entry.process, entry.host, entry.network, entry.chain, entry.rule,
+      entry.inbound, entry.processStatus, entry.processReason])
     var stack = byKey[key]
     if (!stack) {
       stack = Object.assign({}, entry, { key: key, count: 0, upload: 0, download: 0, ids: [] })
@@ -506,9 +510,27 @@ function stackConnections(list) {
 function readConnectionHistory(rows) {
   return rows.map(function(row) {
     return { key: "history:" + row.id, id: row.id, host: row.destination, process: row.process,
+      inbound: text(row.inbound), processStatus: text(row.process_status), processReason: text(row.process_reason),
       network: text(row.network).toUpperCase(), chain: row.outbound, rule: row.rule, blocked: row.blocked,
       open: false, count: row.count, upload: row.upload, download: row.download, closedAtMs: row.last_at }
   })
+}
+
+function processDiagnostic(entry) {
+  switch (entry.processStatus) {
+  case "internal": return "Internal traffic"
+  case "no_local_socket": return "No local socket metadata"
+  case "lookup_failed":
+    switch (entry.processReason) {
+    case "socket_not_found": return "Local socket not found"
+    case "ambiguous_socket": return "Multiple local sockets match"
+    case "owner_unavailable": return "Socket owner unavailable"
+    case "permission_denied": return "Process lookup denied"
+    case "timeout": return "Process lookup timed out"
+    default: return "Process lookup failed"
+    }
+  default: return ""
+  }
 }
 
 function connectionHost(entry) {
@@ -830,6 +852,7 @@ if (typeof module !== "undefined") {
     readEgress: readEgress,
     readConnections: readConnections,
     readConnectionHistory: readConnectionHistory,
+    processDiagnostic: processDiagnostic,
     stackConnections: stackConnections,
     connectionHost: connectionHost,
     baseName: baseName,

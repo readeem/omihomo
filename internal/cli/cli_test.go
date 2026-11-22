@@ -135,8 +135,21 @@ func TestCommandsRunOverTheSocket(t *testing.T) {
 	if code, out, _ := run(t, "", "group", "test", "Auto", "Tokyo"); code != cli.ExitOK || strings.TrimSpace(out) != `{"delays":{"Tokyo":120}}` {
 		t.Fatalf("test: %d %q", code, out)
 	}
+	code, out, _ = run(t, "", "conn", "list")
+	var list protocol.Connections
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &list) != nil || len(list.Connections) != 2 ||
+		list.Connections[0].ProcessStatus != protocol.ProcessResolved || list.Connections[1].ProcessReason != protocol.ProcessSocketNotFound {
+		t.Fatalf("connection list: %d %q", code, out)
+	}
 	if code, out, _ := run(t, "", "conn", "close", "--all"); code != cli.ExitOK || out != "" {
 		t.Fatalf("close all: %d %q", code, out)
+	}
+	code, out, _ = run(t, "", "conn", "history")
+	var history protocol.ConnectionHistory
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &history) != nil || len(history.Rows) != 2 ||
+		history.Rows[0].Inbound != "tun" || history.Rows[0].Process != "unknown" ||
+		history.Rows[0].ProcessStatus != protocol.ProcessLookupFailed || history.Rows[0].ProcessReason != protocol.ProcessSocketNotFound {
+		t.Fatalf("connection history: %d %q", code, out)
 	}
 	if code, _, _ := run(t, "", "set", "tailscale", "on"); code != cli.ExitState {
 		t.Fatalf("tailscale without tailscaled exit %d", code)

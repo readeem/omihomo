@@ -1,0 +1,436 @@
+--- a/constant/metadata.go
++++ b/constant/metadata.go
+@@ -208,6 +208,7 @@
+ 	Uid          uint32     `json:"uid"`
+ 	Process      string     `json:"process"`
+ 	ProcessPath  string     `json:"processPath"`
++	ProcessError error      `json:"-"`
+ 	SpecialProxy string     `json:"specialProxy"`
+ 	SpecialRules string     `json:"specialRules"`
+ 	RemoteDst    string     `json:"remoteDestination"`
+--- a/component/process/process.go
++++ b/component/process/process.go
+@@ -10,7 +10,9 @@
+ var (
+ 	ErrInvalidNetwork     = errors.New("invalid network")
+ 	ErrPlatformNotSupport = errors.New("not support on this platform")
+-	ErrNotFound           = errors.New("process not found")
++	ErrNotFound           = errors.New("socket not found")
++	ErrAmbiguousSocket    = errors.New("more than one socket matches")
++	ErrOwnerNotFound      = errors.New("socket owner not found")
+ )
+ 
+ const (
+@@ -18,8 +20,8 @@
+ 	UDP = "udp"
+ )
+ 
+-func FindProcessName(network string, srcIP netip.Addr, srcPort int) (uint32, string, error) {
+-	return findProcessName(network, srcIP, srcPort)
++func FindProcessName(network string, srcIP netip.Addr, srcPort int, peer netip.AddrPort) (uint32, string, error) {
++	return findProcessName(network, srcIP, srcPort, peer)
+ }
+ 
+ // PackageNameResolver
+--- a/component/process/process_linux.go
++++ b/component/process/process_linux.go
+@@ -5,7 +5,9 @@
+ 	"bytes"
+ 	"encoding/binary"
+ 	"encoding/hex"
++	"errors"
+ 	"fmt"
++	"net"
+ 	"net/netip"
+ 	"os"
+ 	"path"
+@@ -14,6 +16,7 @@
+ 	"strconv"
+ 	"strings"
+ 	"syscall"
++	"time"
+ 	"unicode"
+ 	"unsafe"
+ 
+@@ -23,6 +26,8 @@
+ 
+ const (
+ 	SOCK_DIAG_BY_FAMILY  = 20
++	inetDiagV6Only       = 11
++	tcpListen            = 10
+ 	inetDiagRequestSize  = int(unsafe.Sizeof(inetDiagRequest{}))
+ 	inetDiagResponseSize = int(unsafe.Sizeof(inetDiagResponse{}))
+ )
+@@ -62,8 +67,19 @@
+ 	INode   uint32
+ }
+ 
+-func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
+-	uid, inode, err := resolveSocketByNetlink(network, ip, srcPort)
++func findProcessName(network string, ip netip.Addr, srcPort int, peer netip.AddrPort) (uint32, string, error) {
++	ip = ip.Unmap()
++	uid, inode, err := resolveSocketByNetlink(network, ip, srcPort, peer)
++	if ip.Is4() && (errors.Is(err, ErrNotFound) || err == nil && strings.HasPrefix(network, "udp")) {
++		// An IPv4 flow may belong to an IPv6 dual-stack socket.
++		v6UID, v6Inode, v6Err := resolveSocketByNetlink(network, netip.AddrFrom16(ip.As16()), srcPort, peer)
++		if !errors.Is(v6Err, ErrNotFound) {
++			if err == nil && v6Err == nil {
++				return 0, "", ErrAmbiguousSocket
++			}
++			uid, inode, err = v6UID, v6Inode, v6Err
++		}
++	}
+ 	if runtime.GOOS == "android" {
+ 		// on Android (especially recent releases), netlink INET_DIAG can fail or return UID 0 / empty process info for some apps
+ 		// so trying fallback to resolve /proc/net/{tcp,tcp6,udp,udp6}
+@@ -90,7 +106,7 @@
+ 	return uid, pp, err
+ }
+ 
+-func resolveSocketByNetlink(network string, ip netip.Addr, srcPort int) (uid uint32, inode uint32, err error) {
++func resolveSocketByNetlink(network string, ip netip.Addr, srcPort int, peer netip.AddrPort) (uid, inode uint32, err error) {
+ 	request := &inetDiagRequest{
+ 		States: 0xffffffff,
+ 		Cookie: [2]uint32{0xffffffff, 0xffffffff},
+@@ -119,6 +135,9 @@
+ 		return 0, 0, err
+ 	}
+ 	defer conn.Close()
++	if err := conn.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
++		return 0, 0, err
++	}
+ 
+ 	message := netlink.Message{
+ 		Header: netlink.Header{
+@@ -133,45 +152,73 @@
+ 		return 0, 0, err
+ 	}
+ 
+-	err = ErrNotFound
++	udp := request.Protocol == unix.IPPROTO_UDP
++	local := ip.Unmap().WithZone("")
++	remote := peer.Addr().Unmap().WithZone("")
+ 	for _, msg := range messages {
+ 		if len(msg.Data) < inetDiagResponseSize {
+ 			continue
+ 		}
+-
+ 		response := (*inetDiagResponse)(unsafe.Pointer(&msg.Data[0]))
+-
+-		// always set to allow fallback when check fails
+-		uid, inode, err = response.UID, response.INode, nil
+-
+-		// check src port
+-		if binary.BigEndian.Uint16(response.SrcPort[:]) != uint16(srcPort) {
++		if response.Family != request.Family || response.INode == 0 || binary.BigEndian.Uint16(response.SrcPort[:]) != uint16(srcPort) {
+ 			continue
+ 		}
+-
+-		// check src IP
+-		var src netip.Addr
+-		switch response.Family {
+-		case unix.AF_INET:
+-			var a [4]byte
+-			copy(a[:], response.Src[:4])
+-			src = netip.AddrFrom4(a)
+-		case unix.AF_INET6:
+-			var a [16]byte
+-			copy(a[:], response.Src[:])
+-			src = netip.AddrFrom16(a).Unmap()
+-		default:
++		if !udp && (response.State == tcpListen || peer.IsValid() &&
++			(binary.BigEndian.Uint16(response.DstPort[:]) != peer.Port() || socketAddress(response.Family, response.Dst) != remote)) {
+ 			continue
+ 		}
+-		if src != ip.Unmap() {
++		src := socketAddress(response.Family, response.Src)
++		if src != local && !(udp && src.IsUnspecified() && localAddress(local) &&
++			(!ip.Is4In6() || dualStackWildcard(msg.Data[inetDiagResponseSize:]))) {
+ 			continue
+ 		}
++		// Linux lets connected UDP sockets send to a different peer with sendto.
++		if inode != 0 && inode != response.INode {
++			return 0, 0, ErrAmbiguousSocket
++		}
++		uid, inode = response.UID, response.INode
++	}
++	if inode == 0 {
++		return 0, 0, ErrNotFound
++	}
++	return uid, inode, nil
++}
++
++func socketAddress(family byte, address [16]byte) netip.Addr {
++	if family == unix.AF_INET {
++		return netip.AddrFrom4([4]byte(address[:4]))
++	}
++	return netip.AddrFrom16(address).Unmap()
++}
+ 
+-		// this is the one we want
+-		break
++func dualStackWildcard(attributes []byte) bool {
++	decoder, err := netlink.NewAttributeDecoder(attributes)
++	if err != nil {
++		return false
++	}
++	for decoder.Next() {
++		if decoder.Type() == inetDiagV6Only {
++			v6only := decoder.Uint8()
++			return decoder.Err() == nil && v6only == 0
++		}
+ 	}
++	return false
++}
+ 
+-	return
++func localAddress(ip netip.Addr) bool {
++	if ip.IsLoopback() {
++		return true
++	}
++	addresses, err := net.InterfaceAddrs()
++	if err != nil {
++		return false
++	}
++	for _, addr := range addresses {
++		if network, ok := addr.(*net.IPNet); ok && network.IP.Equal(ip.AsSlice()) {
++			return true
++		}
++	}
++	return false
+ }
+ 
+ func resolveProcessNameByProcSearch(inode, uid uint32) (string, error) {
+@@ -183,12 +230,16 @@
+ 	buffer := make([]byte, unix.PathMax)
+ 	socket := fmt.Appendf(nil, "socket:[%d]", inode)
+ 
++	var denied error
+ 	for _, f := range files {
+ 		if !f.IsDir() || !isPid(f.Name()) {
+ 			continue
+ 		}
+ 
+ 		info, err := f.Info()
++		if errors.Is(err, os.ErrNotExist) {
++			continue
++		}
+ 		if err != nil {
+ 			return "", err
+ 		}
+@@ -201,12 +252,18 @@
+ 
+ 		fds, err := os.ReadDir(fdPath)
+ 		if err != nil {
++			if errors.Is(err, os.ErrPermission) {
++				denied = err
++			}
+ 			continue
+ 		}
+ 
+ 		for _, fd := range fds {
+ 			n, err := unix.Readlink(filepath.Join(fdPath, fd.Name()), buffer)
+ 			if err != nil {
++				if errors.Is(err, os.ErrPermission) {
++					denied = err
++				}
+ 				continue
+ 			}
+ 
+@@ -227,7 +284,10 @@
+ 		}
+ 	}
+ 
+-	return "", fmt.Errorf("process of uid(%d),inode(%d) not found", uid, inode)
++	if denied != nil {
++		return "", denied
++	}
++	return "", ErrOwnerNotFound
+ }
+ 
+ // resolveProcessNameByUID returns a process name for any process with uid.
+--- a/component/process/process_windows.go
++++ b/component/process/process_windows.go
+@@ -61,7 +61,7 @@
+ 	return nil
+ }
+ 
+-func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
++func findProcessName(network string, ip netip.Addr, srcPort int, _ netip.AddrPort) (uint32, string, error) {
+ 	once.Do(func() {
+ 		err := initWin32API()
+ 		if err != nil {
+--- a/component/process/process_darwin.go
++++ b/component/process/process_darwin.go
+@@ -33,7 +33,7 @@
+ 	}
+ }()
+ 
+-func findProcessName(network string, ip netip.Addr, port int) (uint32, string, error) {
++func findProcessName(network string, ip netip.Addr, port int, _ netip.AddrPort) (uint32, string, error) {
+ 	var spath string
+ 	switch network {
+ 	case TCP:
+--- a/component/process/process_other.go
++++ b/component/process/process_other.go
+@@ -4,7 +4,7 @@
+ 
+ import "net/netip"
+ 
+-func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
++func findProcessName(network string, ip netip.Addr, srcPort int, _ netip.AddrPort) (uint32, string, error) {
+ 	return 0, "", ErrPlatformNotSupport
+ }
+ 
+--- a/component/process/process_freebsd_amd64.go
++++ b/component/process/process_freebsd_amd64.go
+@@ -20,7 +20,7 @@
+ 	once sync.Once
+ )
+ 
+-func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
++func findProcessName(network string, ip netip.Addr, srcPort int, _ netip.AddrPort) (uint32, string, error) {
+ 	once.Do(func() {
+ 		if err := initSearcher(); err != nil {
+ 			log.Errorln("Initialize PROCESS-NAME failed: %s", err.Error())
+--- a/tunnel/tunnel.go
++++ b/tunnel/tunnel.go
+@@ -314,24 +314,39 @@
+ 	return nil
+ }
+ 
+-func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err error) {
+-	if metadata.SpecialProxy != "" {
+-		var exist bool
+-		proxy, exist = proxies[metadata.SpecialProxy]
+-		if !exist {
+-			err = fmt.Errorf("proxy %s not found", metadata.SpecialProxy)
+-		}
++func resolveProcess(metadata *C.Metadata) {
++	if metadata.Type == C.INNER || metadata.Process != "" || !metadata.SrcIP.IsValid() || metadata.SrcIP.IsUnspecified() || metadata.SrcPort == 0 {
+ 		return
+ 	}
+-	var (
+-		resolved             bool
+-		attemptProcessLookup = metadata.Type != C.INNER
+-	)
+-
+-	if node, ok := resolver.DefaultHosts.Search(metadata.Host, false); ok {
+-		metadata.DstIP, _ = node.RandIP()
+-		resolved = true
++	if features.CMFA {
++		metadata.Process, metadata.ProcessError = process.FindPackageName(metadata)
++		return
++	}
++	peer := netip.AddrPortFrom(metadata.InIP, metadata.InPort)
++	switch metadata.Type {
++	case C.TUN, C.REDIR, C.TPROXY:
++		// For intercepted traffic the application dials the original destination.
++		peer = metadata.AddrPort()
++	}
++	if peer.Port() == 0 || peer.Addr().IsUnspecified() {
++		peer = netip.AddrPort{}
++	}
++	uid, path, err := process.FindProcessName(metadata.NetWork.String(), metadata.SrcIP, int(metadata.SrcPort), peer)
++	metadata.ProcessError = err
++	if err != nil {
++		log.Debugln("[Process] find process error for %s: %v", metadata.String(), err)
++		return
++	}
++	metadata.Process = filepath.Base(path)
++	metadata.ProcessPath = path
++	metadata.Uid = uid
++	if pkg, err := process.FindPackageName(metadata); err == nil {
++		metadata.Process = pkg
+ 	}
++}
++
++func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err error) {
++	var resolved, helperFindProcessDone bool
+ 
+ 	helper := C.RuleMatchHelper{
+ 		ResolveIP: func() {
+@@ -349,31 +364,9 @@
+ 			}
+ 		},
+ 		FindProcess: func() {
+-			if attemptProcessLookup {
+-				attemptProcessLookup = false
+-				if !features.CMFA {
+-					// normal check for process
+-					uid, path, err := process.FindProcessName(metadata.NetWork.String(), metadata.SrcIP, int(metadata.SrcPort))
+-					if err != nil {
+-						log.Debugln("[Process] find process error for %s: %v", metadata.String(), err)
+-					} else {
+-						metadata.Process = filepath.Base(path)
+-						metadata.ProcessPath = path
+-						metadata.Uid = uid
+-
+-						if pkg, err := process.FindPackageName(metadata); err == nil { // for android (not CMFA) package names
+-							metadata.Process = pkg
+-						}
+-					}
+-				} else {
+-					// check package names
+-					pkg, err := process.FindPackageName(metadata)
+-					if err != nil {
+-						log.Debugln("[Process] find process error for %s: %v", metadata.String(), err)
+-					} else {
+-						metadata.Process = pkg
+-					}
+-				}
++			if !helperFindProcessDone {
++				helperFindProcessDone = true
++				resolveProcess(metadata)
+ 			}
+ 		},
+ 		CheckPassRule: func(adapterName string) bool {
+@@ -391,13 +384,24 @@
+ 	}
+ 
+ 	switch FindProcessMode() {
+-	case process.FindProcessAlways:
+-		helper.FindProcess()
+-		helper.FindProcess = nil
+-	case process.FindProcessOff:
++	case process.FindProcessAlways, process.FindProcessOff:
+ 		helper.FindProcess = nil
+ 	}
+ 
++	if metadata.SpecialProxy != "" {
++		var exist bool
++		proxy, exist = proxies[metadata.SpecialProxy]
++		if !exist {
++			err = fmt.Errorf("proxy %s not found", metadata.SpecialProxy)
++		}
++		return
++	}
++
++	if node, ok := resolver.DefaultHosts.Search(metadata.Host, false); ok {
++		metadata.DstIP, _ = node.RandIP()
++		resolved = true
++	}
++
+ 	switch mode {
+ 	case Direct:
+ 		proxy = proxies["DIRECT"]
+@@ -449,6 +453,9 @@
+ 		dial := func() (C.PacketConn, C.WriteBackProxy, error) {
+ 			originMetadata := metadata  // save origin metadata
+ 			metadata = metadata.Clone() // don't modify PacketAdapter's metadata
++			if FindProcessMode() == process.FindProcessAlways {
++				resolveProcess(metadata)
++			}
+ 
+ 			if err := sender.DoSniff(metadata); err != nil {
+ 				log.Warnln("[UDP] DoSniff error: %s", err.Error())
+@@ -515,6 +522,9 @@
+ 		return
+ 	}
+ 	fixMetadata(metadata) // fix some metadata not set via metadata.SetRemoteAddr or metadata.SetRemoteAddress
++	if FindProcessMode() == process.FindProcessAlways {
++		resolveProcess(metadata)
++	}
+ 
+ 	preHandleFailed := false
+ 	if err := preHandleMetadata(metadata); err != nil {

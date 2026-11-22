@@ -4,8 +4,8 @@ import (
 	"context"
 	"net"
 	"strconv"
+	"strings"
 
-	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core/connlog"
@@ -23,12 +23,9 @@ func (c *Core) observeConnection() func(*statistic.TrackerInfo) func() {
 		if host == "" && m.DstIP.IsValid() {
 			host = m.DstIP.String()
 		}
-		process := m.Process
-		if process == "" && m.Type == constant.INNER {
-			process = "mihomo"
-		}
-		if process == "" {
-			process = "unknown"
+		name, status, reason := processAttribution(m)
+		if name == "" {
+			name = "unknown"
 		}
 		rule := info.Rule
 		if info.RulePayload != "" {
@@ -36,8 +33,9 @@ func (c *Core) observeConnection() func(*statistic.TrackerInfo) func() {
 		}
 		outbound := info.Chain.Last()
 		finish := history.Start(info.UUID.String(), connlog.Key{
-			Process: process, Destination: net.JoinHostPort(host, strconv.Itoa(int(m.DstPort))),
-			Network: m.NetWork.String(), Outbound: outbound, Rule: rule, Blocked: isBlocked(outbound),
+			Process: name, ProcessStatus: status, ProcessReason: reason, Inbound: strings.ToLower(m.Type.String()),
+			Destination: net.JoinHostPort(host, strconv.Itoa(int(m.DstPort))),
+			Network:     m.NetWork.String(), Outbound: outbound, Rule: rule, Blocked: isBlocked(outbound),
 		}, func() (int64, int64) { return info.UploadTotal.Load(), info.DownloadTotal.Load() }, info.MultipleDestinations.Load)
 		if finish != nil {
 			info.Session.Store(history.Session())

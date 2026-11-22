@@ -289,6 +289,23 @@ test("open stacks preserve the route and protocol for each destination", () => {
     [[["a", "b"], 30, 2], [["c"], 30, 1], [["d"], 40, 1]])
 })
 
+test("connection stacks retain distinct inbound and process diagnostics", () => {
+  const { items } = Model.readConnections(snapshot([
+    conn("a", "github.com", "", { process_status: "lookup_failed", process_reason: "socket_not_found" }),
+    conn("b", "github.com", "", { process_status: "lookup_failed", process_reason: "ambiguous_socket" }),
+    conn("c", "github.com", "", { inbound: "redir", process_status: "lookup_failed", process_reason: "socket_not_found" }),
+    conn("d", "github.com", "", { process_status: "no_local_socket" })
+  ]))
+  assert.deepEqual(Model.stackConnections(items).map(s => [s.inbound, Model.processDiagnostic(s)]), [
+    ["tun", "Local socket not found"], ["tun", "Multiple local sockets match"],
+    ["redir", "Local socket not found"], ["tun", "No local socket metadata"]
+  ])
+  const [row] = Model.readConnectionHistory([{ id: 1, inbound: "redir", process: "unknown",
+    process_status: "lookup_failed", process_reason: "owner_unavailable" }])
+  assert.equal(row.inbound, "redir")
+  assert.equal(Model.processDiagnostic(row), "Socket owner unavailable")
+})
+
 test("the rule tester stops at the first hit, mihomo's order", () => {
   const rules = [
     { type: "DOMAIN-SUFFIX", value: "github.com", target: "Proxy" },
