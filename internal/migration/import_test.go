@@ -487,6 +487,7 @@ func TestImportStagesUsableLegacyGeodata(t *testing.T) {
 func TestMain(m *testing.M) {
 	if len(os.Args) == 2 && os.Args[1] == "--internal-export-selections" {
 		if err := ExportLegacySelections(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -498,11 +499,15 @@ func exportFixture(ctx context.Context, body []byte) (map[string]string, error) 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "--internal-export-selections")
-	// Bound race detector worker allocations inside the helper's memory limit.
-	cmd.Env = append(os.Environ(), "GOMAXPROCS=2")
+	// During the race detector's exit delay, background core goroutines can
+	// allocate past the data limit after the exporter has already finished.
+	cmd.Env = append(os.Environ(), "GOMAXPROCS=1", "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0")
 	cmd.Stdin = bytes.NewReader(body)
 	output, err := cmd.Output()
 	if err != nil {
+		if exit, ok := errors.AsType[*exec.ExitError](err); ok {
+			return nil, fmt.Errorf("%w: %s", err, bytes.TrimSpace(exit.Stderr))
+		}
 		return nil, err
 	}
 	var selected map[string]string
