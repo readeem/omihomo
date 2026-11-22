@@ -152,6 +152,39 @@ func TestGroupsFollowTheProfile(t *testing.T) {
 	}
 }
 
+func TestConfigRevisionsFollowContentNotNames(t *testing.T) {
+	revisions := func(cfg core.Config) map[string]string {
+		t.Helper()
+		groups, err := running(t, cfg).Groups(t.Context(), core.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, m := range groups[0].Members {
+			out[m.Name] = m.Revision
+		}
+		return out
+	}
+	before := revisions(testConfig())
+	changed := testConfig()
+	changed.Profile.Proxies[1].Options = map[string]any{"server": "127.0.0.1", "port": 2}
+	after := revisions(changed)
+	if before["Dead"] == "" || before["Dead"] == after["Dead"] {
+		t.Errorf("Dead's revision %q -> %q, want a new one for a new port", before["Dead"], after["Dead"])
+	}
+	if before["Local"] == "" || before["Local"] != after["Local"] {
+		t.Errorf("Local's revision %q -> %q, want it unchanged", before["Local"], after["Local"])
+	}
+	renamed := testConfig()
+	renamed.Profile.Proxies[1].Name = "Gone"
+	for _, g := range renamed.Profile.Groups {
+		g.Members[slices.Index(g.Members, "Dead")] = "Gone"
+	}
+	if got := revisions(renamed)["Gone"]; got != before["Dead"] {
+		t.Errorf("a renamed config's revision %q, want %q", got, before["Dead"])
+	}
+}
+
 func TestGroupsLabelVLESSConfigs(t *testing.T) {
 	cfg := core.Config{Mode: protocol.ModeRule, Profile: core.Profile{
 		Proxies: []core.Proxy{{Name: "Reality", Type: "vless", Options: map[string]any{

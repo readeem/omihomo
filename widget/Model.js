@@ -304,6 +304,7 @@ function readGroups(data) {
         name: text(member.name),
         type: text(member.type),
         label: text(member.label),
+        revision: text(member.revision),
         alive: member.alive === true,
         history: delay > 0 ? [{ delay: delay }] : []
       }
@@ -415,6 +416,20 @@ function historyDelay(entry) {
   if (!entry || !entry.history || typeof entry.history.length !== "number") return 0
   var last = entry.history[entry.history.length - 1]
   return last ? number(last.delay, 0) : 0
+}
+
+// The test results that still describe their config, or `results` itself when
+// all do: a result measured under another revision of it, or for a config that
+// is gone, is unknown again.
+function currentResults(results, configs) {
+  var out = dict()
+  var dropped = false
+  for (var name in results) {
+    var entry = configs[name]
+    if (entry && entry.revision === text(results[name].revision)) out[name] = results[name]
+    else dropped = true
+  }
+  return dropped ? out : results
 }
 
 // `delay.test` maps each tested config to its delay; 0 is a failed test.
@@ -810,6 +825,7 @@ if (typeof module !== "undefined") {
     groupForConfig: groupForConfig,
     historyDelay: historyDelay,
     readDelays: readDelays,
+    currentResults: currentResults,
     readTraffic: readTraffic,
     readEgress: readEgress,
     readConnections: readConnections,

@@ -146,6 +146,20 @@ test("configs retain their display label separately from the protocol", () => {
   assert.equal(parsed.configs.Plain.label, "")
 })
 
+test("a latency result is unknown again once its config changes or goes", () => {
+  const configs = Model.readGroups({ groups: [{ name: "Proxy", members: [
+    { name: "Same", revision: "a" }, { name: "Changed", revision: "c" }
+  ] }] }).configs
+  const results = {
+    Same: { state: "success", delay: 40, revision: "a" },
+    Changed: { state: "failed", delay: 0, revision: "b" },
+    Gone: { state: "success", delay: 90, revision: "g" }
+  }
+  assert.deepEqual(Object.keys(Model.currentResults(results, configs)), ["Same"])
+  const current = { Same: results.Same }
+  assert.equal(Model.currentResults(current, configs), current)
+})
+
 test("provider configs resolve through their owning group", () => {
   const groups = [{ name: "Proxy", all: ["Poland", "France"] }]
   assert.equal(Model.groupForConfig(groups, "Poland"), "Proxy")

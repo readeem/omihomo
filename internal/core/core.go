@@ -5,6 +5,11 @@ package core
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
@@ -45,6 +50,10 @@ type Profile struct {
 	SubRules map[string][]Rule
 	Rules    []Rule
 	RuleSets []RuleSet
+	// Renames maps a config name the subscription used before to the name it
+	// carries now, so owner settings that still name the old one reach it.
+	// The daemon resolves them; a Core ignores it.
+	Renames map[string]string
 }
 
 // Proxy is one outbound. Options holds its protocol fields under the names
@@ -53,6 +62,22 @@ type Proxy struct {
 	Name    string
 	Type    string
 	Options map[string]any
+}
+
+// revisionKey keeps a revision from confirming a guessed credential.
+var revisionKey = rand.Text()
+
+// Revision changes whenever the proxy's type or options do, and never with
+// its name alone. It is stable only within one process.
+func (p Proxy) Revision() string {
+	// Options are decoded YAML, which always encodes; json sorts map keys.
+	content, _ := json.Marshal(struct {
+		Type    string
+		Options map[string]any
+	}{p.Type, p.Options})
+	mac := hmac.New(sha256.New, []byte(revisionKey))
+	mac.Write(content)
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }
 
 // Group picks among its Members, which name proxies or other groups.

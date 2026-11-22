@@ -99,6 +99,7 @@ func (d *server) loadProfile(sub state.Subscription) (core.Profile, error) {
 		return core.Profile{}, err
 	}
 	p, _, err := doc.Build(snap.Providers)
+	p.Renames = snap.Renames
 	return p, err
 }
 
@@ -366,6 +367,13 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	if !exists {
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
 	}
+	stored := prev
+	if !active {
+		// An unreadable snapshot only loses the renames it carried.
+		stored, _ = d.loadProfile(sub)
+	}
+	dl.profile.Renames = renames(stored, dl.profile)
+	dl.snap.Renames = dl.profile.Renames
 	if err := d.acceptContent(ctx, settings, dl.profile, active); err != nil {
 		if !manual && ctx.Err() != nil {
 			return nil, nil

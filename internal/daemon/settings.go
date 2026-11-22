@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -64,6 +65,52 @@ func hasTarget(p core.Profile, name string) bool {
 		slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == name })
 }
 
+// renames carries the renames of p over to next and adds the configs next
+// renames: one config of p that next lacks, whose content exactly one config
+// new in next carries. A name next uses again is no longer an alias.
+func renames(p, next core.Profile) map[string]string {
+	gone, added := map[string][]string{}, map[string][]string{}
+	for _, px := range p.Proxies {
+		if !hasTarget(next, px.Name) {
+			gone[px.Revision()] = append(gone[px.Revision()], px.Name)
+		}
+	}
+	for _, px := range next.Proxies {
+		if !hasTarget(p, px.Name) {
+			added[px.Revision()] = append(added[px.Revision()], px.Name)
+		}
+	}
+	step := map[string]string{}
+	for revision, from := range gone {
+		if to := added[revision]; len(from) == 1 && len(to) == 1 {
+			step[from[0]] = to[0]
+		}
+	}
+	out := map[string]string{}
+	for from, to := range p.Renames {
+		if renamed, ok := step[to]; ok {
+			to = renamed
+		}
+		out[from] = to
+	}
+	maps.Copy(out, step)
+	maps.DeleteFunc(out, func(from, to string) bool {
+		return hasTarget(next, from) || !slices.ContainsFunc(next.Proxies, func(px core.Proxy) bool { return px.Name == to })
+	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// resolve is the name p gives what the owner's settings call name.
+func resolve(p core.Profile, name string) string {
+	if to, ok := p.Renames[name]; ok {
+		return to
+	}
+	return name
+}
+
 func ruleActive(p core.Profile, r protocol.RuleEntry) bool {
 	if r.Type == "SUB-RULE" {
 		_, ok := p.SubRules[r.Target]
@@ -81,6 +128,9 @@ func compileRules(entries []protocol.RuleEntry, p core.Profile) ([]core.Rule, []
 	var effective []core.Rule
 	listed := []protocol.Rule{}
 	add := func(r protocol.RuleEntry, category string, disabled bool) {
+		if r.Type != "SUB-RULE" {
+			r.Target = resolve(p, r.Target)
+		}
 		off := disabled || r.Disabled
 		inactive := off || !ruleActive(p, r)
 		listed = append(listed, protocol.Rule{Type: r.Type, Value: r.Value, Target: r.Target, Params: r.Params,
@@ -119,6 +169,6 @@ func (d *server) runConfig(s state.Settings, p core.Profile) core.Config {
 		Core: d.preferredCore(s.Core),
 		Mode: s.Mode, TUN: s.TUN, TUNRedirect: s.TUNRedirect, Tailscale: s.Tailscale,
 		TailnetProxy: s.TailnetProxy, OmihomoRulesDisabled: s.OmihomoRulesDisabled,
-		PrimaryGroup: s.PrimaryGroup, DNSDestination: s.DNSDestination, TUNBypass: bypass(s), Profile: p,
+		PrimaryGroup: s.PrimaryGroup, DNSDestination: resolve(p, s.DNSDestination), TUNBypass: bypass(s), Profile: p,
 	}
 }

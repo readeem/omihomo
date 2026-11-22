@@ -148,7 +148,7 @@ Item {
   // Widget probe results sit above the groups stream. A push may have left the
   // daemon before the click, so it must not repaint an old latency over the
   // test that the user is watching.
-  property var configTestResults: ({}) // config name -> { state, delay }
+  property var configTestResults: ({}) // config name -> { state, delay, revision }
   property var groupTestedAt: ({})     // group name -> ms of its last whole-group test
   property string pendingConfig: ""
   property string pendingSubscription: ""
@@ -462,6 +462,7 @@ Item {
     const runtime = runtimeKey
     const group = primaryGroup
     const config = currentConfig
+    const revision = configRevision(config)
     const args = config !== "" ? { group: group, proxy: config } : null
     _egressCall = call("egress.check", args, function(result, error) {
       root._egressCall = 0
@@ -476,7 +477,7 @@ Item {
           root.egressIpv6 = egress.ipv6
           root.egressLatency = egress.latency
         }
-        if (config !== "") root.finishConfigTests({ [config]: root.traceFailed ? 0 : egress.latency })
+        if (config !== "") root.finishConfigTests({ [config]: root.traceFailed ? 0 : egress.latency }, { [config]: revision })
       }
       if (!root._manualTrace) return
       root._manualTrace = false
@@ -605,6 +606,7 @@ Item {
     const wasLoaded = proxiesLoaded
     const previousGroup = primaryGroup
     const previousConfig = currentConfig
+    const previousRevision = configRevision(previousConfig)
     var parsed = Model.readGroups(data)
     groups = parsed.groups
     configEntries = parsed.configs
@@ -614,7 +616,9 @@ Item {
       groupTestedAt = ({})
       return
     }
+    configTestResults = Model.currentResults(configTestResults, configEntries)
     const routeChanged = previousGroup !== primaryGroup || previousConfig !== currentConfig
+      || previousRevision !== configRevision(currentConfig)
     if (routeChanged) {
       if (_manualTrace) cancelDelayTest()
       cancelTrace()
@@ -972,26 +976,36 @@ Item {
     return Model.historyDelay(configEntries[String(name)])
   }
 
+  function configRevision(name) {
+    const entry = configEntries[String(name)]
+    return entry ? entry.revision : ""
+  }
+
   // Publish the whole batch once. Config rows then move straight from
-  // "testing" to their final result without repainting one by one.
-  function finishConfigTests(delays) {
+  // "testing" to their final result without repainting one by one. A config
+  // that changed while it was measured stays unknown.
+  function finishConfigTests(delays, revisions) {
     var next = Object.assign(Object.create(null), configTestResults)
     for (const name of Object.keys(delays)) {
+      if (revisions[name] !== configRevision(name)) continue
       const delay = delays[name]
       next[name] = isFinite(delay) && delay > 0
-        ? { state: "success", delay: delay } : { state: "failed", delay: 0 }
+        ? { state: "success", delay: delay, revision: revisions[name] }
+        : { state: "failed", delay: 0, revision: revisions[name] }
     }
     configTestResults = next
   }
 
   function runDelayTest(args, names) {
+    const revisions = Object.create(null)
+    for (const name of names) revisions[name] = configRevision(name)
     const id = call("delay.test", args, function(result, error) {
       if (root._delayCall !== id) return
       root._delayCall = 0
       root._testingConfigs = []
       if (error) return root.finishPingTest(error)
       const delays = Model.readDelays(result)
-      root.finishConfigTests(delays)
+      root.finishConfigTests(delays, revisions)
       const complete = names.every(function(name) { return delays[name] !== undefined })
       root.finishPingTest(complete ? null
         : { code: "core_failed", message: names.length === 1 && root._testingGroup === ""

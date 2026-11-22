@@ -323,7 +323,11 @@ type Proxy struct {
 	Name  string `json:"name"`
 	Type  string `json:"type"`
 	Label string `json:"label,omitempty"`
-	Alive bool   `json:"alive"`
+	// Revision is the same while the config keeps its protocol fields, so a
+	// result measured under another revision no longer describes it. Empty
+	// for groups and built-ins.
+	Revision string `json:"revision,omitempty"`
+	Alive    bool   `json:"alive"`
 	// Delay is the last measured delay in milliseconds, 0 when unknown or
 	// failed.
 	Delay int `json:"delay"`

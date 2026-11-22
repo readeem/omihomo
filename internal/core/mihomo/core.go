@@ -335,7 +335,7 @@ func prepare(cfg core.Config) (*runtime, error) {
 				}
 			}
 		}
-		rt.members[p.Name] = protocol.Proxy{Type: p.Type, Label: label}
+		rt.members[p.Name] = protocol.Proxy{Type: p.Type, Label: label, Revision: p.Revision()}
 	}
 	for _, g := range cfg.Profile.Groups {
 		if g.Name != globalGroup {
