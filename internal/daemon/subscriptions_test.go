@@ -1247,51 +1247,84 @@ func TestCategoryCompilationSurvivesRefreshAndRollsBack(t *testing.T) {
 
 func TestRulesFollowConfigsTheSubscriptionRenames(t *testing.T) {
 	o := newOrigin(t)
-	o.set("/work", page{body: workYAML})
+	o.set("/work", page{body: `
+proxies:
+  - {name: Tokyo, type: trojan, server: tokyo.example, port: 443, password: secret}
+  - {name: Berlin, type: trojan, server: berlin.example, port: 443, password: secret}
+  - {name: Twin A, type: trojan, server: twin.example, port: 443, password: secret}
+  - {name: Twin B, type: trojan, server: twin.example, port: 443, password: secret}
+proxy-groups:
+  - {name: Proxy, type: select, proxies: [Tokyo, Berlin, Twin A, Twin B, DIRECT]}
+rules:
+  - MATCH,Proxy
+`})
 	h := serve(t, os.Getuid(), o.opts()...)
 	c := h.dial(t)
 	sub := call[protocol.Subscription](t, c, protocol.OpSubscriptionAdd, protocol.SubscriptionURLArgs{URL: o.url("/work")})
-	call[protocol.Status](t, c, protocol.OpApply, owned(protocol.Settings{DNSDestination: "Tokyo"},
+	// What the owner's files hold, which only they change.
+	owner := owned(protocol.Settings{DNSDestination: "Tokyo"},
 		protocol.RuleEntry{Type: "DOMAIN", Value: "tokyo.example", Target: "Tokyo"},
 		protocol.RuleEntry{Category: &protocol.RuleCategory{ID: "11111111111111111111111111111111", Name: "Work", Rules: []protocol.RuleEntry{
 			{Type: "DOMAIN", Value: "proxy.example", Target: "Proxy"},
 			{Type: "DOMAIN", Value: "berlin.example", Target: "Berlin"},
-		}}}))
+			{Type: "DOMAIN", Value: "twin.example", Target: "Twin A"},
+		}}})
+	call[protocol.Status](t, c, protocol.OpApply, owner)
 	call[protocol.Status](t, c, protocol.OpStart, nil)
 
-	// Tokyo is renamed; Berlin's server changes, so it is a new config, not a rename.
-	o.set("/work", page{body: `
+	// Tokyo is renamed twice over two refreshes. Berlin's server changes, so it
+	// is a new config, and the twins could each be the one config left.
+	refresh := func(body string) {
+		t.Helper()
+		o.set("/work", page{body: body})
+		h.clock.advance(time.Minute)
+		call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: sub.Name})
+	}
+	refresh(`
+proxies:
+  - {name: Tokyo 1, type: trojan, server: tokyo.example, port: 443, password: secret}
+  - {name: Berlin, type: trojan, server: berlin.example, port: 443, password: secret}
+  - {name: Twin A, type: trojan, server: twin.example, port: 443, password: secret}
+  - {name: Twin B, type: trojan, server: twin.example, port: 443, password: secret}
+proxy-groups:
+  - {name: Proxy, type: select, proxies: [Tokyo 1, Berlin, Twin A, Twin B, DIRECT]}
+rules:
+  - MATCH,Proxy
+`)
+	refresh(`
 proxies:
   - {name: "Tokyo 🇯🇵", type: trojan, server: tokyo.example, port: 443, password: secret}
   - {name: "Berlin 2", type: trojan, server: berlin2.example, port: 443, password: secret}
+  - {name: Twin, type: trojan, server: twin.example, port: 443, password: secret}
 proxy-groups:
-  - {name: Proxy, type: select, proxies: ["Tokyo 🇯🇵", "Berlin 2", DIRECT]}
+  - {name: Proxy, type: select, proxies: ["Tokyo 🇯🇵", "Berlin 2", Twin, DIRECT]}
 rules:
   - MATCH,Proxy
-`})
-	h.clock.advance(time.Minute)
-	call[protocol.Subscription](t, c, protocol.OpSubscriptionUpdate, protocol.NameArgs{Name: sub.Name})
+`)
 
-	targets := func(t *testing.T, c *client.Client) []string {
+	check := func(t *testing.T, c *client.Client) {
 		t.Helper()
-		var out []string
+		var active []string
 		for _, r := range call[protocol.RuleList](t, c, protocol.OpRules, nil).Rules {
-			if r.Source == protocol.SourceUser {
-				out = append(out, r.Target)
+			if r.Source == protocol.SourceUser && !r.Inactive {
+				active = append(active, r.Target)
 			}
 		}
-		return out
+		if want := []string{"Tokyo 🇯🇵", "Proxy"}; !slices.Equal(active, want) {
+			t.Errorf("active rule targets %q, want %q", active, want)
+		}
+		if got := call[protocol.Status](t, c, protocol.OpStatus, nil).DNSDestination; got != "Tokyo 🇯🇵" {
+			t.Errorf("DNS destination %q, want it renamed with its config", got)
+		}
+		cfg, _ := h.core.Config()
+		if cfg.DNSDestination != "Tokyo 🇯🇵" || cfg.Profile.Rules[0].Target != "Tokyo 🇯🇵" {
+			t.Errorf("the core runs DNS through %q and the first rule to %q", cfg.DNSDestination, cfg.Profile.Rules[0].Target)
+		}
 	}
-	want := []string{"Tokyo 🇯🇵", "Proxy", "Berlin"}
-	if got := targets(t, c); !slices.Equal(got, want) {
-		t.Fatalf("rule targets %q, want %q", got, want)
-	}
-	if got := call[protocol.Status](t, c, protocol.OpStatus, nil).DNSDestination; got != "Tokyo 🇯🇵" {
-		t.Errorf("DNS destination %q, want it renamed with its config", got)
-	}
+	check(t, c)
+	owner.Settings.TUN = true
+	call[protocol.Status](t, c, protocol.OpApply, owner)
+	check(t, c)
 	h.restart(t)
-	c = h.dial(t)
-	if got := targets(t, c); !slices.Equal(got, want) {
-		t.Errorf("after a restart the rule targets %q, want %q", got, want)
-	}
+	check(t, h.dial(t))
 }

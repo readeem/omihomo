@@ -85,6 +85,7 @@ type Subscriptions struct {
 type Snapshot struct {
 	Body      []byte            `json:"body"`
 	Providers map[string][]byte `json:"providers"`
+	Renames   map[string]string `json:"renames,omitempty"`
 }
 
 // Store reads and writes one state directory.

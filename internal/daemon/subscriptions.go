@@ -99,6 +99,7 @@ func (d *server) loadProfile(sub state.Subscription) (core.Profile, error) {
 		return core.Profile{}, err
 	}
 	p, _, err := doc.Build(snap.Providers)
+	p.Renames = snap.Renames
 	return p, err
 }
 
@@ -366,11 +367,14 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 	if !exists {
 		return nil, fail(protocol.CodeNotFound, "the subscription was removed meanwhile")
 	}
-	next, renamed := settings, false
-	if active {
-		next, renamed = followRenames(settings, prev, dl.profile)
+	stored := prev
+	if !active {
+		// An unreadable snapshot only loses the renames it carried.
+		stored, _ = d.loadProfile(sub)
 	}
-	if err := d.acceptContent(ctx, next, dl.profile, active); err != nil {
+	dl.profile.Renames = renames(stored, dl.profile)
+	dl.snap.Renames = dl.profile.Renames
+	if err := d.acceptContent(ctx, settings, dl.profile, active); err != nil {
 		if !manual && ctx.Err() != nil {
 			return nil, nil
 		}
@@ -394,10 +398,6 @@ func (d *server) refresh(ctx context.Context, id string, manual bool) (any, *pro
 		d.mu.Lock()
 		d.profile = dl.profile
 		d.mu.Unlock()
-	}
-	if renamed {
-		// Unsaved, the renamed rules still run until the next change or start.
-		d.saveSettings(next)
 	}
 	usage := profile.ReadUsage(dl.header)
 	if err := d.updateSub(id, func(s *state.Subscription) {

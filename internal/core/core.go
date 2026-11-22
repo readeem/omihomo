@@ -50,6 +50,10 @@ type Profile struct {
 	SubRules map[string][]Rule
 	Rules    []Rule
 	RuleSets []RuleSet
+	// Renames maps a config name the subscription used before to the name it
+	// carries now, so owner settings that still name the old one reach it.
+	// The daemon resolves them; a Core ignores it.
+	Renames map[string]string
 }
 
 // Proxy is one outbound. Options holds its protocol fields under the names

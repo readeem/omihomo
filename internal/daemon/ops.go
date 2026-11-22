@@ -235,7 +235,7 @@ func (d *server) status() protocol.Status {
 		Detail:              d.detail,
 		ActiveSubscription:  active,
 		PrimaryGroup:        d.settings.PrimaryGroup,
-		DNSDestination:      d.settings.DNSDestination,
+		DNSDestination:      resolve(d.profile, d.settings.DNSDestination),
 		Mode:                d.settings.Mode,
 		TUN:                 d.settings.TUN,
 		TUNRedirect:         d.settings.TUNRedirect,
@@ -643,7 +643,7 @@ func (d *server) apply(ctx context.Context, args protocol.ApplyArgs) (any, *prot
 		}
 		return d.status(), nil
 	}
-	if in.DNSDestination != "" && (in.DNSDestination == "GLOBAL" || !(slices.ContainsFunc(p.Groups, func(g core.Group) bool { return g.Name == in.DNSDestination }) || slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == in.DNSDestination }))) {
+	if dns := resolve(p, in.DNSDestination); dns != "" && (dns == "GLOBAL" || !(slices.ContainsFunc(p.Groups, func(g core.Group) bool { return g.Name == dns }) || slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == dns }))) {
 		return nil, fail(protocol.CodeNotFound, "DNS destination %q is unavailable in the active subscription", in.DNSDestination)
 	}
 	// Only turning Tailscale on needs tailscaled, so settings that keep it on
