@@ -377,7 +377,7 @@ test("session flows retain the complete byte totals from the daemon", () => {
     { process: "", outbound: "London 05", bytes: 500 },
     { process: "", outbound: "Frankfurt 04", bytes: 350 }
   ])
-  assert.deepEqual(flows.sources, [{ name: "steam", bytes: 900 }, { name: "other", bytes: 850 }])
+  assert.deepEqual(flows.sources, [{ name: "steam", bytes: 900 }, { name: "", bytes: 850 }])
   assert.equal(flows.links.reduce((sum, link) => sum + link.bytes, 0), 1750)
 })
 

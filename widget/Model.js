@@ -672,8 +672,8 @@ function connectionFlows(flows) {
   var bySource = dict()
   var byTarget = dict()
   var links = flows.map(function(flow) {
-    var source = flow.process || "other"
-    var target = flow.outbound || "other"
+    var source = flow.process || ""
+    var target = flow.outbound || ""
     bySource[source] = (bySource[source] || 0) + flow.bytes
     byTarget[target] = (byTarget[target] || 0) + flow.bytes
     return { source: source, target: target, bytes: flow.bytes }
