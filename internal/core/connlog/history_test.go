@@ -11,7 +11,7 @@ import (
 	"github.com/readeem/omihomo/internal/protocol"
 )
 
-func TestHistorySummaryShowsRejectedRoutesWithNoBytes(t *testing.T) {
+func TestHistoryGroupsRejectedRoutesUnderReject(t *testing.T) {
 	h := connlog.New(t.TempDir(), 1)
 	t.Cleanup(h.Discard)
 	for i, outbound := range []string{"DIRECT", "proxy-a", "proxy-b", "proxy-c"} {
@@ -23,13 +23,15 @@ func TestHistorySummaryShowsRejectedRoutesWithNoBytes(t *testing.T) {
 		h.Start(outbound, connlog.Key{Process: "browser", Outbound: outbound, Blocked: true}, nil, nil)
 	}
 	summary, open := h.Summary()
-	for _, outbound := range []string{"REJECT", "REJECT-DROP"} {
-		if !slices.Contains(summary.Flows, protocol.ConnectionFlow{Process: "browser", Outbound: outbound, Bytes: 0}) {
-			t.Errorf("%s missing from session flows: %+v", outbound, summary.Flows)
-		}
+	if len(summary.Flows) != 5 || !slices.Contains(summary.Flows, protocol.ConnectionFlow{Process: "browser", Outbound: "REJECT"}) {
+		t.Errorf("session flows = %+v, want four traffic routes and one REJECT route", summary.Flows)
 	}
 	if open != 0 || summary.Blocked != 2 || summary.Upload != 10 || summary.Download != 0 {
 		t.Fatalf("summary = %+v, open = %d", summary, open)
+	}
+	page, err := h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) != 5 || page.Rows[0].Outbound != "REJECT" || page.Rows[0].Count != 2 {
+		t.Fatalf("connection history = %+v, %v", page.Rows, err)
 	}
 }
 

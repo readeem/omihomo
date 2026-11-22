@@ -107,6 +107,7 @@ func (h *History) Start(id string, key Key, readBytes func() (int64, int64), mul
 	}
 	if key.Blocked {
 		h.blocked++
+		key.Outbound = "REJECT"
 		flow := connectionFlow(key)
 		if _, found := h.rejections[flow]; !found && len(h.rejections) >= flowKeys {
 			flow.process = ""
