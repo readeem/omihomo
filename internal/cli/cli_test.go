@@ -158,6 +158,16 @@ func TestCommandsRunOverTheSocket(t *testing.T) {
 	if code != cli.ExitOK || json.Unmarshal([]byte(out), &history) != nil || len(history.Rows) != 0 {
 		t.Fatalf("cleared connection history: %d %q", code, out)
 	}
+	code, out, _ = run(t, "", "conn", "history", "--before", "2", "--session", fmt.Sprint(history.Session))
+	var continuation protocol.ConnectionHistory
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &continuation) != nil || !continuation.Reset || len(continuation.Rows) != 0 {
+		t.Fatalf("history cursor from before clearing: %d %q", code, out)
+	}
+	code, out, _ = run(t, "", "conn", "history", "--before", "2", "--session", fmt.Sprint(history.Session), "--cleared-at", fmt.Sprint(history.ClearedAt))
+	var resumed protocol.ConnectionHistory
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &resumed) != nil || resumed.Reset || len(resumed.Rows) != 0 {
+		t.Fatalf("history cursor with current clear revision: %d %q", code, out)
+	}
 	if code, _, _ := run(t, "", "set", "tailscale", "on"); code != cli.ExitState {
 		t.Fatalf("tailscale without tailscaled exit %d", code)
 	}

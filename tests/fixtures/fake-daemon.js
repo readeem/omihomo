@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 9 by default
+// --protocol  the version its hello announces, 10 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 9, refuse: false, busy: 0, latency: 0, fail: new Set() }
+const options = { protocol: 10, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -232,7 +232,8 @@ const ops = {
   },
   "connections.list": () => ({ result: connections() }),
   "connections.history": (client, args) => {
-    const result = { session: 1, revision: historyChanges.length }
+    const result = { session: 1, revision: historyChanges.length, cleared_at: clearedAt }
+    if (args.before && (args.cleared_at || 0) !== clearedAt) return { result: { ...result, reset: true, rows: [] } }
     if (args.since !== undefined) {
       if (args.since < clearedAt) return { result: { ...result, reset: true, rows: [] } }
       const changed = new Set(historyChanges.slice(args.since))

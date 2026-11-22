@@ -15,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 9
+	Version = 10
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -422,9 +422,10 @@ type Connections struct {
 }
 
 type ConnectionHistoryArgs struct {
-	Session uint64  `json:"session,omitempty"`
-	Since   *uint64 `json:"since,omitempty"`
-	Before  uint64  `json:"before,omitempty"`
+	Session   uint64  `json:"session,omitempty"`
+	Since     *uint64 `json:"since,omitempty"`
+	Before    uint64  `json:"before,omitempty"`
+	ClearedAt uint64  `json:"cleared_at,omitempty"` // Before must echo the previous page's clear revision; a mismatch resets pagination.
 }
 
 type ConnectionSummary struct {
@@ -446,11 +447,12 @@ type ConnectionFlow struct {
 }
 
 type ConnectionHistory struct {
-	Reset    bool                   `json:"reset,omitempty"`
-	Session  uint64                 `json:"session"`
-	Revision uint64                 `json:"revision"`
-	Rows     []ConnectionHistoryRow `json:"rows"`
-	Next     uint64                 `json:"next,omitempty"`
+	Reset     bool                   `json:"reset,omitempty"`
+	Session   uint64                 `json:"session"`
+	Revision  uint64                 `json:"revision"`
+	ClearedAt uint64                 `json:"cleared_at"`
+	Rows      []ConnectionHistoryRow `json:"rows"`
+	Next      uint64                 `json:"next,omitempty"`
 }
 
 type ConnectionHistoryRow struct {

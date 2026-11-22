@@ -77,7 +77,7 @@ func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
 	}
 	total := len(page.Rows)
 	for page.Next != 0 {
-		page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{Before: page.Next, Session: page.Session})
+		page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{Before: page.Next, Session: page.Session, ClearedAt: page.ClearedAt})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,6 +138,50 @@ func TestHistoryRecoversWhenSpillBecomesAvailable(t *testing.T) {
 	}
 	if summary, _ := h.Summary(); summary.Blocked != 10002 || !summary.Incomplete {
 		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func TestHistoryPaginationResetsAcrossClear(t *testing.T) {
+	h := connlog.New(t.TempDir(), 1)
+	t.Cleanup(h.Discard)
+	for i := range 150 {
+		h.Start("", connlog.Key{Destination: fmt.Sprintf("old-%d", i), Blocked: true}, nil, nil)
+	}
+	first, err := h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(first.Rows) != 100 || first.Next == 0 {
+		t.Fatalf("first page = %+v, %v", first, err)
+	}
+	oldCursor := protocol.ConnectionHistoryArgs{Session: first.Session, Before: first.Next, ClearedAt: first.ClearedAt}
+	h.Start("", connlog.Key{Destination: "another-old", Blocked: true}, nil, nil)
+	page, err := h.Page(t.Context(), oldCursor)
+	if err != nil || page.Reset || len(page.Rows) != 50 {
+		t.Fatalf("continuation after new activity = %+v, %v", page, err)
+	}
+	h.Clear()
+	for i := range 10 {
+		h.Start("", connlog.Key{Destination: fmt.Sprintf("new-%d", i), Blocked: true}, nil, nil)
+	}
+	page, err = h.Page(t.Context(), oldCursor)
+	if err != nil || !page.Reset || len(page.Rows) != 0 || page.Next != 0 || page.Session != first.Session || page.ClearedAt <= first.Revision {
+		t.Fatalf("continuation after clearing = %+v, %v", page, err)
+	}
+	for i := 10; i < 150; i++ {
+		h.Start("", connlog.Key{Destination: fmt.Sprintf("new-%d", i), Blocked: true}, nil, nil)
+	}
+	first, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || first.Reset || len(first.Rows) != 100 || first.Next == 0 {
+		t.Fatalf("first page after clearing = %+v, %v", first, err)
+	}
+	newCursor := protocol.ConnectionHistoryArgs{Session: first.Session, Before: first.Next, ClearedAt: first.ClearedAt}
+	page, err = h.Page(t.Context(), newCursor)
+	if err != nil || page.Reset || len(page.Rows) != 50 || page.Rows[0].Destination != "new-49" {
+		t.Fatalf("continuation with current clear revision = %+v, %v", page, err)
+	}
+	h.Clear()
+	h.Start("", connlog.Key{Destination: "after-second-clear", Blocked: true}, nil, nil)
+	page, err = h.Page(t.Context(), newCursor)
+	if err != nil || !page.Reset || len(page.Rows) != 0 {
+		t.Fatalf("continuation after another clear = %+v, %v", page, err)
 	}
 }
 

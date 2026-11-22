@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 9
+  readonly property int protocolVersion: 10
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -659,7 +659,7 @@ Item {
   function resetConnectionHistory() {
     _historyCall = 0
     _historyRevision = 0
-    _historySnapshot = { before: 0, rows: [] }
+    _historySnapshot = { before: 0, rows: [], clearedAt: 0 }
     connectionHistory = []
   }
 
@@ -673,7 +673,8 @@ Item {
     const snapshot = _historySnapshot
     if (!snapshot && _historyRevision >= connectionSummary.revision) return
     const session = connectionSummary.session
-    const args = snapshot ? { session: session, before: snapshot.before } : { session: session, since: _historyRevision }
+    const args = snapshot ? { session: session, before: snapshot.before, cleared_at: snapshot.clearedAt }
+      : { session: session, since: _historyRevision }
     const callId = call("connections.history", args, function(page, error) {
       if (root._historyCall !== callId) return
       root._historyCall = 0
@@ -683,12 +684,15 @@ Item {
       }
       if (page.session !== root.connectionSummary.session) return
       if (page.reset) {
-        root._historySnapshot = { before: 0, rows: [] }
+        root._historySnapshot = { before: 0, rows: [], clearedAt: 0 }
       } else {
         const rows = Model.readConnectionHistory(page.rows || [])
         if (snapshot) {
           // Keep the first batch's revision so updates during the read are replayed.
-          if (snapshot.before === 0) root._historyRevision = page.revision
+          if (snapshot.before === 0) {
+            root._historyRevision = page.revision
+            snapshot.clearedAt = page.cleared_at
+          }
           for (const row of rows) snapshot.rows.push(row)
           snapshot.before = page.next || 0
           if (snapshot.before === 0) {

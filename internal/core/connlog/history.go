@@ -369,7 +369,11 @@ func (h *History) Page(ctx context.Context, args protocol.ConnectionHistoryArgs)
 		return protocol.ConnectionHistory{}, ErrSessionChanged
 	}
 	h.flush()
-	out := protocol.ConnectionHistory{Session: h.id, Revision: h.revision, Rows: []protocol.ConnectionHistoryRow{}}
+	out := protocol.ConnectionHistory{Session: h.id, Revision: h.revision, ClearedAt: h.clearedAt, Rows: []protocol.ConnectionHistoryRow{}}
+	if args.Before != 0 && args.ClearedAt != h.clearedAt {
+		out.Reset = true
+		return out, nil
+	}
 	var ids []uint64
 	if args.Since != nil {
 		if *args.Since < h.clearedAt || *args.Since > h.revision || h.revision-*args.Since > changesSize {

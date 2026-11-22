@@ -85,6 +85,10 @@ closed its socket before lookup, and `ambiguous_socket` means multiple sockets c
 sent the datagram. `no_local_socket` means the inbound supplied no usable source socket
 address. Hover over a row in Conns to see its inbound and attribution details.
 
+Continue a history page with its `next`, `session`, and `cleared_at` values as
+`--before`, `--session`, and `--cleared-at`. If a clear returns `reset: true`, discard the
+accumulated pages and restart without `--before`.
+
 A subscription URL may return a full mihomo YAML config or raw share links. The daemon refreshes
 it on the provider's schedule, 12 hours by default, and a failed refresh keeps the cached content.
 

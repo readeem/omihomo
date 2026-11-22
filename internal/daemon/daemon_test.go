@@ -485,12 +485,18 @@ func TestRulesAndConnections(t *testing.T) {
 	if page := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, protocol.ConnectionHistoryArgs{Since: &before.Revision}); !page.Reset {
 		t.Fatalf("history since before clearing = %+v", page)
 	}
+	if page := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, protocol.ConnectionHistoryArgs{Session: before.Session, Before: 2, ClearedAt: before.ClearedAt}); !page.Reset || len(page.Rows) != 0 {
+		t.Fatalf("history cursor from before clearing = %+v", page)
+	}
 	if page := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, nil); len(page.Rows) != 0 {
 		t.Fatalf("cleared history = %+v", page)
 	}
 	call[protocol.Empty](t, c, protocol.OpCloseConnections, protocol.CloseArgs{All: true})
 	if conns := call[protocol.Connections](t, c, protocol.OpConnections, nil); len(conns.Connections) != 0 {
 		t.Fatalf("after closing all: %+v", conns)
+	}
+	if page := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, protocol.ConnectionHistoryArgs{Session: before.Session, Before: 2, ClearedAt: conns.Summary.ClearedAt}); page.Reset || len(page.Rows) != 1 || page.Rows[0].Process != "unknown" {
+		t.Fatalf("history cursor after clearing = %+v", page)
 	}
 }
 

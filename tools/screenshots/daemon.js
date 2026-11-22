@@ -72,7 +72,7 @@ function connectionHistory() {
     network: c.network, inbound: c.inbound, process_status: c.process_status, outbound: c.chain, rule: c.rule, count: 1, upload: c.upload, download: c.download,
     last_at: Date.now() - c.age * 1000
   }))
-  return { session: status.started_at || 1, revision: logRevision, rows: blocked.concat(rows.reverse()) }
+  return { session: status.started_at || 1, revision: logRevision, cleared_at: logClearedAt, rows: blocked.concat(rows.reverse()) }
 }
 
 function ruleSnapshot() {
@@ -229,7 +229,7 @@ const ops = {
     push("groups")
     return { result: { delays: result } }
   }),
-  "connections.history": args => ({ result: args.since === undefined ? connectionHistory()
+  "connections.history": args => ({ result: args.since === undefined && (!args.before || (args.cleared_at || 0) === logClearedAt) ? connectionHistory()
     : { ...connectionHistory(), reset: true, rows: [] } }),
   "connections.clear": () => {
     for (const id of closed) cleared.add(id)
@@ -307,7 +307,7 @@ net.createServer((client) => {
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 9, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 10, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk
