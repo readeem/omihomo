@@ -459,6 +459,7 @@ func (a *app) connCommand() *ffcli.Command {
 	session = historyCmd.FlagSet.Uint64("session", 0, "require the previous page's session")
 	return a.group("conn", "omihomo conn <command>", "list, close and inspect connections",
 		a.call("list", "omihomo conn list [--pretty]", "list open connections with process attribution", nargs(0, protocol.OpConnections, nil)),
+		a.call("clear", "omihomo conn clear [--pretty]", "clear logged closed and blocked connections", nargs(0, protocol.OpClearConnectionLog, nil)),
 		closeCmd, historyCmd,
 	)
 }

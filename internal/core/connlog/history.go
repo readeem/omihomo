@@ -71,6 +71,7 @@ type History struct {
 	dir                              string
 	id                               uint64
 	revision, closed, blocked        uint64
+	clearedAt                        uint64
 	up, down                         int64
 	flows                            map[flowKey]int64
 	rejections                       map[flowKey]int64
@@ -195,8 +196,25 @@ func (h *History) Discard() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.discarded = true
+	h.clear()
+	h.live = nil
+}
+
+func (h *History) Clear() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.discarded {
+		return
+	}
+	h.clear()
+	h.revision++
+	h.clearedAt = h.revision
+}
+
+func (h *History) clear() {
 	if h.timer != nil {
 		h.timer.Stop()
+		h.timer = nil
 	}
 	if h.db != nil {
 		h.db.Close()
@@ -204,11 +222,13 @@ func (h *History) Discard() {
 	h.db = nil
 	h.pending = nil
 	h.pendingOrder = nil
-	h.live = nil
 	h.rows = nil
-	h.memory = nil
-	h.flows = nil
-	h.rejections = nil
+	clear(h.memory)
+	clear(h.flows)
+	clear(h.rejections)
+	h.nextID, h.bytes = 0, 0
+	h.closed, h.blocked, h.up, h.down = 0, 0, 0, 0
+	h.incomplete, h.spillFull = false, false
 }
 
 func (h *History) flush() {
@@ -328,7 +348,7 @@ func (h *History) Session() uint64 { return h.id }
 func (h *History) Summary() (protocol.ConnectionSummary, int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	out := protocol.ConnectionSummary{Session: h.id, Revision: h.revision, Closed: h.closed, Blocked: h.blocked, Upload: h.up, Download: h.down, Incomplete: h.incomplete}
+	out := protocol.ConnectionSummary{Session: h.id, Revision: h.revision, ClearedAt: h.clearedAt, Closed: h.closed, Blocked: h.blocked, Upload: h.up, Download: h.down, Incomplete: h.incomplete}
 	live := make(map[flowKey]int64)
 	for _, c := range h.live {
 		up, down := c.bytes()
@@ -352,7 +372,7 @@ func (h *History) Page(ctx context.Context, args protocol.ConnectionHistoryArgs)
 	out := protocol.ConnectionHistory{Session: h.id, Revision: h.revision, Rows: []protocol.ConnectionHistoryRow{}}
 	var ids []uint64
 	if args.Since != nil {
-		if *args.Since > h.revision || h.revision-*args.Since > changesSize {
+		if *args.Since < h.clearedAt || *args.Since > h.revision || h.revision-*args.Since > changesSize {
 			out.Reset = true
 			return out, nil
 		}

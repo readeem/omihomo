@@ -15,7 +15,7 @@ const (
 	// Version is bumped on any change an older peer would misread. A client
 	// that gets a different version from Hello must not send requests; the
 	// widget offers the update that moves both.
-	Version = 8
+	Version = 9
 
 	// MaxLine bounds one message in either direction, newline excluded.
 	MaxLine = 1 << 20
@@ -129,6 +129,7 @@ const (
 	OpProbeCancel        = "probe.cancel"           // ProbeCancelArgs -> Empty
 	OpDelayTest          = "delay.test"             // DelayArgs -> DelayResult
 	OpConnectionHistory  = "connections.history"    // ConnectionHistoryArgs -> ConnectionHistory
+	OpClearConnectionLog = "connections.clear"      // nil -> Empty
 	OpConnections        = "connections.list"       // nil -> Connections
 	OpCloseConnections   = "connections.close"      // CloseArgs -> Empty
 	OpEgress             = "egress.check"           // EgressArgs -> Egress
@@ -429,6 +430,7 @@ type ConnectionHistoryArgs struct {
 type ConnectionSummary struct {
 	Session    uint64           `json:"session"`
 	Revision   uint64           `json:"revision"`
+	ClearedAt  uint64           `json:"cleared_at,omitempty"` // Revision of the most recent clear, if any.
 	Closed     uint64           `json:"closed"`
 	Blocked    uint64           `json:"blocked"`
 	Upload     int64            `json:"upload"`

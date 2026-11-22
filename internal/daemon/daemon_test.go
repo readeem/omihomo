@@ -476,6 +476,18 @@ func TestRulesAndConnections(t *testing.T) {
 	if conns := call[protocol.Connections](t, c, protocol.OpConnections, nil); len(conns.Connections) != 1 {
 		t.Fatalf("after closing c1: %+v", conns)
 	}
+	before := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, nil)
+	call[protocol.Empty](t, c, protocol.OpClearConnectionLog, nil)
+	conns = call[protocol.Connections](t, c, protocol.OpConnections, nil)
+	if conns.Open != 1 || conns.Summary.Closed != 0 || conns.Summary.Blocked != 0 || conns.Summary.ClearedAt <= before.Revision {
+		t.Fatalf("after clearing the log: %+v", conns)
+	}
+	if page := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, protocol.ConnectionHistoryArgs{Since: &before.Revision}); !page.Reset {
+		t.Fatalf("history since before clearing = %+v", page)
+	}
+	if page := call[protocol.ConnectionHistory](t, c, protocol.OpConnectionHistory, nil); len(page.Rows) != 0 {
+		t.Fatalf("cleared history = %+v", page)
+	}
 	call[protocol.Empty](t, c, protocol.OpCloseConnections, protocol.CloseArgs{All: true})
 	if conns := call[protocol.Connections](t, c, protocol.OpConnections, nil); len(conns.Connections) != 0 {
 		t.Fatalf("after closing all: %+v", conns)

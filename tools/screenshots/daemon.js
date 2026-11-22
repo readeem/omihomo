@@ -35,10 +35,14 @@ const delays = json("group-delay.json").delays
 let subscriptions = json("subscriptions.json").map(({ updated_ago, ...sub }) =>
   ({ ...sub, updated_at: Date.now() - updated_ago * 1000 }))
 const traffic = lines("traffic.jsonl")
+const loadedAt = Date.now()
 const allConnections = lines("connections.jsonl").map(c => ({ process_status: "resolved", ...c }))
 const running = () => status.state !== "stopped"
 
 const closed = new Set(allConnections.filter(c => c.closes).map(c => c.id))
+const cleared = new Set()
+let logRevision = closed.size + 1
+let logClearedAt = 0
 const blocked = [{ id: 1, destination: "ads.example:443", process: "firefox", network: "tcp", inbound: "tun", process_status: "resolved", outbound: "REJECT",
   rule: "RuleSet(ads)", count: 8, upload: 0, download: 0, blocked: true, last_at: Date.now() - 120000 }]
 function connections() {
@@ -47,6 +51,7 @@ function connections() {
   const other = new Set(["chromium", "code", "telegram-desktop"])
   let upload = 0, download = 0
   for (const c of allConnections) {
+    if (cleared.has(c.id)) continue
     if (!c.upload && !c.download) continue
     const process = other.has(c.process) ? "" : c.process || "unknown"
     const key = process + "\0" + c.chain
@@ -55,19 +60,19 @@ function connections() {
     upload += c.upload
     download += c.download
   }
-  return { open: open.length, summary: { session: status.started_at || 1, revision: closed.size + blocked.length,
-    closed: closed.size, blocked: 8, upload, download, flows: [...flows.values(),
+  return { open: open.length, summary: { session: status.started_at || 1, revision: logRevision, cleared_at: logClearedAt,
+    closed: closed.size - cleared.size, blocked: blocked.reduce((count, row) => count + row.count, 0), upload, download, flows: [...flows.values(),
       ...blocked.map(row => ({ process: row.process, outbound: row.outbound, bytes: 0 }))] },
-    connections: open.map(({ age, closes, ...c }) => ({ ...c, started_at: Date.now() - age * 1000 })) }
+    connections: open.map(({ age, closes, ...c }) => ({ ...c, started_at: loadedAt - age * 1000 })) }
 }
 
 function connectionHistory() {
-  const rows = allConnections.filter(c => closed.has(c.id)).map((c, i) => ({
+  const rows = allConnections.filter(c => closed.has(c.id) && !cleared.has(c.id)).map((c, i) => ({
     id: i + 2, destination: (c.host || c.destination_ip) + ":" + c.destination_port, process: c.process,
     network: c.network, inbound: c.inbound, process_status: c.process_status, outbound: c.chain, rule: c.rule, count: 1, upload: c.upload, download: c.download,
     last_at: Date.now() - c.age * 1000
   }))
-  return { session: status.started_at || 1, revision: closed.size + blocked.length, rows: blocked.concat(rows.reverse()) }
+  return { session: status.started_at || 1, revision: logRevision, rows: blocked.concat(rows.reverse()) }
 }
 
 function ruleSnapshot() {
@@ -114,7 +119,8 @@ const snapshots = {
   status: () => status,
   groups: () => groups,
   rules: ruleSnapshot,
-  subscriptions: () => ({ subscriptions })
+  subscriptions: () => ({ subscriptions }),
+  connections
 }
 
 const clients = new Set()
@@ -176,12 +182,12 @@ const ops = {
   },
   start: () => later(400, () => {
     Object.assign(status, { state: "on", detail: "", started_at: Date.now() })
-    push("status", "rules")
+    push("status", "rules", "connections")
     return { result: status }
   }),
   stop: () => {
     status.state = "stopped"
-    push("status", "rules")
+    push("status", "rules", "connections")
     return { result: status }
   },
   "settings.apply": (args) => {
@@ -223,9 +229,23 @@ const ops = {
     push("groups")
     return { result: { delays: result } }
   }),
-  "connections.history": () => ({ result: connectionHistory() }),
+  "connections.history": args => ({ result: args.since === undefined ? connectionHistory()
+    : { ...connectionHistory(), reset: true, rows: [] } }),
+  "connections.clear": () => {
+    for (const id of closed) cleared.add(id)
+    blocked.length = 0
+    logClearedAt = ++logRevision
+    push("connections")
+    return { result: {} }
+  },
   "connections.close": (args) => {
-    allConnections.filter((c) => args.all || args.ids.includes(c.id)).forEach((c) => closed.add(c.id))
+    for (const c of allConnections) {
+      if (!closed.has(c.id) && (args.all || args.ids.includes(c.id))) {
+        closed.add(c.id)
+        logRevision++
+      }
+    }
+    push("connections")
     return { result: {} }
   },
   "egress.check": () => ({ result: {
@@ -281,20 +301,13 @@ async function handle(client, request) {
   send(client, { type: "reply", id: request.id, ...answer })
 }
 
-setInterval(() => {
-  if (!running()) return
-  for (const client of clients) {
-    if (client.streams.has("connections")) send(client, { type: "event", stream: "connections", data: connections() })
-  }
-}, 500)
-
 try { fs.unlinkSync(socketPath) } catch (e) {}
 net.createServer((client) => {
   client.streams = new Set()
   clients.add(client)
   client.on("close", () => clients.delete(client))
   client.on("error", () => {})
-  send(client, { type: "hello", protocol: 8, version: "v1.0.0" })
+  send(client, { type: "hello", protocol: 9, version: "v1.0.0" })
   let buffer = ""
   client.on("data", (chunk) => {
     buffer += chunk

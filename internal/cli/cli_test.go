@@ -151,6 +151,13 @@ func TestCommandsRunOverTheSocket(t *testing.T) {
 		history.Rows[0].ProcessStatus != protocol.ProcessLookupFailed || history.Rows[0].ProcessReason != protocol.ProcessSocketNotFound {
 		t.Fatalf("connection history: %d %q", code, out)
 	}
+	if code, out, _ := run(t, "", "conn", "clear"); code != cli.ExitOK || out != "" {
+		t.Fatalf("clear connection log: %d %q", code, out)
+	}
+	code, out, _ = run(t, "", "conn", "history")
+	if code != cli.ExitOK || json.Unmarshal([]byte(out), &history) != nil || len(history.Rows) != 0 {
+		t.Fatalf("cleared connection history: %d %q", code, out)
+	}
 	if code, _, _ := run(t, "", "set", "tailscale", "on"); code != cli.ExitState {
 		t.Fatalf("tailscale without tailscaled exit %d", code)
 	}

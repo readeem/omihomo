@@ -160,6 +160,8 @@ type Core interface {
 	Connections(ctx context.Context) (protocol.Connections, error)
 	// ConnectionHistory also serves the most recent session after Stop.
 	ConnectionHistory(ctx context.Context, args protocol.ConnectionHistoryArgs) (protocol.ConnectionHistory, error)
+	// ClearConnectionLog drops closed and rejected records while live connections continue to count and can still be logged on close.
+	ClearConnectionLog()
 	// CloseConnections closes the given ids; ids that are already gone are
 	// not an error. A nil slice closes every connection.
 	CloseConnections(ctx context.Context, ids []string) error

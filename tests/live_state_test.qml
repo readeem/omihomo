@@ -166,7 +166,11 @@ ShellRoot {
         t.check(rows[2].count, 4, "a repeated blocked attempt updates the existing row")
         t.check(rows[3].host, "older.example:443", "live updates preserve older entries")
         svc.clearConnectionLog()
+      } },
+    { name: "the daemon clears the log", until: function() { return svc.connectionSummary.cleared_at > 0 }, then: function() {
         t.check(svc.connectionStacks.length, 1, "clearing the log keeps the live connection")
+        t.check(svc.connectionSummary.closed, 0, "the closed count is cleared")
+        t.check(svc.connectionSummary.blocked, 0, "the blocked count is cleared")
         svc.connectionView = false
         svc.connectionView = true
       } },
@@ -177,6 +181,7 @@ ShellRoot {
     { name: "activity after clear is visible", until: function() { return svc.connectionStacks.length === 3 }, then: function() {
         t.check(svc.connectionStacks[1].host, "after-clear.example:443", "new closed connections appear")
         t.check(svc.connectionStacks[2].blocked, true, "a fresh attempt makes a blocked destination visible again")
+        t.check(svc.connectionStacks[2].count, 1, "new attempts start a fresh count")
         svc.connectionView = false
         svc.addSubscription("https://example.test/sub")
       } },

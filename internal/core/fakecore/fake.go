@@ -248,6 +248,14 @@ func (c *Core) ConnectionHistory(ctx context.Context, args protocol.ConnectionHi
 	return c.history.Page(ctx, args)
 }
 
+func (c *Core) ClearConnectionLog() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.history != nil {
+		c.history.Clear()
+	}
+}
+
 func (c *Core) CloseConnections(ctx context.Context, ids []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -11,6 +11,7 @@ ShellRoot {
   id: testRoot
 
   function key(name, modifiers) { events.keyClick(name, modifiers || 0, -1) }
+  function parkPointer() { events.mouseMove(panel, 0, 0, -1, Qt.NoButton, Qt.NoModifier) }
   function type(text) {
     for (var i = 0; i < text.length; i++) events.keyClickChar(text[i], 0, -1)
   }
@@ -99,6 +100,7 @@ ShellRoot {
 
   property real savedScroll: 0
   property string savedConnection: ""
+  property int openBeforeClear: 0
   property int savedFontSize: 0
   property bool savedSpacingScaleWithFont: true
   readonly property Item popup: Array.prototype.find.call(panel.children, function(item) {
@@ -218,6 +220,7 @@ ShellRoot {
           events.mouseMove(zero, zero.width / 2, zero.height / 2, -1, Qt.NoButton, Qt.NoModifier)
           t.check(testRoot.visibleText(panel, "other").color.toString(), panel.theme.foreground.toString(),
             "a pending connection does not highlight unrelated traffic")
+          testRoot.parkPointer()
           panel.openView("configs")
         } },
       { name: "config types", then: function() {
@@ -603,10 +606,15 @@ ShellRoot {
           t.check(Math.round(list.itemAtIndex(index).y - list.contentY), Math.round(testRoot.savedScroll), "a new connection preserves the visible row's position")
         } },
       { name: "clear log footer action", until: function() { return panel.service.connectionHistory.length > 0 }, then: function() {
-          var live = panel.service.openConnections.length
+          testRoot.openBeforeClear = panel.service.openConnectionCount
           t.check(testRoot.clickHint("clear log"), true, "Conns has a clear log button")
-          t.check(panel.service.connectionHistory.length, 0, "the button clears the log")
-          t.check(panel.service.openConnections.length, live, "the button keeps open connections")
+        } },
+      { name: "cleared log updates the whole tab", until: function() { return panel.service.connectionSummary.cleared_at > 0 }, then: function() {
+          t.check(panel.service.connectionStacks.every(row => row.open), true, "the list keeps only open connections")
+          t.check(panel.service.openConnectionCount, testRoot.openBeforeClear, "the button keeps open connections")
+          t.check(panel.service.connectionSummary.closed, 0, "the closed count is cleared")
+          t.check(panel.service.connectionSummary.blocked, 0, "the blocked count is cleared")
+          t.check(panel.flows.targets.some(target => target.name === "REJECT"), false, "the rejection flow is cleared")
           panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
         } },
       { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {
@@ -637,11 +645,16 @@ ShellRoot {
       { until: function() { return !panel.service.busy && panel.service.pendingDownloads.length === 0 }, then: function() {
           t.check(panel.service.lastError, "", "a recovered proxy completes the update without requesting direct access")
           panel.openView("settings")
+          testRoot.parkPointer()
           panel.focusRow("core", 1)
           panel.scrollCursorIntoView()
         } },
       { name: "select xray", until: function() {
-          return panel.service.streamsReady(["status"]) && panel.at("core", 1)
+          const button = testRoot.findButton(panel, "xray")
+          if (!button || !button.enabled) return false
+          const scroll = testRoot.settingsScroll(panel)
+          const top = button.mapToItem(scroll, 0, 0).y
+          return top >= 0 && top + button.height <= scroll.height
         }, then: function() {
           var xray = testRoot.findButton(panel, "xray")
           var mihomo = testRoot.findButton(panel, "mihomo")
@@ -671,6 +684,8 @@ ShellRoot {
         } },
       { name: "paused preference after start", until: function() { return !panel.service.busy && panel.service.coreRunning }, then: function() {
           t.check(panel.service.subscriptionUpdatesActive, false, "starting retains the paused preference")
+          testRoot.parkPointer()
+          panel.focusRow("subscriptionUpdates")
           key(Qt.Key_Right)
         } },
       { name: "resume automatic subscription updates", until: function() { return !panel.service.busy && panel.service.subscriptionUpdates }, then: function() {

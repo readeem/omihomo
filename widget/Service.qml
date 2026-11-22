@@ -22,7 +22,7 @@ Item {
 
   // The protocol this widget speaks. A daemon that greets with another one is
   // never sent a request.
-  readonly property int protocolVersion: 8
+  readonly property int protocolVersion: 9
 
   // "connecting" until the daemon greets this panel, then "ready". The rest
   // are why there is nothing to talk to:
@@ -120,9 +120,7 @@ Item {
   property var connectionHistory: []
   property var connectionSummary: ({})
   property bool connectionView: false
-  property var _connectionLogClear: null
-  readonly property bool connectionLogCleared: _connectionLogClear !== null
-    && _connectionLogClear.session === connectionSummary.session
+  property int _clearLogCall: 0
   property var _historySnapshot: null
   property double _historyRevision: 0
   property int _historyCall: 0
@@ -650,7 +648,8 @@ Item {
 
   function applyConnections(data) {
     var summary = data ? (data.summary || {}) : {}
-    if (!data || connectionSummary.session !== summary.session) resetConnectionHistory()
+    if (!data || connectionSummary.session !== summary.session || connectionSummary.cleared_at !== summary.cleared_at)
+      resetConnectionHistory()
     connectionSummary = summary
     openConnectionCount = data ? data.open || 0 : 0
     openConnections = data ? Model.readConnections(data).items : []
@@ -686,8 +685,7 @@ Item {
       if (page.reset) {
         root._historySnapshot = { before: 0, rows: [] }
       } else {
-        let rows = Model.readConnectionHistory(page.rows || [])
-        if (root.connectionLogCleared) rows = rows.filter(row => row.closedAtMs > root._connectionLogClear.at)
+        const rows = Model.readConnectionHistory(page.rows || [])
         if (snapshot) {
           // Keep the first batch's revision so updates during the read are replayed.
           if (snapshot.before === 0) root._historyRevision = page.revision
@@ -1112,10 +1110,11 @@ Item {
   }
 
   function clearConnectionLog() {
-    if (!connectionSummary.session) return
-    _connectionLogClear = { session: connectionSummary.session, at: Date.now() }
-    if (_historySnapshot) _historySnapshot.rows = []
-    connectionHistory = []
+    if (!streamsReady(["connections"]) || !connectionSummary.session || _clearLogCall !== 0) return
+    _clearLogCall = call("connections.clear", null, function(result, error) {
+      root._clearLogCall = 0
+      if (error) root.reportError(error, "conns")
+    })
   }
 
   Timer {

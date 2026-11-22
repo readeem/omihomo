@@ -392,10 +392,16 @@ func (d *server) tick(ctx context.Context) {
 				d.broadcast(protocol.StreamTraffic, v)
 			}
 		}
-		if d.listening(protocol.StreamConnections) {
-			if v, err := d.core.Connections(ctx); err == nil {
-				d.broadcast(protocol.StreamConnections, v)
-			}
+		d.pubMu.Lock()
+		d.broadcastConnections(ctx)
+		d.pubMu.Unlock()
+	}
+}
+
+func (d *server) broadcastConnections(ctx context.Context) {
+	if d.listening(protocol.StreamConnections) {
+		if v, err := d.core.Connections(ctx); err == nil {
+			d.broadcast(protocol.StreamConnections, v)
 		}
 	}
 }

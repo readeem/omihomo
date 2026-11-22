@@ -5,7 +5,7 @@
 //
 //   fake-daemon.js SOCKET [--protocol N] [--refuse] [--latency MS] [--fail OP,...]
 //
-// --protocol  the version its hello announces, 8 by default
+// --protocol  the version its hello announces, 9 by default
 // --refuse    greet every client with `refused` and hang up
 // --latency   how long start, groups.select, delay.test and egress.check take
 // --fail      ops that answer `core_failed` instead
@@ -22,7 +22,7 @@ const net = require("node:net")
 
 const args = process.argv.slice(2)
 const socketPath = args.shift()
-const options = { protocol: 8, refuse: false, busy: 0, latency: 0, fail: new Set() }
+const options = { protocol: 9, refuse: false, busy: 0, latency: 0, fail: new Set() }
 while (args.length > 0) {
   const flag = args.shift()
   if (flag === "--protocol") options.protocol = Number(args.shift())
@@ -75,10 +75,14 @@ const connectionHistory = [
   { id: 1, process: "curl", destination: "older.example:443", network: "tcp", outbound: "DIRECT", rule: "Match", count: 1, upload: 10, download: 20, last_at: 1000 },
   { id: 2, process: "firefox", destination: "blocked.example:443", network: "tcp", outbound: "REJECT", rule: "Match", count: 3, upload: 0, download: 0, blocked: true, last_at: 2000 }
 ]
+const blockedConnection = connectionHistory[1]
 const historyChanges = [1, 2]
+let clearedAt = 0
 
 function connections() {
-  return { open: 1, summary: { session: 1, revision: historyChanges.length, upload: 10, download: 20, flows: [] }, connections: [{
+  return { open: 1, summary: { session: 1, revision: historyChanges.length, cleared_at: clearedAt,
+    closed: connectionHistory.filter(row => !row.blocked).length,
+    blocked: connectionHistory.find(row => row.blocked)?.count || 0, upload: 10, download: 20, flows: [] }, connections: [{
     id: "c1", network: "tcp", inbound: "tun", host: "example.com", process: "firefox",
     source_ip: "198.18.0.1", source_port: 50000, destination_ip: "93.184.215.14",
     destination_port: 443, chain: "Pass", rule: "MATCH", upload: 10, download: 20,
@@ -230,20 +234,30 @@ const ops = {
   "connections.history": (client, args) => {
     const result = { session: 1, revision: historyChanges.length }
     if (args.since !== undefined) {
+      if (args.since < clearedAt) return { result: { ...result, reset: true, rows: [] } }
       const changed = new Set(historyChanges.slice(args.since))
       return { result: { ...result, rows: connectionHistory.filter(row => changed.has(row.id)) } }
     }
     const row = connectionHistory[(args.before || connectionHistory.length + 1) - 2]
-    return { result: { ...result, next: row.id > 1 ? row.id : 0, rows: [row] } }
+    return { result: { ...result, next: row && row.id > 1 ? row.id : 0, rows: row ? [row] : [] } }
+  },
+  "connections.clear": () => {
+    connectionHistory.length = 0
+    clearedAt = historyChanges.push(0)
+    push("connections", connections())
+    return { result: {} }
   },
   "connections.close": () => ({ result: {} }),
   "test.record-connections": (client, args) => {
-    const id = connectionHistory.length + 1
     const at = Date.now()
-    connectionHistory[1].count++
-    connectionHistory[1].last_at = at
-    connectionHistory.push({ ...connectionHistory[0], id, destination: args.destination || "recent.example:443", last_at: at })
-    historyChanges.push(2, id)
+    if (connectionHistory.length === 0) connectionHistory.push({ ...blockedConnection, id: 1, count: 0 })
+    const blocked = connectionHistory.find(row => row.blocked)
+    blocked.count++
+    blocked.last_at = at
+    const id = connectionHistory.length + 1
+    connectionHistory.push({ id, process: "curl", destination: args.destination || "recent.example:443", network: "tcp",
+      outbound: "DIRECT", rule: "Match", count: 1, upload: 10, download: 20, last_at: at })
+    historyChanges.push(blocked.id, id)
     push("connections", connections())
     return { result: {} }
   },

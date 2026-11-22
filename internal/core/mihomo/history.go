@@ -60,3 +60,11 @@ func (c *Core) ConnectionHistory(ctx context.Context, args protocol.ConnectionHi
 	}
 	return protocol.ConnectionHistory{Rows: []protocol.ConnectionHistoryRow{}}, nil
 }
+
+func (c *Core) ClearConnectionLog() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.history != nil {
+		c.history.Clear()
+	}
+}

@@ -164,6 +164,15 @@ func (d *server) handle(ctx context.Context, s *session, req protocol.Request) (
 			return nil, coreError(err)
 		}
 		return page, nil
+	case protocol.OpClearConnectionLog:
+		if err := decode(req.Args, &struct{}{}); err != nil {
+			return nil, err
+		}
+		d.pubMu.Lock()
+		defer d.pubMu.Unlock()
+		d.core.ClearConnectionLog()
+		d.broadcastConnections(ctx)
+		return protocol.Empty{}, nil
 	case protocol.OpConnections:
 		if err := decode(req.Args, &struct{}{}); err != nil {
 			return nil, err

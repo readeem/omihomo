@@ -95,6 +95,24 @@ func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
 	if err != nil || len(page.Rows) != 100 || page.Rows[0].ProcessReason != key.ProcessReason || page.Rows[0].Count != 1 || page.Rows[1].Count != 2 {
 		t.Fatalf("history did not distinguish lookup reasons: %+v, %v", page, err)
 	}
+
+	done = h.Start("live", connlog.Key{Process: "live", Outbound: "DIRECT"}, func() (int64, int64) { return 2, 3 }, nil)
+	h.Start("blocked", connlog.Key{Process: "blocked", Blocked: true}, nil, nil)
+	h.Clear()
+	summary, open := h.Summary()
+	if open != 1 || summary.Closed != 0 || summary.Blocked != 0 || summary.Upload != 2 || summary.Download != 3 ||
+		!slices.Equal(summary.Flows, []protocol.ConnectionFlow{{Process: "live", Outbound: "DIRECT", Bytes: 5}}) {
+		t.Fatalf("summary after clearing spilled history = %+v, open = %d", summary, open)
+	}
+	page, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) != 0 {
+		t.Fatalf("history after clearing = %+v, %v", page, err)
+	}
+	done()
+	delta, err = h.Page(t.Context(), protocol.ConnectionHistoryArgs{Since: &page.Revision, Session: page.Session})
+	if err != nil || len(delta.Rows) != 1 || delta.Rows[0].Process != "live" || delta.Rows[0].Count != 1 {
+		t.Fatalf("connection closed after clearing = %+v, %v", delta, err)
+	}
 }
 
 func TestHistoryRecoversWhenSpillBecomesAvailable(t *testing.T) {

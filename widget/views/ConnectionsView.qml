@@ -77,9 +77,9 @@ ColumnLayout {
   PanelText {
     theme: view.theme
     visible: view.service.connectionStacks.length === 0 && !view.service.connectionHistoryLoading
-      && (view.service.connectionLogCleared || (!view.service.connectionSummary.closed && !view.service.connectionSummary.blocked))
+      && !view.service.connectionSummary.closed && !view.service.connectionSummary.blocked
     Layout.fillWidth: true
-    text: view.service.connectionLogCleared ? "Log is empty."
+    text: view.service.connectionSummary.cleared_at ? "Log is empty."
       : view.service.connectionSummary.session ? "Nothing logged yet." : "No proxy session yet."
     color: view.theme.dim
     font.pixelSize: Style.font.body
