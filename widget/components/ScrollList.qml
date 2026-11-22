@@ -11,6 +11,7 @@ ListView {
 
   property var keyedEntries: null
   property var entryKey: null
+  property var _entriesByKey: Object.create(null)
   model: stableRows
 
   ListModel { id: stableRows; dynamicRoles: true }
@@ -27,24 +28,43 @@ ListView {
     var offset = anchor ? contentY - anchor.y : 0
     var structural = false
     var occurrences = Object.create(null)
-    for (var i = 0; i < keyedEntries.length; i++) {
-      var base = entryKey(keyedEntries[i])
+    var nextEntries = Object.create(null)
+    var keys = keyedEntries.map(function(entry) {
+      var base = entryKey(entry)
       var occurrence = occurrences[base] || 0
       occurrences[base] = occurrence + 1
       var key = base + ":" + occurrence
+      nextEntries[key] = entry
+      return key
+    })
+    // Drop vanished rows first so removing a row doesn't move every row after it.
+    for (var end = stableRows.count; end > 0;) {
+      var start = end - 1
+      if (stableRows.get(start).key in nextEntries) {
+        end = start
+        continue
+      }
+      while (start > 0 && !(stableRows.get(start - 1).key in nextEntries)) start--
+      stableRows.remove(start, end - start)
+      structural = true
+      end = start
+    }
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i]
+      var entry = nextEntries[key]
+      var existing = key in _entriesByKey
       if (i >= stableRows.count || stableRows.get(i).key !== key) {
         var found = -1
-        for (var j = i + 1; j < stableRows.count; j++) if (stableRows.get(j).key === key) { found = j; break }
+        if (existing) {
+          for (var j = i + 1; j < stableRows.count; j++) if (stableRows.get(j).key === key) { found = j; break }
+        }
         if (found >= 0) stableRows.move(found, i, 1)
-        else stableRows.insert(i, { key: key, entry: keyedEntries[i] })
+        else stableRows.insert(i, { key: key, entry: entry })
         structural = true
       }
-      stableRows.set(i, { key: key, entry: keyedEntries[i] })
+      if (existing && _entriesByKey[key] !== entry) stableRows.setProperty(i, "entry", entry)
     }
-    if (stableRows.count > keyedEntries.length) {
-      stableRows.remove(keyedEntries.length, stableRows.count - keyedEntries.length)
-      structural = true
-    }
+    _entriesByKey = nextEntries
     // Delegate heights settle after the model signals; retain the visible row and its offset.
     if (structural && anchorKey !== "") Qt.callLater(function() {
       scrollList.forceLayout()

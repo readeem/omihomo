@@ -77,9 +77,10 @@ ColumnLayout {
   PanelText {
     theme: view.theme
     visible: view.service.connectionStacks.length === 0 && !view.service.connectionHistoryLoading
-      && !view.service.connectionSummary.closed && !view.service.connectionSummary.blocked
+      && (view.service.connectionLogCleared || (!view.service.connectionSummary.closed && !view.service.connectionSummary.blocked))
     Layout.fillWidth: true
-    text: view.service.connectionSummary.session ? "Nothing logged yet." : "No proxy session yet."
+    text: view.service.connectionLogCleared ? "Log is empty."
+      : view.service.connectionSummary.session ? "Nothing logged yet." : "No proxy session yet."
     color: view.theme.dim
     font.pixelSize: Style.font.body
   }
@@ -102,23 +103,6 @@ ColumnLayout {
       height: implicitHeight
       stack: entry
       rowIndex: index
-    }
-  }
-
-  RowLayout {
-    visible: view.service.previousConnectionHistory || view.service.moreConnectionHistory
-    Layout.alignment: Qt.AlignHCenter
-    SmallButton {
-      theme: view.theme
-      enabled: view.service.previousConnectionHistory && !view.service.connectionHistoryLoading
-      text: "Newer history"
-      onClicked: view.service.changeHistoryPage(false)
-    }
-    SmallButton {
-      theme: view.theme
-      enabled: view.service.moreConnectionHistory && !view.service.connectionHistoryLoading
-      text: "Older history"
-      onClicked: view.service.changeHistoryPage(true)
     }
   }
 

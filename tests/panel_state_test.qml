@@ -601,6 +601,12 @@ ShellRoot {
           var list = testRoot.findObject(panel, "connectionList")
           var index = panel.service.connectionStacks.findIndex(function(c) { return c.key === testRoot.savedConnection })
           t.check(Math.round(list.itemAtIndex(index).y - list.contentY), Math.round(testRoot.savedScroll), "a new connection preserves the visible row's position")
+        } },
+      { name: "clear log footer action", until: function() { return panel.service.connectionHistory.length > 0 }, then: function() {
+          var live = panel.service.openConnections.length
+          t.check(testRoot.clickHint("clear log"), true, "Conns has a clear log button")
+          t.check(panel.service.connectionHistory.length, 0, "the button clears the log")
+          t.check(panel.service.openConnections.length, live, "the button keeps open connections")
           panel.service.call("test.direct-fallback", null, function() { panel.service.updateSubscription(panel.service.activeSubscription) })
         } },
       { until: function() { return panel.service.pendingDownloads.length === 1 }, then: function() {

@@ -71,8 +71,14 @@ function ruleList() {
     { type: "MATCH", value: "", target: "Proxy", source: "subscription" }) }
 }
 
+const connectionHistory = [
+  { id: 1, process: "curl", destination: "older.example:443", network: "tcp", outbound: "DIRECT", rule: "Match", count: 1, upload: 10, download: 20, last_at: 1000 },
+  { id: 2, process: "firefox", destination: "blocked.example:443", network: "tcp", outbound: "REJECT", rule: "Match", count: 3, upload: 0, download: 0, blocked: true, last_at: 2000 }
+]
+const historyChanges = [1, 2]
+
 function connections() {
-  return { open: 1, summary: { session: 1, revision: 1, upload: 10, download: 20, flows: [] }, connections: [{
+  return { open: 1, summary: { session: 1, revision: historyChanges.length, upload: 10, download: 20, flows: [] }, connections: [{
     id: "c1", network: "tcp", inbound: "tun", host: "example.com", process: "firefox",
     source_ip: "198.18.0.1", source_port: 50000, destination_ip: "93.184.215.14",
     destination_port: 443, chain: "Pass", rule: "MATCH", upload: 10, download: 20,
@@ -221,13 +227,26 @@ const ops = {
     return { result: {} }
   },
   "connections.list": () => ({ result: connections() }),
-  "connections.history": (client, args) => ({ result: { session: args.session || 1, revision: 1,
-    next: args.before ? 0 : 2, rows: args.before ? [
-      { id: 1, process: "curl", destination: "older.example:443", network: "tcp", outbound: "DIRECT", rule: "Match", count: 1, upload: 10, download: 20, last_at: 1000 }
-    ] : [
-      { id: 2, process: "firefox", destination: "blocked.example:443", network: "tcp", outbound: "REJECT", rule: "Match", count: 3, upload: 0, download: 0, blocked: true, last_at: 2000 }
-    ] } }),
+  "connections.history": (client, args) => {
+    const result = { session: 1, revision: historyChanges.length }
+    if (args.since !== undefined) {
+      const changed = new Set(historyChanges.slice(args.since))
+      return { result: { ...result, rows: connectionHistory.filter(row => changed.has(row.id)) } }
+    }
+    const row = connectionHistory[(args.before || connectionHistory.length + 1) - 2]
+    return { result: { ...result, next: row.id > 1 ? row.id : 0, rows: [row] } }
+  },
   "connections.close": () => ({ result: {} }),
+  "test.record-connections": (client, args) => {
+    const id = connectionHistory.length + 1
+    const at = Date.now()
+    connectionHistory[1].count++
+    connectionHistory[1].last_at = at
+    connectionHistory.push({ ...connectionHistory[0], id, destination: args.destination || "recent.example:443", last_at: at })
+    historyChanges.push(2, id)
+    push("connections", connections())
+    return { result: {} }
+  },
   "test.drop": () => {
     setImmediate(() => clients.forEach((client) => client.destroy()))
     return { result: {} }

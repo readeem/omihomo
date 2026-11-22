@@ -151,15 +151,32 @@ ShellRoot {
         t.check(svc.openConnectionCount, 1, "the log counts open connections")
         svc.connectionView = true
       } },
-    { name: "session history opens with blocked attempts", until: function() { return svc.connectionHistory.length === 1 }, then: function() {
-        t.check(svc.connectionHistory[0].blocked, true, "blocked attempts have their outcome")
-        t.check(svc.connectionHistory[0].count, 3, "deduplicated attempts keep their count")
-        t.check(svc.connectionHistory[0].chain, "REJECT", "blocked attempts show the actual outbound")
-        svc.changeHistoryPage(true)
+    { name: "open, blocked and older closed connections appear together", until: function() { return svc.connectionStacks.length === 3 }, then: function() {
+        const rows = svc.connectionStacks
+        t.check(rows[0].open, true, "open connections lead the list")
+        t.check(rows[1].blocked, true, "blocked attempts have their outcome")
+        t.check(rows[1].count, 3, "deduplicated attempts keep their count")
+        t.check(rows[1].chain, "REJECT", "blocked attempts show the actual outbound")
+        t.check(rows[2].host, "older.example:443", "older entries load automatically")
+        svc.call("test.record-connections", {})
       } },
-    { name: "history pages replace the current page", until: function() { return svc.previousConnectionHistory }, then: function() {
-        t.check(svc.connectionHistory.length, 1, "only the current page is loaded")
-        t.check(svc.connectionHistory[0].host, "older.example:443", "paging shows older history")
+    { name: "new activity updates the list in place", until: function() { return svc.connectionStacks.length === 4 }, then: function() {
+        const rows = svc.connectionStacks
+        t.check(rows[1].host, "recent.example:443", "newly closed connections appear above older records")
+        t.check(rows[2].count, 4, "a repeated blocked attempt updates the existing row")
+        t.check(rows[3].host, "older.example:443", "live updates preserve older entries")
+        svc.clearConnectionLog()
+        t.check(svc.connectionStacks.length, 1, "clearing the log keeps the live connection")
+        svc.connectionView = false
+        svc.connectionView = true
+      } },
+    { name: "cleared rows stay hidden on reopening", until: function() { return !svc.connectionHistoryLoading }, then: function() {
+        t.check(svc.connectionStacks.length, 1, "reloading does not restore cleared rows")
+        svc.call("test.record-connections", { destination: "after-clear.example:443" })
+      } },
+    { name: "activity after clear is visible", until: function() { return svc.connectionStacks.length === 3 }, then: function() {
+        t.check(svc.connectionStacks[1].host, "after-clear.example:443", "new closed connections appear")
+        t.check(svc.connectionStacks[2].blocked, true, "a fresh attempt makes a blocked destination visible again")
         svc.connectionView = false
         svc.addSubscription("https://example.test/sub")
       } },

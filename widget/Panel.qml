@@ -449,8 +449,7 @@ Panel {
       else if (key === "/") { focusRow("ruleTest"); beginEdit(rulesView.testField) }
     } else if (view === "conns") {
       if (key === "A") omihomo.closeAllConnections()
-      else if (key === "L") omihomo.changeHistoryPage(true)
-      else if (key === "H") omihomo.changeHistoryPage(false)
+      else if (key === "L") omihomo.clearConnectionLog()
     } else if (view === "settings") {
       if (key === "A") omihomo.toggleTunRedirect()
       else if (key === "T") omihomo.toggleTailscale()
@@ -527,7 +526,7 @@ Panel {
       { keys: "/", label: "test", key: "/" }, { keys: "esc", label: "back", key: "esc" }]
     case "conns": return [
       { keys: "↵", label: "close", key: "enter" }, { keys: "A", label: "close all", key: "A" },
-      { keys: "H", label: "newer", key: "H" }, { keys: "L", label: "older", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
+      { keys: "L", label: "clear log", key: "L" }, { keys: "esc", label: "back", key: "esc" }]
     case "settings": return [
       { keys: "↵", label: "activate", key: "enter" }, { keys: "u", label: "check", key: "u" },
       { keys: "t", label: "TUN", key: "t" }, { keys: "A", label: "accel", key: "A" },

@@ -120,13 +120,13 @@ Item {
   property var connectionHistory: []
   property var connectionSummary: ({})
   property bool connectionView: false
-  property double _historyBefore: 0
-  property var _historyPages: [0]
-  property double _historyRevision: -1
+  property var _connectionLogClear: null
+  readonly property bool connectionLogCleared: _connectionLogClear !== null
+    && _connectionLogClear.session === connectionSummary.session
+  property var _historySnapshot: null
+  property double _historyRevision: 0
   property int _historyCall: 0
   readonly property var connectionStacks: Model.stackConnections(openConnections).concat(connectionHistory)
-  readonly property bool moreConnectionHistory: _historyBefore > 0
-  readonly property bool previousConnectionHistory: _historyPages.length > 1
   readonly property bool connectionHistoryLoading: _historyCall !== 0
   property int openConnectionCount: 0
   readonly property double connectionsDownload: connectionSummary.download || 0
@@ -659,9 +659,8 @@ Item {
 
   function resetConnectionHistory() {
     _historyCall = 0
-    _historyRevision = -1
-    _historyBefore = 0
-    _historyPages = [0]
+    _historyRevision = 0
+    _historySnapshot = { before: 0, rows: [] }
     connectionHistory = []
   }
 
@@ -672,20 +671,11 @@ Item {
 
   function syncConnectionHistory() {
     if (!connectionView || !ready || !connectionSummary.session || _historyCall !== 0) return
-    if (_historyRevision < 0) readConnectionHistory({ session: connectionSummary.session })
-    else if (_historyRevision < connectionSummary.revision)
-      readConnectionHistory({ session: connectionSummary.session, since: _historyRevision })
-  }
-
-  function changeHistoryPage(forward) {
-    if (!connectionView || !ready || connectionHistoryLoading) return
-    if (forward ? !moreConnectionHistory : !previousConnectionHistory) return
-    var pages = forward ? _historyPages.concat([_historyBefore]) : _historyPages.slice(0, -1)
-    readConnectionHistory({ session: connectionSummary.session, before: pages[pages.length - 1] }, pages)
-  }
-
-  function readConnectionHistory(args, pages) {
-    let callId = call("connections.history", args, function(page, error) {
+    const snapshot = _historySnapshot
+    if (!snapshot && _historyRevision >= connectionSummary.revision) return
+    const session = connectionSummary.session
+    const args = snapshot ? { session: session, before: snapshot.before } : { session: session, since: _historyRevision }
+    const callId = call("connections.history", args, function(page, error) {
       if (root._historyCall !== callId) return
       root._historyCall = 0
       if (error) {
@@ -694,26 +684,32 @@ Item {
       }
       if (page.session !== root.connectionSummary.session) return
       if (page.reset) {
-        root.readConnectionHistory({ session: page.session, before: root._historyPages[root._historyPages.length - 1] })
-        return
-      }
-      var rows = Model.readConnectionHistory(page.rows || [])
-      if (args.since !== undefined) {
-        var changes = Model.dict()
-        for (var i = 0; i < rows.length; i++) changes[rows[i].id] = rows[i]
-        var current = root.connectionHistory.map(function(row) { return changes[row.id] || row })
-        var first = current.length ? current[0].id : 0
-        if (!root.previousConnectionHistory && rows.some(function(row) { return row.id > first })) {
-          root.readConnectionHistory({ session: page.session })
-          return
-        }
-        root.connectionHistory = current
+        root._historySnapshot = { before: 0, rows: [] }
       } else {
-        if (pages) root._historyPages = pages
-        root._historyBefore = page.next || 0
-        root.connectionHistory = rows
+        let rows = Model.readConnectionHistory(page.rows || [])
+        if (root.connectionLogCleared) rows = rows.filter(row => row.closedAtMs > root._connectionLogClear.at)
+        if (snapshot) {
+          // Keep the first batch's revision so updates during the read are replayed.
+          if (snapshot.before === 0) root._historyRevision = page.revision
+          for (const row of rows) snapshot.rows.push(row)
+          snapshot.before = page.next || 0
+          if (snapshot.before === 0) {
+            root.connectionHistory = snapshot.rows
+            root._historySnapshot = null
+          }
+        } else {
+          const changes = Model.dict()
+          for (const row of rows) changes[row.id] = row
+          const current = root.connectionHistory.map(function(row) {
+            const updated = changes[row.id]
+            delete changes[row.id]
+            return updated || row
+          })
+          const added = Object.values(changes).sort(function(a, b) { return b.id - a.id })
+          root.connectionHistory = added.concat(current)
+          root._historyRevision = page.revision
+        }
       }
-      root._historyRevision = page.revision
       root.syncConnectionHistory()
     })
     _historyCall = callId
@@ -1113,6 +1109,13 @@ Item {
 
   function closeAllConnections() {
     closeConnections({ all: true })
+  }
+
+  function clearConnectionLog() {
+    if (!connectionSummary.session) return
+    _connectionLogClear = { session: connectionSummary.session, at: Date.now() }
+    if (_historySnapshot) _historySnapshot.rows = []
+    connectionHistory = []
   }
 
   Timer {
