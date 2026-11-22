@@ -462,6 +462,7 @@ Item {
     const runtime = runtimeKey
     const group = primaryGroup
     const config = currentConfig
+    const revision = configRevision(config)
     const args = config !== "" ? { group: group, proxy: config } : null
     _egressCall = call("egress.check", args, function(result, error) {
       root._egressCall = 0
@@ -476,7 +477,7 @@ Item {
           root.egressIpv6 = egress.ipv6
           root.egressLatency = egress.latency
         }
-        if (config !== "") root.finishConfigTests({ [config]: root.traceFailed ? 0 : egress.latency })
+        if (config !== "") root.finishConfigTests({ [config]: root.traceFailed ? 0 : egress.latency }, { [config]: revision })
       }
       if (!root._manualTrace) return
       root._manualTrace = false
