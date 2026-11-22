@@ -35,11 +35,11 @@ const delays = json("group-delay.json").delays
 let subscriptions = json("subscriptions.json").map(({ updated_ago, ...sub }) =>
   ({ ...sub, updated_at: Date.now() - updated_ago * 1000 }))
 const traffic = lines("traffic.jsonl")
-const allConnections = lines("connections.jsonl")
+const allConnections = lines("connections.jsonl").map(c => ({ ...c, process_status: "resolved" }))
 const running = () => status.state !== "stopped"
 
 const closed = new Set(allConnections.filter(c => c.closes).map(c => c.id))
-const blocked = [{ id: 1, destination: "ads.example:443", process: "firefox", network: "tcp", outbound: "REJECT",
+const blocked = [{ id: 1, destination: "ads.example:443", process: "firefox", network: "tcp", inbound: "tun", process_status: "resolved", outbound: "REJECT",
   rule: "RuleSet(ads)", count: 8, upload: 0, download: 0, blocked: true, last_at: Date.now() - 120000 }]
 function connections() {
   const open = allConnections.filter(c => running() && !closed.has(c.id))
@@ -60,7 +60,7 @@ function connections() {
 function connectionHistory() {
   const rows = allConnections.filter(c => closed.has(c.id)).map((c, i) => ({
     id: i + 2, destination: (c.host || c.destination_ip) + ":" + c.destination_port, process: c.process,
-    network: c.network, outbound: c.chain, rule: c.rule, count: 1, upload: c.upload, download: c.download,
+    network: c.network, inbound: c.inbound, process_status: c.process_status, outbound: c.chain, rule: c.rule, count: 1, upload: c.upload, download: c.download,
     last_at: Date.now() - c.age * 1000
   }))
   return { session: status.started_at || 1, revision: closed.size + blocked.length, rows: blocked.concat(rows.reverse()) }

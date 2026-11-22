@@ -15,7 +15,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,7 +27,6 @@ import (
 
 	"github.com/dlclark/regexp2"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
-	"github.com/metacubex/mihomo/component/process"
 	mihomoprofile "github.com/metacubex/mihomo/component/profile"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -91,10 +89,6 @@ type Core struct {
 	// generation counts commits and stops, so a drain knows when the
 	// stop it follows is over.
 	generation uint64
-
-	procMu      sync.Mutex
-	procs       map[string]processLookup
-	findProcess func(string, netip.Addr, int) (uint32, string, error)
 }
 
 var (
@@ -121,7 +115,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 	}
 	constant.SetHomeDir(home)
 	mihomoprofile.StoreSelected.Store(true)
-	c := &Core{historyDir: home, log: log, tap: startLogTap(log), current: &runtime{}, findProcess: process.FindProcessName, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}
+	c := &Core{historyDir: home, log: log, tap: startLogTap(log), current: &runtime{}, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}
 	statistic.SetConnectionObserver(c.observeConnection)
 	return c, nil
 }
@@ -769,28 +763,12 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 	slices.SortFunc(infos, func(a, b *statistic.TrackerInfo) int { return b.Start.Compare(a.Start) })
 	out.Open = open
 	out.Connections = make([]protocol.Connection, 0, min(len(infos), core.MaxConnections))
-	c.procMu.Lock()
-	defer c.procMu.Unlock()
-	procs := make(map[string]processLookup, cap(out.Connections))
 	var rowBytes int
 	for _, info := range infos[:min(len(infos), core.MaxConnections)] {
 		conn := connection(info)
-		m := info.Metadata
-		if conn.Process == "" && m.Type != constant.INNER && m.SrcIP.IsValid() && m.SrcPort != 0 {
-			lookup := c.procs[conn.ID]
-			if lookup.name == "" && lookup.attempts < 3 {
-				lookup.attempts++
-				lookup.name = c.lookupProcess(m)
-				if lookup.name != "" {
-					history.NameProcess(conn.ID, lookup.name)
-				}
-			}
-			procs[conn.ID] = lookup
-			conn.Process = lookup.name
-		}
 		// Reserve room for the session summary and worst-case JSON escaping.
 		size := 384 + 6*(len(conn.ID)+len(conn.Network)+len(conn.Inbound)+len(conn.Host)+len(conn.Process)+
-			len(conn.SourceIP)+len(conn.DestinationIP)+len(conn.Chain)+len(conn.Rule))
+			len(conn.SourceIP)+len(conn.DestinationIP)+len(conn.Chain)+len(conn.Rule)+len(conn.ProcessStatus)+len(conn.ProcessReason))
 		if size > protocol.MaxLine/2 {
 			continue
 		}
@@ -800,39 +778,20 @@ func (c *Core) Connections(ctx context.Context) (protocol.Connections, error) {
 		rowBytes += size
 		out.Connections = append(out.Connections, conn)
 	}
-	c.procs = procs
 	return out, nil
-}
-
-type processLookup struct {
-	name     string
-	attempts int
-}
-
-func (c *Core) lookupProcess(m *constant.Metadata) string {
-	if m.NetWork != constant.TCP && m.NetWork != constant.UDP {
-		return ""
-	}
-	ip := m.SrcIP.Unmap()
-	_, path, err := c.findProcess(m.NetWork.String(), ip, int(m.SrcPort))
-	if err != nil && ip.Is4() {
-		// IPv4 traffic can originate from an IPv6 dual-stack socket.
-		_, path, err = c.findProcess(m.NetWork.String(), netip.AddrFrom16(ip.As16()), int(m.SrcPort))
-	}
-	if err != nil || path == "" {
-		return ""
-	}
-	return filepath.Base(path)
 }
 
 func connection(info *statistic.TrackerInfo) protocol.Connection {
 	m := info.Metadata
+	name, status, reason := processAttribution(m)
 	conn := protocol.Connection{
 		ID:              info.UUID.String(),
 		Network:         m.NetWork.String(),
 		Inbound:         strings.ToLower(m.Type.String()),
 		Host:            m.RuleHost(),
-		Process:         m.Process,
+		Process:         name,
+		ProcessStatus:   status,
+		ProcessReason:   reason,
 		SourcePort:      int(m.SrcPort),
 		DestinationPort: int(m.DstPort),
 		Rule:            info.Rule,

@@ -78,6 +78,13 @@ the shell to load the new widget.
 
 The key hints at the bottom of the panel show the rest, and `omihomo -h` lists the CLI verbs.
 
+`omihomo conn list` shows open connections, and `omihomo conn history` shows grouped closed
+and blocked connections for the session. Both include the inbound type and `process_status`.
+`lookup_failed` may carry a `process_reason`. For UDP, `socket_not_found` can mean the sender
+closed its socket before lookup, and `ambiguous_socket` means multiple sockets could have
+sent the datagram. `no_local_socket` means the inbound supplied no usable source socket
+address. Hover over a row in Conns to see its inbound and attribution details.
+
 A subscription URL may return a full mihomo YAML config or raw share links. The daemon refreshes
 it on the provider's schedule, 12 hours by default, and a failed refresh keeps the cached content.
 

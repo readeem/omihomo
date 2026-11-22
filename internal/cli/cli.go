@@ -448,7 +448,7 @@ func (a *app) connCommand() *ffcli.Command {
 		})
 	all = closeCmd.FlagSet.Bool("all", false, "close every connection")
 	var before, session *uint64
-	historyCmd := a.call("history", "omihomo conn history [--pretty] [--before <id>] [--session <id>]", "read a page of session connection history",
+	historyCmd := a.call("history", "omihomo conn history [--pretty] [--before <id>] [--session <id>]", "read a page of session history with inbound and process attribution",
 		func(cmd *ffcli.Command, rest []string) (string, any, error) {
 			if len(rest) != 0 {
 				return "", nil, usage(cmd, "conn history takes flags only")
@@ -458,7 +458,7 @@ func (a *app) connCommand() *ffcli.Command {
 	before = historyCmd.FlagSet.Uint64("before", 0, "continue from the previous page's next value")
 	session = historyCmd.FlagSet.Uint64("session", 0, "require the previous page's session")
 	return a.group("conn", "omihomo conn <command>", "list, close and inspect connections",
-		a.call("list", "omihomo conn list [--pretty]", "list open connections", nargs(0, protocol.OpConnections, nil)),
+		a.call("list", "omihomo conn list [--pretty]", "list open connections with process attribution", nargs(0, protocol.OpConnections, nil)),
 		closeCmd, historyCmd,
 	)
 }

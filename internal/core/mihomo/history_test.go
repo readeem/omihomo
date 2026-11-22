@@ -6,13 +6,18 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter/outbound"
+	"github.com/metacubex/mihomo/component/sniffer"
 	"github.com/metacubex/mihomo/constant"
+	snifferType "github.com/metacubex/mihomo/constant/sniffer"
 	"github.com/metacubex/mihomo/tunnel"
 
 	"github.com/readeem/omihomo/internal/core"
@@ -48,7 +53,7 @@ func TestHistoryIncludesProxiedDNSConnections(t *testing.T) {
 		t.Fatalf("stopped DNS snapshot = %+v, %v", snapshot, err)
 	}
 	page, err := c.ConnectionHistory(t.Context(), protocol.ConnectionHistoryArgs{})
-	if err != nil || len(page.Rows) != 1 || page.Rows[0].Process != "mihomo" || page.Rows[0].Download != 3 || page.Rows[0].Upload != 3 {
+	if err != nil || len(page.Rows) != 1 || page.Rows[0].Process != "mihomo" || page.Rows[0].ProcessStatus != protocol.ProcessInternal || page.Rows[0].Inbound != "inner" || page.Rows[0].Download != 3 || page.Rows[0].Upload != 3 {
 		t.Fatalf("DNS history = %+v, %v", page, err)
 	}
 }
@@ -237,6 +242,10 @@ func TestHistoryCountsUDPAssociationWithoutChangingItsSourcePort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer local.Close()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := testConfig()
 	cfg.Profile.Rules = []core.Rule{{Type: "MATCH", Target: "DIRECT"}}
 	c := running(t, cfg)
@@ -283,6 +292,9 @@ func TestHistoryCountsUDPAssociationWithoutChangingItsSourcePort(t *testing.T) {
 			if row.Destination != "Multiple destinations" || row.Count != 1 || row.Upload != 7 || row.Download != 11 {
 				t.Fatalf("UDP history = %+v", page.Rows)
 			}
+			if row.Process != filepath.Base(exe) || row.ProcessStatus != protocol.ProcessResolved || row.Inbound != "socks5" {
+				t.Fatalf("UDP history attribution = %+v", row)
+			}
 			return
 		}
 		select {
@@ -290,6 +302,58 @@ func TestHistoryCountsUDPAssociationWithoutChangingItsSourcePort(t *testing.T) {
 			t.Fatalf("UDP association did not finish: %+v", page.Rows)
 		case <-time.After(time.Millisecond):
 		}
+	}
+}
+
+func TestHistoryReportsUDPSourceClosedBeforeLookup(t *testing.T) {
+	dst, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	ingress, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ingress.Close()
+	cfg := testConfig()
+	cfg.Profile.Rules = []core.Rule{{Type: "MATCH", Target: "DIRECT"}}
+	c := running(t, cfg)
+	client, err := net.DialUDP("udp4", nil, ingress.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sendErr := client.Write([]byte("one shot"))
+	if err := client.Close(); err != nil || sendErr != nil {
+		t.Fatalf("send = %v, close = %v", sendErr, err)
+	}
+	ingress.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var buf [16]byte
+	n, source, err := ingress.ReadFromUDPAddrPort(buf[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := dst.LocalAddr().(*net.UDPAddr).AddrPort()
+	tunnel.Tunnel.HandleUDPPacket(&historyPacket{local: net.UDPAddrFromAddrPort(source), payload: buf[:n]}, &constant.Metadata{
+		NetWork: constant.UDP, Type: constant.SOCKS5,
+		SrcIP: source.Addr(), SrcPort: source.Port(), DstIP: target.Addr(), DstPort: target.Port(),
+	})
+	dst.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var forwarded [16]byte
+	n, _, err = dst.ReadFromUDP(forwarded[:])
+	if err != nil || string(forwarded[:n]) != "one shot" {
+		t.Fatalf("forwarded = %q, %v", forwarded[:n], err)
+	}
+	if err := c.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.ConnectionHistory(t.Context(), protocol.ConnectionHistoryArgs{})
+	if err != nil || len(page.Rows) != 1 {
+		t.Fatalf("history = %+v, %v", page, err)
+	}
+	row := page.Rows[0]
+	if row.Process != "unknown" || row.ProcessStatus != protocol.ProcessLookupFailed || row.ProcessReason != protocol.ProcessSocketNotFound {
+		t.Fatalf("UDP history attribution = %+v", row)
 	}
 }
 
@@ -305,4 +369,114 @@ func (p *historyPacket) LocalAddr() net.Addr { return p.local }
 func (p *historyPacket) WriteBack(data []byte, _ net.Addr) (int, error) {
 	p.reply <- string(data)
 	return len(data), nil
+}
+
+func TestHistoryAttributesShortTCPWithoutLiveSnapshots(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(exe)
+	for _, tc := range []struct {
+		name, network, bind, peer, process string
+		status                             protocol.ProcessStatus
+		reason                             protocol.ProcessReason
+	}{
+		{name: "ipv4", network: "tcp4", bind: "127.0.0.1:0", peer: "127.0.0.1", process: name, status: protocol.ProcessResolved},
+		{name: "ipv6", network: "tcp6", bind: "[::1]:0", peer: "::1", process: name, status: protocol.ProcessResolved},
+		{name: "dual stack", network: "tcp", bind: "[::]:0", peer: "127.0.0.1", process: name, status: protocol.ProcessResolved},
+		{name: "socket not found", network: "tcp4", bind: "127.0.0.1:0", peer: "127.0.0.2", process: "unknown", status: protocol.ProcessLookupFailed, reason: protocol.ProcessSocketNotFound},
+		{name: "no socket metadata", process: "unknown", status: protocol.ProcessNoLocalSocket},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.Profile.Rules = []core.Rule{{Type: "PROCESS-NAME", Value: name, Target: "DIRECT"}, {Type: "MATCH", Target: "DIRECT"}}
+			c := running(t, cfg)
+			echo := tcpEcho(t)
+			var source, socketPeer netip.AddrPort
+			var sourceSocket net.Conn
+			if tc.network != "" {
+				listener, err := net.Listen(tc.network, tc.bind)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer listener.Close()
+				port := listener.Addr().(*net.TCPAddr).Port
+				host := tc.peer
+				if tc.reason == protocol.ProcessSocketNotFound {
+					host = "127.0.0.1"
+				}
+				dialer := net.Dialer{Timeout: 5 * time.Second}
+				client, err := dialer.DialContext(t.Context(), "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer client.Close()
+				accepted, err := listener.Accept()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer accepted.Close()
+				sourceSocket = accepted
+				source = netip.AddrPortFrom(netip.MustParseAddr(tc.peer), uint16(port))
+				socketPeer = accepted.RemoteAddr().(*net.TCPAddr).AddrPort()
+			}
+			dispatcher, err := sniffer.NewDispatcher(&sniffer.Config{Enable: true, ParsePureIp: true,
+				Sniffers: map[snifferType.Type]sniffer.SnifferConfig{snifferType.HTTP: {}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tunnel.UpdateSniffer(dispatcher)
+			dest := echo.Addr().(*net.TCPAddr).AddrPort()
+			local, peer := net.Pipe()
+			defer peer.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				tunnel.Tunnel.HandleTCPConn(&closeSourceOnRead{Conn: local, source: sourceSocket}, &constant.Metadata{
+					NetWork: constant.TCP, Type: constant.HTTPS, SrcIP: source.Addr(), SrcPort: source.Port(),
+					InIP: socketPeer.Addr(), InPort: socketPeer.Port(), DstIP: dest.Addr(), DstPort: dest.Port()})
+			}()
+			peer.SetDeadline(time.Now().Add(5 * time.Second))
+			const request = "GET / HTTP/1.0\r\n\r\n"
+			if _, err := io.WriteString(peer, request); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.ReadFull(peer, make([]byte, len(request))); err != nil {
+				t.Fatal(err)
+			}
+			peer.Close()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("connection did not finish")
+			}
+			page, err := c.ConnectionHistory(t.Context(), protocol.ConnectionHistoryArgs{})
+			if err != nil || len(page.Rows) != 1 {
+				t.Fatalf("history = %+v, %v", page, err)
+			}
+			row := page.Rows[0]
+			if row.Process != tc.process || row.ProcessStatus != tc.status || row.Inbound != "https" || row.ProcessReason != tc.reason {
+				t.Fatalf("history attribution = %+v, want %q %q %q", row, tc.process, tc.status, tc.reason)
+			}
+			if (row.Rule == "ProcessName("+name+")") != (tc.status == protocol.ProcessResolved) {
+				t.Fatalf("route did not use the same attribution: %+v", row)
+			}
+		})
+	}
+}
+
+type closeSourceOnRead struct {
+	net.Conn
+	source net.Conn
+	once   sync.Once
+}
+
+func (c *closeSourceOnRead) Read(buf []byte) (int, error) {
+	c.once.Do(func() {
+		if c.source != nil {
+			c.source.Close()
+		}
+	})
+	return c.Conn.Read(buf)
 }

@@ -37,12 +37,14 @@ var (
 )
 
 type Key struct {
-	Process, Destination, Network, Outbound, Rule string
-	Blocked                                       bool
+	Process, Destination, Network, Inbound, Outbound, Rule string
+	ProcessStatus                                          protocol.ProcessStatus
+	ProcessReason                                          protocol.ProcessReason
+	Blocked                                                bool
 }
 
 func (k Key) size() int {
-	return len(k.Process) + len(k.Destination) + len(k.Network) + len(k.Outbound) + len(k.Rule)
+	return len(k.Process) + len(k.Destination) + len(k.Network) + len(k.Inbound) + len(k.Outbound) + len(k.Rule) + len(k.ProcessStatus) + len(k.ProcessReason)
 }
 
 type counts struct {
@@ -58,6 +60,7 @@ type row struct {
 
 func (r row) entry() protocol.ConnectionHistoryRow {
 	return protocol.ConnectionHistoryRow{ID: r.id, Process: r.key.Process, Destination: r.key.Destination, Network: r.key.Network,
+		Inbound: r.key.Inbound, ProcessStatus: r.key.ProcessStatus, ProcessReason: r.key.ProcessReason,
 		Outbound: r.key.Outbound, Rule: r.key.Rule, Blocked: r.key.Blocked, Count: r.n, Upload: r.up, Download: r.down, LastAt: r.last}
 }
 
@@ -130,15 +133,6 @@ func (h *History) Start(id string, key Key, readBytes func() (int64, int64), mul
 			key.Destination = "Multiple destinations"
 		}
 		h.record(key, up, down)
-	}
-}
-
-func (h *History) NameProcess(id, name string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if live, ok := h.live[id]; ok {
-		live.key.Process = name
-		h.live[id] = live
 	}
 }
 
@@ -269,8 +263,9 @@ func (h *History) write() error {
 			return err
 		}
 		for _, key := range h.pendingOrder {
-			data := make([]byte, 0, key.size()+21)
-			for _, field := range []string{key.Process, key.Destination, key.Network, key.Outbound, key.Rule} {
+			fields := [...]string{key.Process, key.Destination, key.Network, key.Inbound, key.Outbound, key.Rule, string(key.ProcessStatus), string(key.ProcessReason)}
+			data := make([]byte, 0, key.size()+4*len(fields)+1)
+			for _, field := range fields {
 				data = binary.BigEndian.AppendUint32(data, uint32(len(field)))
 				data = append(data, field...)
 			}
@@ -388,7 +383,7 @@ func (h *History) Page(ctx context.Context, args protocol.ConnectionHistoryArgs)
 					return err
 				}
 			}
-			size := 256 + 6*(len(entry.Process)+len(entry.Destination)+len(entry.Network)+len(entry.Outbound)+len(entry.Rule))
+			size := 256 + 6*(len(entry.Process)+len(entry.Destination)+len(entry.Network)+len(entry.Inbound)+len(entry.Outbound)+len(entry.Rule)+len(entry.ProcessStatus)+len(entry.ProcessReason))
 			if len(out.Rows) > 0 && bytes+size > pageBytes {
 				break
 			}

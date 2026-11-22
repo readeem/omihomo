@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,9 +64,11 @@ func (c *Core) reset() {
 	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC).UnixMilli()
 	c.connections = []protocol.Connection{
 		{ID: "c1", Network: "tcp", Inbound: "tun", Host: "example.com", Process: "firefox",
-			SourceIP: "198.18.0.1", SourcePort: 50000, DestinationIP: "93.184.215.14", DestinationPort: 443,
+			ProcessStatus: protocol.ProcessResolved,
+			SourceIP:      "198.18.0.1", SourcePort: 50000, DestinationIP: "93.184.215.14", DestinationPort: 443,
 			Chain: "Tokyo", Rule: "Match", Upload: 1200, Download: 48000, StartedAt: start},
-		{ID: "c2", Network: "udp", Inbound: "tun", Host: "dns.google", Process: "",
+		{ID: "c2", Network: "udp", Inbound: "tun", Host: "dns.google",
+			ProcessStatus: protocol.ProcessLookupFailed, ProcessReason: protocol.ProcessSocketNotFound,
 			SourceIP: "198.18.0.1", SourcePort: 50001, DestinationIP: "8.8.8.8", DestinationPort: 443,
 			Chain: "DIRECT", Rule: "DomainSuffix(google)", Upload: 300, Download: 900, StartedAt: start},
 	}
@@ -279,10 +280,11 @@ func (c *Core) beginHistory() {
 		process := conn.Process
 		if process == "" {
 			process = "unknown"
-		} else {
-			process = filepath.Base(process)
 		}
-		c.closeRecords[conn.ID] = c.history.Start(conn.ID, connlog.Key{Process: process, Destination: net.JoinHostPort(conn.Host, strconv.Itoa(conn.DestinationPort)), Network: conn.Network, Outbound: conn.Chain, Rule: conn.Rule}, func() (int64, int64) { return conn.Upload, conn.Download }, nil)
+		key := connlog.Key{Process: process, ProcessStatus: conn.ProcessStatus, ProcessReason: conn.ProcessReason,
+			Destination: net.JoinHostPort(conn.Host, strconv.Itoa(conn.DestinationPort)), Network: conn.Network, Inbound: conn.Inbound,
+			Outbound: conn.Chain, Rule: conn.Rule}
+		c.closeRecords[conn.ID] = c.history.Start(conn.ID, key, func() (int64, int64) { return conn.Upload, conn.Download }, nil)
 	}
 }
 
