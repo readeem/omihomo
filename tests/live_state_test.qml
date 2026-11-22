@@ -124,6 +124,10 @@ ShellRoot {
       } },
     { name: "selected config test", until: function() { return !svc.traceTesting }, then: function() {
         t.check(svc.configDelay("Fail"), svc.egressLatency, "the selected row shares the refreshed latency")
+        svc.applyGroups({ groups: [{ name: "Proxy", type: "select", now: "Fail", selectable: true,
+          members: [{ name: "Pass", alive: true }, { name: "Fail", revision: "changed", alive: true }] }] })
+        t.check(svc.egressIp, "", "a selected config changed by its subscription drops the old egress")
+        t.check(svc.traceTesting, true, "a selected config changed by its subscription is checked again")
         svc.call("test.status", { primary_group: "Other" })
       } },
     { name: "another client changes primary group", until: function() { return svc.configuredPrimaryGroup === "Other" }, then: function() {

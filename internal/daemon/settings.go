@@ -64,6 +64,54 @@ func hasTarget(p core.Profile, name string) bool {
 		slices.ContainsFunc(p.Proxies, func(px core.Proxy) bool { return px.Name == name })
 }
 
+// followRenames points s at the configs next renames: a config of prev that
+// next lacks, whose content exactly one config new in next carries.
+func followRenames(s state.Settings, prev, next core.Profile) (state.Settings, bool) {
+	added := map[string][]string{}
+	for _, px := range next.Proxies {
+		if !hasTarget(prev, px.Name) {
+			added[px.Revision()] = append(added[px.Revision()], px.Name)
+		}
+	}
+	renames := map[string]string{}
+	for _, px := range prev.Proxies {
+		if names := added[px.Revision()]; len(names) == 1 && !hasTarget(next, px.Name) {
+			renames[px.Name] = names[0]
+		}
+	}
+	if len(renames) == 0 {
+		return s, false
+	}
+	rename := func(name string) string {
+		if to, ok := renames[name]; ok {
+			return to
+		}
+		return name
+	}
+	retarget := func(r protocol.RuleEntry) protocol.RuleEntry {
+		if r.Type != "SUB-RULE" {
+			r.Target = rename(r.Target)
+		}
+		return r
+	}
+	// Categories are shared with the settings in use, so they are copied.
+	rules := make([]protocol.RuleEntry, len(s.Rules))
+	for i, e := range s.Rules {
+		if e.Category != nil {
+			c := *e.Category
+			c.Rules = make([]protocol.RuleEntry, len(c.Rules))
+			for j, r := range e.Category.Rules {
+				c.Rules[j] = retarget(r)
+			}
+			e.Category = &c
+		}
+		rules[i] = retarget(e)
+	}
+	s.Rules = rules
+	s.DNSDestination = rename(s.DNSDestination)
+	return s, true
+}
+
 func ruleActive(p core.Profile, r protocol.RuleEntry) bool {
 	if r.Type == "SUB-RULE" {
 		_, ok := p.SubRules[r.Target]
