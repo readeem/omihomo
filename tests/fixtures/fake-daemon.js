@@ -41,6 +41,7 @@ const status = {
 }
 const delays = { Pass: 40, Fail: 50 }
 let partialDelay = false
+let egressLatency = 42
 const proxy = { name: "Proxy", type: "select", now: "Pass", selectable: true }
 let rules = []
 let subscriptions = [
@@ -184,10 +185,11 @@ const ops = {
     push("groups", groups())
     return { result: { delays: result } }
   }),
+  "test.egress-latency": (client, a) => { egressLatency = a.latency; return { result: {} } },
   "egress.check": (client, a) => later(() => {
     if (!running()) return failure("not_running", "the proxy is not running")
     if (a.group !== proxy.name || a.proxy !== proxy.now) return failure("not_found", "not the selected config")
-    return { result: { ip: "203.0.113.7", ipv6: "2001:db8:1234:abcd:5678:ef01:2345:6789", latency: 42 } }
+    return { result: { ip: "203.0.113.7", ipv6: "2001:db8:1234:abcd:5678:ef01:2345:6789", latency: egressLatency } }
   }),
   "rules.list": () => ({ result: ruleList() }),
   "subscriptions.list": () => ({ result: { subscriptions } }),

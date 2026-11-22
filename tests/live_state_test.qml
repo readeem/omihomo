@@ -89,6 +89,9 @@ ShellRoot {
     { name: "first egress", until: function() { return !svc.traceTesting && svc.egressIp !== "" }, then: function() {
         t.check(svc.egressIp, "203.0.113.7", "the egress check reports the exit address")
         t.check(svc.egressLatency, 42, "the egress check reports the round trip")
+        svc.call("test.egress-latency", { latency: 47 }, function() { svc.refreshTrace() })
+      } },
+    { name: "updated egress", until: function() { return !svc.traceTesting && svc.egressLatency === 47 }, then: function() {
         svc.selectConfig("Proxy", "Fail")
         t.check(svc.pendingConfig, "Fail", "a selection is pending until its reply")
         svc.egressIp = ""
@@ -99,6 +102,8 @@ ShellRoot {
     { name: "selection", until: function() { return svc.pendingConfig === "" }, then: function() {
         t.check(svc.currentConfig, "Fail", "the selection's reply shows the new config")
         t.check(svc.traceTesting, true, "the queued egress check runs after the selection")
+        t.check(svc.configTestState("Pass"), "success", "switching configs keeps the previous config's result")
+        t.check(svc.configDelay("Pass"), 47, "switching configs keeps the latest egress latency")
       } },
     { name: "egress after selection", until: function() { return !svc.traceTesting }, then: function() {
         t.check(svc.egressIp, "203.0.113.7", "the queued egress check lands")
