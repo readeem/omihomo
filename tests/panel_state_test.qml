@@ -200,6 +200,26 @@ ShellRoot {
           testRoot.checkNameFits(destinationFixtures)
           testRoot.checkEmojiRuns(destinationFixtures)
         } },
+      { then: function() { panel.openView("conns") } },
+      { name: "flow highlighting", until: function() {
+          return testRoot.visibleText(panel, "marketplace.visualstudio.com:443")
+            && testRoot.visibleText(panel, "example.net:443")
+            && testRoot.visibleText(panel, "ads.example:443")
+            && testRoot.visibleText(panel, "other")
+        }, then: function() {
+          for (const [host, label] of [["marketplace.visualstudio.com:443", "other"],
+              ["example.net:443", "unknown"], ["ads.example:443", "REJECT"]]) {
+            var rowText = testRoot.visibleText(panel, host)
+            events.mouseMove(rowText, rowText.width / 2, rowText.height / 2, -1, Qt.NoButton, Qt.NoModifier)
+            var group = testRoot.visibleText(panel, label)
+            t.check(group && group.color.toString(), panel.theme.accent.toString(), "hover highlights " + label)
+          }
+          var zero = testRoot.visibleText(panel, "pending.example:443")
+          events.mouseMove(zero, zero.width / 2, zero.height / 2, -1, Qt.NoButton, Qt.NoModifier)
+          t.check(testRoot.visibleText(panel, "other").color.toString(), panel.theme.foreground.toString(),
+            "a pending connection does not highlight unrelated traffic")
+          panel.openView("configs")
+        } },
       { name: "config types", then: function() {
           var labels = ["URL Test", "REALITY", "XHTTP", "WebSocket", "gRPC", "Hysteria2", "Trojan", "Shadowsocks", "Direct"]
           var positions = labels.map(function(label) {

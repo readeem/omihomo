@@ -12,9 +12,19 @@ ColumnLayout {
   readonly property Theme theme: panel.theme
   readonly property alias list: connList
   readonly property var hotFlow: {
-    var row = panel.cursorRow
-    var stack = panel.cursorActive && row && row.s === "conn" ? panel.connectionAt(row.i) : null
-    return stack && stack.open ? { source: stack.process || "unknown", target: stack.chain || "DIRECT" } : null
+    const row = panel.cursorRow
+    if (!panel.cursorActive || !row || row.s !== "conn") return null
+    const stack = panel.connectionAt(row.i)
+    if (!stack) return null
+    const flows = panel.flows
+    const process = stack.process || "unknown"
+    const source = flows.sources.some(node => node.name === process) ? process : ""
+    const target = flows.targets.some(node => node.name === stack.chain) ? stack.chain : ""
+    if (!stack.blocked && stack.upload + stack.download === 0
+        && (source !== process || target !== stack.chain)) return null
+    return flows.links.find(link => link.source === source && link.target === target)
+      || (stack.blocked && flows.links.find(link => link.source === "" && link.target === target))
+      || null
   }
 
   spacing: Style.space(8)

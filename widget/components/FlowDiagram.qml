@@ -7,7 +7,7 @@ Canvas {
 
   required property Theme theme
   property var flows: ({ sources: [], targets: [], links: [] })
-  // The open stack under the cursor, as { source, target }, or null.
+  // The displayed link for the stack under the cursor, or null.
   property var hot: null
 
   readonly property real pad: Style.space(14)
@@ -27,7 +27,7 @@ Canvas {
     theme: diagram.theme
     visible: diagram.flows.sources.length === 0
     anchors.verticalCenter: parent.verticalCenter
-    text: "No open connections."
+    text: "No connection flows yet."
     color: diagram.theme.dim
   }
 
@@ -40,7 +40,7 @@ Canvas {
       width: Math.min(implicitWidth, diagram.sourceX - Style.space(8))
       x: diagram.sourceX - Style.space(6) - width
       y: diagram.rowY(index, diagram.flows.sources.length) - height / 2
-      text: modelData.name
+      text: modelData.name || "other"
       color: diagram.isHot(modelData.name, undefined) ? diagram.theme.accent : diagram.theme.foreground
     }
   }
@@ -59,7 +59,7 @@ Canvas {
         theme: diagram.theme
         width: parent.width
         y: -Style.space(5) - height / 2
-        text: target.modelData.name
+        text: target.modelData.name || "other"
         color: diagram.isHot(undefined, target.modelData.name) ? diagram.theme.accent : diagram.theme.foreground
       }
       PanelText {

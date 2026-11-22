@@ -35,7 +35,7 @@ const delays = json("group-delay.json").delays
 let subscriptions = json("subscriptions.json").map(({ updated_ago, ...sub }) =>
   ({ ...sub, updated_at: Date.now() - updated_ago * 1000 }))
 const traffic = lines("traffic.jsonl")
-const allConnections = lines("connections.jsonl").map(c => ({ ...c, process_status: "resolved" }))
+const allConnections = lines("connections.jsonl").map(c => ({ process_status: "resolved", ...c }))
 const running = () => status.state !== "stopped"
 
 const closed = new Set(allConnections.filter(c => c.closes).map(c => c.id))
@@ -44,16 +44,20 @@ const blocked = [{ id: 1, destination: "ads.example:443", process: "firefox", ne
 function connections() {
   const open = allConnections.filter(c => running() && !closed.has(c.id))
   const flows = new Map()
+  const other = new Set(["chromium", "code", "telegram-desktop"])
   let upload = 0, download = 0
   for (const c of allConnections) {
-    const key = c.process + "\0" + c.chain
-    if (!flows.has(key)) flows.set(key, { process: c.process, outbound: c.chain, bytes: 0 })
+    if (!c.upload && !c.download) continue
+    const process = other.has(c.process) ? "" : c.process || "unknown"
+    const key = process + "\0" + c.chain
+    if (!flows.has(key)) flows.set(key, { process, outbound: c.chain, bytes: 0 })
     flows.get(key).bytes += c.upload + c.download
     upload += c.upload
     download += c.download
   }
   return { open: open.length, summary: { session: status.started_at || 1, revision: closed.size + blocked.length,
-    closed: closed.size, blocked: 8, upload, download, flows: [...flows.values()] },
+    closed: closed.size, blocked: 8, upload, download, flows: [...flows.values(),
+      ...blocked.map(row => ({ process: row.process, outbound: row.outbound, bytes: 0 }))] },
     connections: open.map(({ age, closes, ...c }) => ({ ...c, started_at: Date.now() - age * 1000 })) }
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,6 +146,10 @@ func TestHistoryCountsShortRejectedConnectionsWithoutSubscribers(t *testing.T) {
 	}
 	if len(page.Rows) != 1 || page.Rows[0].Count != 3 || page.Rows[0].Outbound != "REJECT" || page.Rows[0].Rule != "Domain(blocked.example)" || page.Rows[0].Upload != 0 || page.Rows[0].Download != 0 {
 		t.Fatalf("history = %+v", page)
+	}
+	snapshot, err := c.Connections(t.Context())
+	if err != nil || !slices.Contains(snapshot.Summary.Flows, protocol.ConnectionFlow{Process: page.Rows[0].Process, Outbound: "REJECT"}) {
+		t.Fatalf("rejection missing from connection summary: %+v, %v", snapshot.Summary, err)
 	}
 }
 

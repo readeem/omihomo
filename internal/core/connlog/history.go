@@ -73,6 +73,7 @@ type History struct {
 	revision, closed, blocked        uint64
 	up, down                         int64
 	flows                            map[flowKey]int64
+	rejections                       map[flowKey]int64
 	live                             map[string]liveConnection
 	memory                           map[Key]*row
 	rows                             []*row
@@ -92,7 +93,8 @@ type liveConnection struct {
 }
 
 func New(dir string, id uint64) *History {
-	return &History{dir: dir, id: id, flows: make(map[flowKey]int64), live: make(map[string]liveConnection), memory: make(map[Key]*row)}
+	return &History{dir: dir, id: id, flows: make(map[flowKey]int64), rejections: make(map[flowKey]int64),
+		live: make(map[string]liveConnection), memory: make(map[Key]*row)}
 }
 
 // Start records a rejection immediately. For a live connection, done must
@@ -105,6 +107,11 @@ func (h *History) Start(id string, key Key, readBytes func() (int64, int64), mul
 	}
 	if key.Blocked {
 		h.blocked++
+		flow := connectionFlow(key)
+		if _, found := h.rejections[flow]; !found && len(h.rejections) >= flowKeys {
+			flow.process = ""
+		}
+		h.rejections[flow] = 0
 		h.record(key, 0, 0)
 		return nil
 	}
@@ -200,6 +207,7 @@ func (h *History) Discard() {
 	h.rows = nil
 	h.memory = nil
 	h.flows = nil
+	h.rejections = nil
 }
 
 func (h *History) flush() {
@@ -325,9 +333,11 @@ func (h *History) Summary() (protocol.ConnectionSummary, int) {
 		up, down := c.bytes()
 		out.Upload += up
 		out.Download += down
-		live[connectionFlow(c.key)] += up + down
+		if up+down > 0 {
+			live[connectionFlow(c.key)] += up + down
+		}
 	}
-	out.Flows = summarizeFlows(h.flows, live)
+	out.Flows = summarizeFlows(h.flows, live, h.rejections)
 	return out, len(h.live)
 }
 
@@ -432,28 +442,35 @@ func connectionFlow(key Key) flowKey {
 	return flow
 }
 
-func summarizeFlows(closed, live map[flowKey]int64) []protocol.ConnectionFlow {
+func summarizeFlows(closed, live, rejections map[flowKey]int64) []protocol.ConnectionFlow {
+	const processLimit = 6
 	processes, outbounds := make(map[string]int64), make(map[string]int64)
 	for _, flows := range []map[flowKey]int64{closed, live} {
 		for key, n := range flows {
-			if n == 0 {
-				continue
-			}
 			processes[key.process] += n
 			outbounds[key.outbound] += n
 		}
 	}
-	keepProcess, keepOutbound := topNames(processes, 6), topNames(outbounds, 4)
-	folded := make(map[flowKey]int64)
-	for _, flows := range []map[flowKey]int64{closed, live} {
-		for key, n := range flows {
-			if n == 0 {
-				continue
+	keepProcess, keepOutbound := topNames(processes, processLimit), topNames(outbounds, 4)
+	available := processLimit - len(keepProcess)
+	if available > 0 && len(keepProcess) == len(processes) && len(rejections) > 0 {
+		rejected := make(map[string]int64)
+		for key := range rejections {
+			if !keepProcess[key.process] {
+				rejected[key.process] = 0
 			}
+		}
+		for name := range topNames(rejected, available) {
+			keepProcess[name] = true
+		}
+	}
+	folded := make(map[flowKey]int64)
+	for _, flows := range []map[flowKey]int64{closed, live, rejections} {
+		for key, n := range flows {
 			if !keepProcess[key.process] {
 				key.process = ""
 			}
-			if !keepOutbound[key.outbound] {
+			if n > 0 && !keepOutbound[key.outbound] {
 				key.outbound = ""
 			}
 			folded[key] += n
@@ -483,7 +500,7 @@ func topNames(totals map[string]int64, limit int) map[string]bool {
 		}
 		return cmp.Compare(a, b)
 	})
-	if len(names) > limit || totals[""] > 0 {
+	if _, hasOther := totals[""]; len(names) > limit || hasOther {
 		names = slices.DeleteFunc(names, func(name string) bool { return name == "" })
 		names = names[:min(len(names), limit-1)]
 	}

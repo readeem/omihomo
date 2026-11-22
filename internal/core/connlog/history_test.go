@@ -4,11 +4,49 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/readeem/omihomo/internal/core/connlog"
 	"github.com/readeem/omihomo/internal/protocol"
 )
+
+func TestHistorySummaryShowsRejectedRoutesWithNoBytes(t *testing.T) {
+	h := connlog.New(t.TempDir(), 1)
+	t.Cleanup(h.Discard)
+	for i, outbound := range []string{"DIRECT", "proxy-a", "proxy-b", "proxy-c"} {
+		h.Start(outbound, connlog.Key{Process: "browser", Outbound: outbound}, func() (int64, int64) {
+			return int64(i + 1), 0
+		}, nil)()
+	}
+	for _, outbound := range []string{"REJECT", "REJECT-DROP"} {
+		h.Start(outbound, connlog.Key{Process: "browser", Outbound: outbound, Blocked: true}, nil, nil)
+	}
+	summary, open := h.Summary()
+	for _, outbound := range []string{"REJECT", "REJECT-DROP"} {
+		if !slices.Contains(summary.Flows, protocol.ConnectionFlow{Process: "browser", Outbound: outbound, Bytes: 0}) {
+			t.Errorf("%s missing from session flows: %+v", outbound, summary.Flows)
+		}
+	}
+	if open != 0 || summary.Blocked != 2 || summary.Upload != 10 || summary.Download != 0 {
+		t.Fatalf("summary = %+v, open = %d", summary, open)
+	}
+}
+
+func TestHistorySummaryKeepsNamedProcessesWhenAnotherProcessIsRejected(t *testing.T) {
+	h := connlog.New(t.TempDir(), 1)
+	t.Cleanup(h.Discard)
+	for i := range 6 {
+		name := fmt.Sprintf("client-%d", i)
+		h.Start(name, connlog.Key{Process: name, Outbound: "DIRECT"}, func() (int64, int64) { return 1, 0 }, nil)()
+	}
+	h.Start("blocked", connlog.Key{Process: "blocked", Outbound: "REJECT", Blocked: true}, nil, nil)
+	summary, _ := h.Summary()
+	if !slices.Contains(summary.Flows, protocol.ConnectionFlow{Process: "client-5", Outbound: "DIRECT", Bytes: 1}) ||
+		!slices.Contains(summary.Flows, protocol.ConnectionFlow{Outbound: "REJECT", Bytes: 0}) {
+		t.Fatalf("session flows = %+v", summary.Flows)
+	}
+}
 
 func TestHistoryPagesAndUpdatesRowsPastTenThousand(t *testing.T) {
 	h := connlog.New(t.TempDir(), 1)
