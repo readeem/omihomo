@@ -18,6 +18,7 @@ if (( ${#pins[@]} )); then
 fi
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
-tools/with-go-patches go build -tags with_gvisor,no_easytier -o "$work/" ./cmd/omihomo ./cmd/omihomo-update
-govulncheck -mode binary "$work/omihomo"
-govulncheck -mode binary "$work/omihomo-update"
+version=$(jq -er .version manifest.json)
+tools/with-go-patches tools/stage-release "$work/stage" "$work/vendor" "$version"
+govulncheck -mode binary "$work/stage/omihomo"
+govulncheck -mode binary "$work/stage/omihomo-update"
