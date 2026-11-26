@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/readeem/omihomo/internal/client"
-	"github.com/readeem/omihomo/internal/core/mihomo"
+	"github.com/readeem/omihomo/internal/core/mixray"
 	"github.com/readeem/omihomo/internal/migration"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	_        migration.Core = (*mihomo.Core)(nil)
+	_        migration.Core = (*mixray.Core)(nil)
 	oldUnits                = []string{"omihomo-subscription-update.timer", "omihomo-subscription-update.service", "omihomo-subscription-startup.service", "omihomo.service"}
 )
 
@@ -175,7 +175,7 @@ func (c *cutover) run(ctx context.Context) (err error) {
 		return err
 	}
 
-	var parser mihomo.Core
+	var parser mixray.Core
 	staged, err := migration.Prepare(ctx, c.data, c.state, running, &parser, selectionExporter(c.uid, c.gid))
 	if err != nil {
 		return fmt.Errorf("prepare migration (old install unchanged): %w", err)

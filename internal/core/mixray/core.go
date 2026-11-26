@@ -1,12 +1,12 @@
-// Package mihomo hosts the mihomo proxy engine in this process behind
-// core.Core. It is the only package that imports mihomo.
+// Package mixray hosts the mixray proxy engine in this process behind
+// core.Core. It is the only package that imports mixray.
 //
-// mihomo keeps its state in package globals: a process hosts at most one
-// Core, and New sets mihomo's home directory for the whole process. Nothing
-// is fetched by mihomo itself: the core config names no controller, no
+// mixray keeps its state in package globals: a process hosts at most one
+// Core, and New sets the core's home directory for the whole process. Nothing
+// is fetched by mixray itself: the core config names no controller, no
 // dashboard and no geodata source, so geodata the rules need must already be
 // in the home directory.
-package mihomo
+package mixray
 
 import (
 	"context"

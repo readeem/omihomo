@@ -17,7 +17,7 @@ import (
 	"github.com/readeem/omihomo/internal/client"
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/core/fakecore"
-	"github.com/readeem/omihomo/internal/core/mihomo"
+	"github.com/readeem/omihomo/internal/core/mixray"
 	"github.com/readeem/omihomo/internal/daemon"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -52,11 +52,11 @@ func (a *app) daemonCommand() *ffcli.Command {
 			c = fakecore.New()
 			log.Warn("running the fake core: nothing is proxied")
 		case "", protocol.CoreMihomo:
-			m, err := mihomo.New(*home, log)
+			m, err := mixray.New(*home, log)
 			if err != nil {
 				return fmt.Errorf("start the core: %w", err)
 			}
-			log.Info("hosting mihomo", "version", mihomo.Version, "home", *home)
+			log.Info("hosting mixray", "version", mixray.Version, "home", *home)
 			c = m
 			if *coreName == "" {
 				opts = append(opts, daemon.WithCores(protocol.CoreMihomo, protocol.CoreXray))

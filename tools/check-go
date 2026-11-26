@@ -6,7 +6,7 @@ go fix -diff ./...
 go vet ./...
 go vet -tags= ./...
 packages=$(go list ./...)
-# mihomo races with itself, so its package runs without -race.
-mapfile -t race_packages < <(grep -v '/internal/core/mihomo$' <<<"$packages")
+# mixray races with itself, so its package runs without -race.
+mapfile -t race_packages < <(grep -v '/internal/core/mixray$' <<<"$packages")
 go test -race "${race_packages[@]}"
-go test ./internal/core/mihomo
+go test ./internal/core/mixray

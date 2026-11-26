@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/readeem/omihomo/internal/core/mihomo"
+	"github.com/readeem/omihomo/internal/core/mixray"
 	"github.com/readeem/omihomo/internal/owner"
 	"github.com/readeem/omihomo/internal/settings"
 )
@@ -44,7 +44,7 @@ func oldData(t *testing.T, c *cutover, override string) {
 func TestCutoverImportsAfterUnclaimedCoreShutdown(t *testing.T) {
 	c, _ := cutoverFixture(t)
 	oldData(t, c, "")
-	engine, err := mihomo.New(filepath.Join(c.state, "core"), nil)
+	engine, err := mixray.New(filepath.Join(c.state, "core"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

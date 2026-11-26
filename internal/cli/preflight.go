@@ -10,7 +10,7 @@ import (
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 
-	"github.com/readeem/omihomo/internal/core/mihomo"
+	"github.com/readeem/omihomo/internal/core/mixray"
 	"github.com/readeem/omihomo/internal/migration"
 )
 
@@ -46,7 +46,7 @@ func (a *app) preflightCommand() *ffcli.Command {
 		if err != nil {
 			return err
 		}
-		var parser mihomo.Core
+		var parser mixray.Core
 		staged, err := migration.Prepare(ctx, source, filepath.Join(dir, "state"), false, &parser, selectionExporter(uid, gid))
 		if err != nil {
 			return fmt.Errorf("migration preflight (old install unchanged): %w", err)

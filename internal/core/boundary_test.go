@@ -30,7 +30,7 @@ func TestOnlyTheAdapterImportsProxyEngines(t *testing.T) {
 		pkg, imports, _ := strings.Cut(line, " ")
 		for imp := range strings.FieldsSeq(imports) {
 			for _, root := range engines {
-				if root == mixray && pkg == "github.com/readeem/omihomo/internal/core/mihomo" {
+				if root == mixray && pkg == "github.com/readeem/omihomo/internal/core/mixray" {
 					continue
 				}
 				if imp == root || strings.HasPrefix(imp, root+"/") {
