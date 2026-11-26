@@ -202,6 +202,11 @@ func (c *Core) run(rt *runtime) error {
 	if err := started(rt.cfg, stop()); err != nil {
 		return err
 	}
+	if rt.cfg.Core == protocol.CoreXray {
+		if err := xray.Start(rt.parsed.Proxies); err != nil {
+			return err
+		}
+	}
 	c.commit(rt)
 	return nil
 }

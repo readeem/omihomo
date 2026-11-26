@@ -133,6 +133,28 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 	if _, err := conn.Read(response[:]); err == nil {
 		t.Fatal("connection is still usable after close")
 	}
+
+	// Switching from Xray to Mihomo closes active Xray connections.
+	conn2, err := dial(ctx, "tcp", "192.0.2.1:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+	conn2.SetDeadline(time.Now().Add(4 * time.Second))
+	if _, err := conn2.Write([]byte{'q'}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(conn2, response[:]); err != nil || response[0] != 'x' {
+		t.Fatalf("second response %q: %v", response, err)
+	}
+	<-provenance
+	cfg.Core = protocol.CoreMihomo
+	if err := c.Apply(ctx, cfg); err != nil {
+		t.Fatalf("switch to mihomo: %v", err)
+	}
+	if _, err := conn2.Read(response[:]); err == nil {
+		t.Fatal("Xray connection stayed open after switching to Mihomo")
+	}
 }
 
 func TestXrayPreferredDeliversReplyAfterClientFIN(t *testing.T) {

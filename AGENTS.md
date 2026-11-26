@@ -13,7 +13,7 @@ Plugin and the daemon/CLI are updated together.
 2. **Downloads cannot change listeners, paths or privileges.** The running config is built from
    typed settings plus an allowlisted subscription (ADR-0005).
 3. **mihomo stays behind `core.Core`.** Nothing outside `internal/core/mihomo` imports it;
-   `TestOnlyTheCoreImportsMihomo` enforces this.
+   `TestOnlyTheAdapterImportsProxyEngines` enforces this.
 
 ## Hit every surface
 

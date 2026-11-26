@@ -2,10 +2,6 @@ module github.com/readeem/omihomo
 
 go 1.27.4
 
-// mihomo's own go.mod says go 1.20, which gives its releases Go 1.20's
-// runtime defaults (TLS, x509, timers). The embedded core behaves the same.
-godebug default=go1.20
-
 require (
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/metacubex/bbolt v0.0.0-20260706163408-d4ec34ad7c48
@@ -14,7 +10,7 @@ require (
 	github.com/metacubex/tls v0.1.9
 	github.com/miekg/dns v1.1.73
 	github.com/peterbourgon/ff/v3 v3.4.0
-	github.com/readeem/mixray v0.0.0-20261126092429-4decc225eac9
+	github.com/readeem/mixray v0.0.0-20261126102511-8827cf6f7d98
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.50.0
@@ -159,8 +155,6 @@ require (
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261020153306-9f2b28d4331a // indirect
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e // indirect
 	golang.org/x/mod v0.43.0 // indirect
-	// Newer than mihomo requires: the golang.org/x/net it pins has advisories
-	// govulncheck finds reachable from the core, which runs as root.
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
