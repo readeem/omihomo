@@ -14,11 +14,7 @@ GOFLAGS = "-tags=with_gvisor,no_easytier"
 
 [tasks.check]
 description = "The gate: formatting, go fix, vet and tests"
-run = "tools/with-go-patches tools/check-go"
-
-[tasks.go]
-description = "Run Go with the dependency patches used by the release build"
-run = "tools/with-go-patches go"
+run = "tools/check-go"
 
 [tasks.widget]
 description = "Installer, widget model and Quickshell service tests against fake daemons"
@@ -38,7 +34,7 @@ run = ["./tests/install_test.sh", "./tests/release_test.sh", "./tests/package_bo
 
 [tasks.fix]
 description = "Apply go fix and gofmt"
-run = ["tools/with-go-patches go fix ./...", "gofmt -w ."]
+run = ["go fix ./...", "gofmt -w ."]
 
 [tasks.package]
 description = "Build the Arch package into dist/"

@@ -41,7 +41,7 @@ jobs:
           [[ $version =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]] || { echo "manifest.json version $version is not X.Y.Z"; exit 1; }
           name=omihomo-$version
           stage=dist/$name
-          tools/with-go-patches tools/stage-release "$stage" dist/vendor "$version"
+          tools/stage-release "$stage" dist/vendor "$version"
           install -m755 "$stage/omihomo-update" "dist/omihomo-update-$version-x86_64"
           epoch=$(git log -1 --format=%ct)
           pack() { tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner -C dist -cf - "$1" | gzip -n > "dist/$2"; }
@@ -106,8 +106,8 @@ jobs:
           pacman -U --noconfirm "build/omihomo-$VERSION-1-x86_64.pkg.tar.zst"
           cmp /usr/bin/omihomo-update "dist/omihomo-update-$VERSION-x86_64"
           omihomo version | grep -q "^omihomo v$VERSION "
-          grep -q '^==> github.com/metacubex/mihomo/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
-          grep -q '^==> github.com/xtls/xray-core/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
+          grep -q '^==> github.com/readeem/mixray/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
+          grep -q '^==> github.com/readeem/mixray/internal/xray-core/LICENSE <==$' /usr/share/licenses/omihomo/THIRD_PARTY_LICENSES
           systemctl is-enabled omihomo.socket omihomo.service
           test -f /usr/lib/systemd/user/omihomo-apply.path
           test -f /usr/lib/systemd/user/omihomo-apply.service

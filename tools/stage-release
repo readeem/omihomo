@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+export GOWORK=off
 
 stage=$(realpath -m "$1")
 vendor=$(realpath -m "$2")
@@ -10,15 +11,6 @@ source_dir=$(mktemp -d "${stage%/*}/.source-XXXXXXXX")
 trap 'rm -rf -- "$source_dir"' EXIT
 cp -R cmd internal go.mod go.sum "$source_dir/"
 go mod vendor -o "$source_dir/vendor"
-# Keep the pinned module identities and omit build-specific replacement paths.
-awk -v dir="${OMIHOMO_PATCHED_MODULES:?}/" '
-  $1 == "#" && $(NF-1) == "=>" && index($NF, dir) == 1 {
-    if (NF == 5) print $1, $2, $3
-    next
-  }
-  { print }
-' "$source_dir/vendor/modules.txt" > "$source_dir/vendor-modules.txt"
-mv "$source_dir/vendor-modules.txt" "$source_dir/vendor/modules.txt"
 (
   cd "$source_dir"
   export GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH=amd64
@@ -30,5 +22,4 @@ mv "$source_dir/vendor-modules.txt" "$source_dir/vendor/modules.txt"
     LC_ALL=C sort | while read -r file; do printf '==> %s <==\n' "${file#vendor/}"; cat "$file"; echo; done
 ) > "$stage/THIRD_PARTY_LICENSES"
 install -m644 packaging/omihomo.service packaging/omihomo.socket packaging/omihomo.tmpfiles packaging/omihomo-apply.path packaging/omihomo-apply.service LICENSE "$stage/"
-cp -R patches "$source_dir/vendor/omihomo-patches"
 mv "$source_dir/vendor" "$vendor"

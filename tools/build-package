@@ -14,7 +14,7 @@ mkdir -p dist
 work=$(mktemp -d "$root/dist/.package-XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/$name" "$work/build"
-tools/with-go-patches tools/stage-release "$work/$name" "$work/vendor" "$version"
+tools/stage-release "$work/$name" "$work/vendor" "$version"
 install -m755 "$work/$name/omihomo-update" "dist/omihomo-update-$version-x86_64"
 (cd dist && sha256sum "omihomo-update-$version-x86_64" > "omihomo-update-$version-x86_64.sha256")
 tar --sort=name --mtime="@$(git log -1 --format=%ct)" --owner=0 --group=0 --numeric-owner \

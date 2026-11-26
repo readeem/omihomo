@@ -12,8 +12,8 @@ Plugin and the daemon/CLI are updated together.
    and allowlisted: never a path, unit or environment value (ADR-0001, ADR-0006).
 2. **Downloads cannot change listeners, paths or privileges.** The running config is built from
    typed settings plus an allowlisted subscription (ADR-0005).
-3. **mihomo stays behind `core.Core`.** Nothing outside `internal/core/mihomo` imports it;
-   `TestOnlyTheCoreImportsMihomo` enforces this.
+3. **mixray stays behind `core.Core`.** Nothing outside `internal/core/mixray` imports it;
+   `TestOnlyTheAdapterImportsProxyEngines` enforces this.
 
 ## Hit every surface
 

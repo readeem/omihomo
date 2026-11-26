@@ -19,7 +19,7 @@ trap cleanup EXIT
 # Each suite runs as its own Quickshell config against its own fake daemons
 # (fixtures/fake-daemon.js), one per behaviour, so no state leaks between
 # suites. `none.sock` is never created: no daemon answers there.
-"$project_root/tools/with-go-patches" go build -o "$test_root/omihomo" ./cmd/omihomo
+go build -o "$test_root/omihomo" ./cmd/omihomo
 cat > "$test_root/edit" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail

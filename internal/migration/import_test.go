@@ -17,7 +17,7 @@ import (
 
 	"github.com/metacubex/bbolt"
 
-	"github.com/readeem/omihomo/internal/core/mihomo"
+	"github.com/readeem/omihomo/internal/core/mixray"
 	"github.com/readeem/omihomo/internal/state"
 )
 
@@ -61,7 +61,7 @@ func write(t *testing.T, root, name, body string) {
 
 func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
 	source, target := fixture(t)
-	m, err := Prepare(context.Background(), source, target, true, &mihomo.Core{}, exportFixture)
+	m, err := Prepare(context.Background(), source, target, true, &mixray.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestImportPreservesSubscriptionsAndTypedSettings(t *testing.T) {
 	if info, _ := os.Stat(target); info.Mode().Perm() != 0o700 {
 		t.Fatal(info.Mode())
 	}
-	if _, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture); err != nil {
+	if _, err := Prepare(context.Background(), source, target, false, &mixray.Core{}, exportFixture); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Rollback(); err != nil {
@@ -119,7 +119,7 @@ func TestImportReadsRawWrapperAndCachedHTTPProvider(t *testing.T) {
 			if kind == "http" {
 				write(t, source, "providers/raw.yaml", "proxies: [{name: Example, type: direct}]\n")
 			}
-			m, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(context.Background(), source, target, false, &mixray.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ func TestImportPreservesRequestDeadlines(t *testing.T) {
 	name := fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub")))
 	body := `{"attempted_at":1791633700,"automatic_after":4102444800,"manual_after":4102444700,"paused":false}`
 	write(t, source, name, body)
-	m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+	m, err := Prepare(t.Context(), source, target, false, &mixray.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestImportRefusesPausedOrInvalidRequestState(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			source, target := fixture(t)
 			write(t, source, fmt.Sprintf("requests/%x.json", sha256.Sum256([]byte("https://example.com/sub"))), body)
-			m, err := Prepare(t.Context(), source, target, true, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(t.Context(), source, target, true, &mixray.Core{}, exportFixture)
 			if m != nil {
 				m.Close()
 			}
@@ -206,7 +206,7 @@ func TestImportPreservesUnclaimedCoreCacheOnRollback(t *testing.T) {
 			if when == "before preparation" {
 				write(t, target, "core/cache.db", "old cache")
 			}
-			m, err := Prepare(t.Context(), source, target, true, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(t.Context(), source, target, true, &mixray.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -271,7 +271,7 @@ func TestImportRejectsUnsafeStateBeforeCommit(t *testing.T) {
 					}
 				}
 			}
-			m, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(context.Background(), source, target, false, &mixray.Core{}, exportFixture)
 			if m != nil {
 				m.Close()
 			}
@@ -298,7 +298,7 @@ func TestImportWaitsForOldStateWriter(t *testing.T) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := Prepare(context.Background(), source, target, false, &mihomo.Core{}, exportFixture); err == nil || m != nil {
+	if m, err := Prepare(context.Background(), source, target, false, &mixray.Core{}, exportFixture); err == nil || m != nil {
 		t.Fatal("import raced the old writer")
 	}
 }
@@ -315,7 +315,7 @@ func TestImportBoundsRefreshIntervals(t *testing.T) {
 		t.Run(fmt.Sprint(tc.hours), func(t *testing.T) {
 			source, target := fixture(t)
 			write(t, source, "subscriptions.json", fmt.Sprintf(`[{"name":"Example","url":"https://example.com/sub","update_interval_hours":%d}]`, tc.hours))
-			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(t.Context(), source, target, false, &mixray.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -387,7 +387,7 @@ func TestImportRejectsInvalidSelectionCaches(t *testing.T) {
 					}
 				}
 			}
-			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(t.Context(), source, target, false, &mixray.Core{}, exportFixture)
 			if m != nil {
 				defer m.Close()
 			}
@@ -439,7 +439,7 @@ rules: [MATCH,Proxy]
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+	m, err := Prepare(t.Context(), source, target, false, &mixray.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestImportStagesUsableLegacyGeodata(t *testing.T) {
 	// A site list whose CN category holds example.cn.
 	write(t, source, "GeoSite.dat", "\x0a\x14\x0a\x02CN\x12\x0e\x08\x02\x12\x0aexample.cn")
 	write(t, source, "geoip.metadb", "not a database")
-	m, err := Prepare(t.Context(), source, target, true, &mihomo.Core{}, exportFixture)
+	m, err := Prepare(t.Context(), source, target, true, &mixray.Core{}, exportFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ rules: ["RULE-SET,blocked,REJECT", "MATCH,Proxy"]
 `, proxyURL, path, ruleURL, path))
 			write(t, source, "proxies/7e70227b15519a5b7b69821848fe1be5", "proxies: [{name: Example, type: direct}]")
 			write(t, source, "rules/7431d192c67ac40108a40e67949fa761", "payload: [+.blocked.example]")
-			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(t.Context(), source, target, false, &mixray.Core{}, exportFixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -578,7 +578,7 @@ rules: ["MATCH,Proxy"]
 			if err != nil {
 				t.Fatal(err)
 			}
-			m, err := Prepare(t.Context(), source, target, false, &mihomo.Core{}, exportFixture)
+			m, err := Prepare(t.Context(), source, target, false, &mixray.Core{}, exportFixture)
 			if m != nil {
 				m.Close()
 			}
