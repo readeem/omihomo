@@ -4,18 +4,18 @@ import (
 	goruntime "runtime"
 	"runtime/debug"
 
-	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/transport/trusttunnel"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/transport/trusttunnel"
 )
 
-// Version is the mihomo release this core embeds. Upstream's source carries
+// Version is the mixray release this core embeds. Upstream's source carries
 // a placeholder: its releases replace it with linker flags.
 var Version = embeddedVersion()
 
 func embeddedVersion() string {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range info.Deps {
-			if dep.Path != "github.com/metacubex/mihomo" {
+			if dep.Path != "github.com/readeem/mixray" {
 				continue
 			}
 			if dep.Replace != nil {

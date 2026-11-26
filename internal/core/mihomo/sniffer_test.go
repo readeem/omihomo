@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/tunnel"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/tunnel"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"

@@ -2,23 +2,9 @@
 set -euo pipefail
 export GOWORK=off
 
-pins=()
-for series in patches/*/module; do
-  [[ -f $series ]] || continue
-  module=$(<"$series")
-  pins+=("$(go list -m -f '{{.Path}}@{{.Version}}' "$module")")
-done
-# Local replacements have no upstream identity in govulncheck's source scan.
-if (( ${#pins[@]} )); then
-  advisories=$(govulncheck -mode query -format json "${pins[@]}" | jq -s '[.[] | .osv? | select(.) | {id, summary}]')
-  if [[ $advisories != '[]' ]]; then
-    printf 'Advisories for patched upstream module versions:\n%s\n' "$advisories" >&2
-    exit 1
-  fi
-fi
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 version=$(jq -er .version manifest.json)
-tools/with-go-patches tools/stage-release "$work/stage" "$work/vendor" "$version"
+tools/stage-release "$work/stage" "$work/vendor" "$version"
 govulncheck -mode binary "$work/stage/omihomo"
 govulncheck -mode binary "$work/stage/omihomo-update"

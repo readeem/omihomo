@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/metacubex/mihomo/adapter/outbound"
-	"github.com/metacubex/mihomo/component/sniffer"
-	"github.com/metacubex/mihomo/constant"
-	snifferType "github.com/metacubex/mihomo/constant/sniffer"
-	"github.com/metacubex/mihomo/tunnel"
+	"github.com/readeem/mixray/adapter/outbound"
+	"github.com/readeem/mixray/component/sniffer"
+	"github.com/readeem/mixray/constant"
+	snifferType "github.com/readeem/mixray/constant/sniffer"
+	"github.com/readeem/mixray/tunnel"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"

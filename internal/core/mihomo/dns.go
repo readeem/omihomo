@@ -12,11 +12,12 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/metacubex/mihomo/adapter/outbound"
-	"github.com/metacubex/mihomo/component/resolver"
-	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/tunnel"
 	"github.com/miekg/dns"
+	"github.com/readeem/mixray/adapter/outbound"
+	"github.com/readeem/mixray/adapter/xray"
+	"github.com/readeem/mixray/component/resolver"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/tunnel"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/uplink"
@@ -35,18 +36,16 @@ func (d *uplinkDNS) DialContext(ctx context.Context, _ *constant.Metadata) (cons
 	return outbound.NewConn(conn, d), nil
 }
 
-type bootstrapQuery struct{}
-
 type bootstrapDNS struct {
 	normal   resolver.Resolver
 	provider resolver.Resolver
 }
 
 func (d *bootstrapDNS) ExchangeContext(ctx context.Context, query *dns.Msg) (*dns.Msg, error) {
-	if ctx.Value(bootstrapQuery{}) != nil {
+	if xray.IsBootstrapLookup(ctx) {
 		return d.provider.ExchangeContext(ctx, query)
 	}
-	answer, err := d.normal.ExchangeContext(context.WithValue(ctx, bootstrapQuery{}, true), query)
+	answer, err := d.normal.ExchangeContext(xray.WithBootstrapLookup(ctx), query)
 	if err == nil || ctx.Err() != nil || !uplink.Recoverable(err) {
 		return answer, err
 	}

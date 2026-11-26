@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/metacubex/mihomo/component/geodata/router"
+	"github.com/readeem/mixray/component/geodata/router"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/readeem/omihomo/internal/core"

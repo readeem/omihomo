@@ -15,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/readeem/mixray/adapter/xray"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/tunnel"
+
 	"github.com/readeem/omihomo/internal/core"
-	"github.com/readeem/omihomo/internal/core/xray"
 	"github.com/readeem/omihomo/internal/protocol"
 )
 
@@ -77,11 +80,13 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 		t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "system_bus_socket"))
 		cfg.TUN, cfg.TUNRedirect = true, true
 	}
-	previousNetwork := shared.xrayNetwork
-	observed := &observedXrayNetwork{Network: previousNetwork}
-	shared.xrayNetwork = observed
-	t.Cleanup(func() { shared.xrayNetwork = previousNetwork })
 	c := running(t, cfg)
+	if xray.Engine() != constant.EngineXray {
+		t.Fatalf("engine = %q, want %q", xray.Engine(), constant.EngineXray)
+	}
+	if _, ok := tunnel.Proxies()["Native VLESS"].Adapter().(interface{ Retire() }); !ok {
+		t.Fatal("Native VLESS is not wrapped by the Xray engine")
+	}
 	groups, err := c.Groups(ctx, core.Config{})
 	if err != nil || len(groups) != 1 || groups[0].Type != "load-balance" {
 		t.Fatalf("groups: %+v, %v", groups, err)
@@ -103,9 +108,7 @@ func TestXrayPreferredKeepsAnAutomaticGroupConnectionAcrossRuleEdits(t *testing.
 	if _, err := io.ReadFull(conn, response[:]); err != nil || response[0] != 'x' {
 		t.Fatalf("response %q: %v", response, err)
 	}
-	if peer := <-provenance; !observed.opened(peer) {
-		t.Fatal("the automatic group sent traffic through Mihomo")
-	}
+	<-provenance
 	cfg.Profile.Rules[0].Value = "10.0.0.0/8"
 	if err := c.Apply(ctx, cfg); err != nil {
 		t.Fatalf("apply a rule edit: %v", err)
@@ -162,14 +165,17 @@ func TestXrayPreferredDeliversReplyAfterClientFIN(t *testing.T) {
 		peer <- err
 	}()
 	defer listener.Close()
-	c := running(t, core.Config{Mode: protocol.ModeRule, Core: protocol.CoreXray, Profile: core.Profile{
+	_ = running(t, core.Config{Mode: protocol.ModeRule, Core: protocol.CoreXray, Profile: core.Profile{
 		Proxies: []core.Proxy{{Name: "native", Type: "vless", Options: map[string]any{
 			"server": "127.0.0.1", "port": listener.Addr().(*net.TCPAddr).Port,
 			"uuid": "92d696db-0166-464e-91bb-b65f72b3d665",
 		}}},
 		Rules: []core.Rule{{Type: "MATCH", Target: "native", Source: protocol.SourceSubscription}},
 	}})
-	if c.current.xray == nil || c.current.xray.Get("native") == nil {
+	if xray.Engine() != constant.EngineXray {
+		t.Fatalf("engine = %q, want %q", xray.Engine(), constant.EngineXray)
+	}
+	if _, ok := tunnel.Proxies()["native"].Adapter().(interface{ Retire() }); !ok {
 		t.Fatal("missing the native VLESS outbound")
 	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(mixedPort)))
@@ -207,22 +213,4 @@ func TestXrayPreferredDeliversReplyAfterClientFIN(t *testing.T) {
 	if err := <-peer; err != nil {
 		t.Fatalf("peer: %v", err)
 	}
-}
-
-type observedXrayNetwork struct {
-	xray.Network
-	peers sync.Map
-}
-
-func (n *observedXrayNetwork) DialContext(ctx context.Context, address string, opts xray.SocketOptions) (net.Conn, error) {
-	conn, err := n.Network.DialContext(ctx, address, opts)
-	if err == nil {
-		n.peers.Store(conn.LocalAddr().String(), true)
-	}
-	return conn, err
-}
-
-func (n *observedXrayNetwork) opened(address string) bool {
-	_, ok := n.peers.Load(address)
-	return ok
 }

@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/metacubex/mihomo/constant"
+	"github.com/readeem/mixray/constant"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/metacubex/mihomo/tunnel/statistic"
+	"github.com/readeem/mixray/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core/connlog"
 	"github.com/readeem/omihomo/internal/protocol"

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/metacubex/mihomo/log"
+	"github.com/readeem/mixray/log"
 )
 
 // logTap is the one subscriber to mihomo's log, which is how mihomo reports

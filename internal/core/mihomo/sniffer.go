@@ -3,7 +3,7 @@ package mihomo
 import (
 	"context"
 
-	"github.com/metacubex/mihomo/constant"
+	"github.com/readeem/mixray/constant"
 )
 
 type sniffedProxy struct{ constant.Proxy }

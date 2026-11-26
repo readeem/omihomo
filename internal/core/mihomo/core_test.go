@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/metacubex/mihomo/component/resolver"
-	"github.com/metacubex/mihomo/tunnel"
-	"github.com/metacubex/mihomo/tunnel/statistic"
 	"github.com/miekg/dns"
+	"github.com/readeem/mixray/component/resolver"
+	"github.com/readeem/mixray/tunnel"
+	"github.com/readeem/mixray/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/fetch"

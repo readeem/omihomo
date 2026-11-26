@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup EXIT
 stage "$work" "$tests_dir/${1:-panel_state_test.qml}"
 cp "$tests_dir/StateTest.qml" "$config/"
-"$root/tools/with-go-patches" go build -o "$work/omihomo" ./cmd/omihomo
+go build -o "$work/omihomo" ./cmd/omihomo
 start_daemon "$work"
 output=$("${panel_env[@]}" QT_QPA_PLATFORM=offscreen QS_DISABLE_CRASH_HANDLER=1 \
   OMIHOMO_TEST_CLI="$work/omihomo" timeout --kill-after=2s 25s qs --no-color -p "$config" 2>&1) || {

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"os"
 
-	"github.com/metacubex/mihomo/component/process"
-	"github.com/metacubex/mihomo/constant"
+	"github.com/readeem/mixray/component/process"
+	"github.com/readeem/mixray/constant"
 
 	"github.com/readeem/omihomo/internal/protocol"
 )

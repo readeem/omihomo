@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -26,23 +25,23 @@ import (
 	"time"
 
 	"github.com/dlclark/regexp2"
-	"github.com/metacubex/mihomo/adapter/outboundgroup"
-	mihomoprofile "github.com/metacubex/mihomo/component/profile"
-	"github.com/metacubex/mihomo/component/profile/cachefile"
-	"github.com/metacubex/mihomo/component/resolver"
-	"github.com/metacubex/mihomo/config"
-	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/constant/features"
-	"github.com/metacubex/mihomo/dns"
-	"github.com/metacubex/mihomo/hub/executor"
-	"github.com/metacubex/mihomo/listener"
-	"github.com/metacubex/mihomo/listener/inner"
-	"github.com/metacubex/mihomo/tunnel"
-	"github.com/metacubex/mihomo/tunnel/statistic"
+	"github.com/readeem/mixray/adapter/outboundgroup"
+	"github.com/readeem/mixray/adapter/xray"
+	mihomoprofile "github.com/readeem/mixray/component/profile"
+	"github.com/readeem/mixray/component/profile/cachefile"
+	"github.com/readeem/mixray/component/resolver"
+	"github.com/readeem/mixray/config"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/constant/features"
+	"github.com/readeem/mixray/dns"
+	"github.com/readeem/mixray/hub/executor"
+	"github.com/readeem/mixray/listener"
+	"github.com/readeem/mixray/listener/inner"
+	"github.com/readeem/mixray/tunnel"
+	"github.com/readeem/mixray/tunnel/statistic"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/core/connlog"
-	"github.com/readeem/omihomo/internal/core/xray"
 	"github.com/readeem/omihomo/internal/protocol"
 	"github.com/readeem/omihomo/internal/uplink"
 )
@@ -70,7 +69,6 @@ type Core struct {
 	uplink      uplink.Network
 	log         *slog.Logger
 	tap         *logTap
-	xrayNetwork xray.Network
 	delaySlots  chan struct{}
 	historyDir  string
 	nextSession uint64
@@ -115,7 +113,7 @@ func New(home string, log *slog.Logger) (*Core, error) {
 	}
 	constant.SetHomeDir(home)
 	mihomoprofile.StoreSelected.Store(true)
-	c := &Core{historyDir: home, log: log, tap: startLogTap(log), current: &runtime{}, xrayNetwork: xrayNetwork{}, delaySlots: make(chan struct{}, delayParallel)}
+	c := &Core{historyDir: home, log: log, tap: startLogTap(log), current: &runtime{}, delaySlots: make(chan struct{}, delayParallel)}
 	statistic.SetConnectionObserver(c.observeConnection)
 	return c, nil
 }
@@ -184,20 +182,6 @@ var afterRestoreStop = func() {}
 
 // run applies rt and commits it once everything it asks for came up.
 func (c *Core) run(rt *runtime) error {
-	c.mu.Lock()
-	previous := c.current
-	c.mu.Unlock()
-	if rt.cfg.Core == protocol.CoreXray {
-		engine := previous.xray
-		if engine == nil || !reflect.DeepEqual(previous.cfg.Profile.Proxies, rt.cfg.Profile.Proxies) {
-			var err error
-			engine, err = xray.New(rt.cfg.Profile.Proxies, c.xrayNetwork)
-			if err != nil {
-				return err
-			}
-		}
-		rt.useXray(engine)
-	}
 	stop := c.tap.watch()
 	// These bootstrap clients are installed before health checks can dial.
 	// Only this private adapter can discover or bind to uplink DNS.
@@ -216,9 +200,6 @@ func (c *Core) run(rt *runtime) error {
 	c.mu.Unlock()
 	resolver.ProxyServerHostResolver = newBootstrapResolver(normalDNS, resolver.ProxyServerHostResolver)
 	if err := started(rt.cfg, stop()); err != nil {
-		if rt.xray != previous.xray {
-			c.closeXray(rt.xray)
-		}
 		return err
 	}
 	c.commit(rt)
@@ -260,7 +241,6 @@ func started(cfg core.Config, logged []string) error {
 }
 
 type runtime struct {
-	xray    *xray.Outbounds
 	cfg     core.Config
 	parsed  *config.Config
 	rules   []protocol.Rule
@@ -354,8 +334,8 @@ func prepareGroups(cfg core.Config) (*runtime, error) {
 // parse runs in the live mode and the wanted one is set on the result.
 // mihomo also panics on some malformed values, such as a group's regex.
 func parse(raw *config.RawConfig) (parsed *config.Config, err error) {
-	mode := raw.Mode
-	raw.Mode = tunnel.Mode()
+	mode, engine := raw.Mode, raw.Engine
+	raw.Mode, raw.Engine = tunnel.Mode(), xray.Engine()
 	defer func() {
 		if p := recover(); p != nil {
 			parsed, err = nil, fmt.Errorf("the config does not parse: %v", p)
@@ -366,13 +346,13 @@ func parse(raw *config.RawConfig) (parsed *config.Config, err error) {
 		return nil, fmt.Errorf("the config does not parse: %w", err)
 	}
 	parsed.General.Mode = mode
+	parsed.General.Engine = engine
 	return parsed, nil
 }
 
 func (c *Core) commit(rt *runtime) {
 	rt.parsed = nil
 	c.mu.Lock()
-	previous := c.current.xray
 	oldHistory := c.history
 	c.history = c.capture.Load()
 	newHistory := c.history
@@ -381,9 +361,6 @@ func (c *Core) commit(rt *runtime) {
 	c.mu.Unlock()
 	if oldHistory != nil && oldHistory != newHistory {
 		oldHistory.Discard()
-	}
-	if previous != rt.xray {
-		c.closeXray(previous)
 	}
 }
 
@@ -412,22 +389,12 @@ func (c *Core) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (c *Core) closeXray(outbounds *xray.Outbounds) {
-	if outbounds != nil {
-		if err := outbounds.Close(); err != nil {
-			c.log.Warn("close Xray outbounds", "err", err)
-		}
-	}
-}
-
 func (c *Core) stop() {
 	c.mu.Lock()
-	previous := c.current.xray
 	c.running, c.current = false, &runtime{}
 	c.generation++
 	generation := c.generation
 	c.mu.Unlock()
-	c.closeXray(previous)
 	parsed, err := parse(stoppedConfig())
 	if err != nil {
 		// The stopped config is fixed, so this is a bug. TUN is what must

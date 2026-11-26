@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/metacubex/mihomo/component/process"
+	"github.com/readeem/mixray/component/process"
 	"golang.org/x/sys/unix"
 )
 

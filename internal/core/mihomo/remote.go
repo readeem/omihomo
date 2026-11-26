@@ -11,13 +11,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/metacubex/mihomo/common/convert"
-	"github.com/metacubex/mihomo/component/geodata"
-	"github.com/metacubex/mihomo/component/geodata/router"
-	"github.com/metacubex/mihomo/component/mmdb"
-	"github.com/metacubex/mihomo/config"
-	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/log"
+	"github.com/readeem/mixray/common/convert"
+	"github.com/readeem/mixray/component/geodata"
+	"github.com/readeem/mixray/component/geodata/router"
+	"github.com/readeem/mixray/component/mmdb"
+	"github.com/readeem/mixray/config"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/log"
 
 	"google.golang.org/protobuf/proto"
 

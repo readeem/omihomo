@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/metacubex/mihomo/adapter"
-	"github.com/metacubex/mihomo/adapter/outbound"
+	"github.com/readeem/mixray/adapter"
+	"github.com/readeem/mixray/adapter/outbound"
 
 	subscription "github.com/readeem/omihomo/internal/profile"
 )

@@ -6,12 +6,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/metacubex/mihomo/common/orderedmap"
-	"github.com/metacubex/mihomo/component/process"
-	"github.com/metacubex/mihomo/config"
-	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/log"
-	"github.com/metacubex/mihomo/tunnel"
+	"github.com/readeem/mixray/common/orderedmap"
+	"github.com/readeem/mixray/component/process"
+	"github.com/readeem/mixray/config"
+	"github.com/readeem/mixray/constant"
+	"github.com/readeem/mixray/log"
+	"github.com/readeem/mixray/tunnel"
 
 	"github.com/readeem/omihomo/internal/core"
 	"github.com/readeem/omihomo/internal/protocol"
@@ -64,10 +64,20 @@ func rawConfig(cfg core.Config) (*config.RawConfig, []protocol.Rule, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown mode %q", cfg.Mode)
 	}
+	var engine constant.Engine
+	switch cfg.Core {
+	case "", protocol.CoreMihomo:
+		engine = constant.EngineMihomo
+	case protocol.CoreXray:
+		engine = constant.EngineXray
+	default:
+		return nil, nil, fmt.Errorf("unknown core %q", cfg.Core)
+	}
 	p := cfg.Profile
 
 	raw := config.DefaultRawConfig()
 	raw.Mode = mode
+	raw.Engine = engine
 	raw.MixedPort = mixedPort
 	raw.AllowLan = false
 	raw.LogLevel = log.WARNING
@@ -350,6 +360,7 @@ func stoppedConfig() *config.RawConfig {
 	raw := config.DefaultRawConfig()
 	raw.Profile.StoreSelected = true
 	raw.Mode = tunnel.Rule
+	raw.Engine = constant.EngineMihomo
 	raw.Rule = []string{"MATCH,REJECT"}
 	raw.LogLevel = log.WARNING
 	raw.FindProcessMode = process.FindProcessAlways
