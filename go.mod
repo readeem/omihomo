@@ -14,7 +14,7 @@ require (
 	github.com/metacubex/tls v0.1.9
 	github.com/miekg/dns v1.1.73
 	github.com/peterbourgon/ff/v3 v3.4.0
-	github.com/readeem/mixray v0.0.0-20261126080943-da5b9e3f7683
+	github.com/readeem/mixray v0.0.0-20261126092429-4decc225eac9
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.50.0
