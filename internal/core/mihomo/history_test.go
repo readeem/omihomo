@@ -352,13 +352,25 @@ func TestHistoryReportsUDPSourceClosedBeforeLookup(t *testing.T) {
 	if err := c.Stop(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	page, err := c.ConnectionHistory(t.Context(), protocol.ConnectionHistoryArgs{})
-	if err != nil || len(page.Rows) != 1 {
-		t.Fatalf("history = %+v, %v", page, err)
-	}
-	row := page.Rows[0]
-	if row.Process != "unknown" || row.ProcessStatus != protocol.ProcessLookupFailed || row.ProcessReason != protocol.ProcessSocketNotFound {
-		t.Fatalf("UDP history attribution = %+v", row)
+	deadline, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		page, err := c.ConnectionHistory(deadline, protocol.ConnectionHistoryArgs{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Rows) == 1 {
+			row := page.Rows[0]
+			if row.Process != "unknown" || row.ProcessStatus != protocol.ProcessLookupFailed || row.ProcessReason != protocol.ProcessSocketNotFound {
+				t.Fatalf("UDP history attribution = %+v", row)
+			}
+			return
+		}
+		select {
+		case <-deadline.Done():
+			t.Fatalf("UDP association did not finish: %+v", page)
+		case <-time.After(time.Millisecond):
+		}
 	}
 }
 
